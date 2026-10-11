@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pixel-forge</title>
+<!--PF_TOKEN-->
+<style>
+  html,body{margin:0;height:100%;background:#040608;color:#d6e4dc;font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  body{display:flex;flex-direction:column}
+  header{padding:8px 12px;border-bottom:1px solid #232d34;display:flex;gap:12px;align-items:baseline}
+  header b{color:#39ff7a}header span{color:#7f948a;font-size:12px}
+  #app{flex:1;min-height:0}
+</style>
+</head>
+<body>
+<header><b>pixel-forge</b><span>edit the pixel art in this project</span></header>
+<div id="app"></div>
+<script src="pixel-forge.js"></script>
+<script>
+  // Query options for static hosting: ?manifest=pixel-art.json&base=../   (base is where the sprite paths are relative to)
+  const q = new URLSearchParams(location.search);
+  const opts = {};
+  if (q.get('manifest')) opts.manifestUrl = q.get('manifest');
+  if (q.get('base') != null) opts.baseUrl = q.get('base');
+  if (q.get('repo')) opts.github = { slug: q.get('repo'), base: q.get('branch') || undefined, prefix: q.get('prefix') || '' };
+  if (q.get('accent')) opts.accent = q.get('accent');
+  PixelForge.mount(document.getElementById('app'), opts);
+</script>
+</body>
+</html>
