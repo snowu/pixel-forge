@@ -129,13 +129,24 @@
        - If not (an outside contributor), the repo is forked first and the pull request is opened from the fork.
      files: [{ path, blob }]  where path is relative to the repository root and blob is the PNG as a Blob/Uint8Array.
      ===================================================================================================== */
+  /** A plain-language reason for a GitHub API failure, with the raw message kept at the end for support. */
+  function explainGithubError(status, message, what, repo) {
+    const m = String(message || ''), raw = ` [${what}: ${status} ${m}]`;
+    if (status === 401) return 'GitHub rejected the sign-in or token (it expired or was revoked). Sign in again or paste a new token.' + raw;
+    if (status === 403 && /SAML|SSO/i.test(m)) return 'This organisation requires single sign-on: authorise the token or app for it on GitHub, then try again.' + raw;
+    if (status === 403 && /rate limit/i.test(m)) return 'GitHub rate limit reached. Sign in (or add a token) to raise it, or wait a few minutes.' + raw;
+    if (status === 403 && /not accessible|forbidden|permission/i.test(m)) return `You are signed in, but not allowed to do that${repo ? ' on ' + repo : ''}. It needs write access to Contents and Pull requests on this repository (for the GitHub App: install the app on it and accept the permissions).` + raw;
+    if (status === 404) return `GitHub says not found${repo ? ' for ' + repo : ''}. Check the name and branch, and for a private repository sign in or use a token with access to it.` + raw;
+    if (status === 422 && /already exists/i.test(m)) return 'A branch or pull request with that name already exists. Change the title and try again.' + raw;
+    return `GitHub ${what} failed: ${status} ${m}`;
+  }
   const refPath = (b) => String(b).split('/').map(encodeURIComponent).join('/'); // keep the slashes in branch names like release/1.0
   async function createPullRequest(o) {
     const api = (o.apiBase || 'https://api.github.com').replace(/\/$/, ''), doFetch = o.fetch || fetch.bind(globalThis), log = o.onProgress || (() => {});
     const call = async (method, url, body) => {
       const res = await doFetch(api + url, { method, headers: { Authorization: 'Bearer ' + o.token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
       const text = await res.text(); let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
-      if (!res.ok) { const e = new Error(`GitHub ${method} ${url} failed: ${res.status} ${(json && json.message) || text.slice(0, 120)}`); e.status = res.status; throw e; }
+      if (!res.ok) { const e = new Error(explainGithubError(res.status, (json && json.message) || text.slice(0, 120), `${method} ${url}`, o.repo)); e.status = res.status; throw e; }
       return json;
     };
     if (!o.token) throw new Error('A GitHub token is required.');
@@ -311,10 +322,7 @@
       const text = await res.text(); let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
       if (!res.ok) {
         const left = res.headers && res.headers.get && res.headers.get('x-ratelimit-remaining');
-        if (res.status === 403 && (left === '0' || /rate limit/i.test((json && json.message) || ''))) throw new Error('GitHub rate limit reached. Add a token (even a read-only one) to raise it.');
-        if (res.status === 401) throw new Error('GitHub rejected the token.');
-        if (res.status === 404) throw new Error('Repository or branch not found. Private repositories need a token with Contents: read.');
-        throw new Error('GitHub ' + res.status + ': ' + ((json && json.message) || text.slice(0, 100)));
+        throw new Error(explainGithubError(left === '0' && res.status === 403 ? 403 : res.status, left === '0' && res.status === 403 ? 'API rate limit exceeded' : (json && json.message) || text.slice(0, 100), 'GET ' + path.split('?')[0], o.repo));
       }
       return json;
     };
@@ -359,6 +367,41 @@
         const h = await dir.getFileHandle(parts.at(-1), { create: true }), w = await h.createWritable(); await w.write(bytes); await w.close(); files.set(path, h);
       } };
   }
+
+
+  /* =====================================================================================================
+     Sign in with GitHub. The page opens a small popup on an auth service (see worker/), the user signs in on
+     github.com (their normal login, SSO and 2FA included), and the service posts an access token back to this page.
+     The service only exists because GitHub's token exchange needs a client secret and has no CORS; it never stores tokens.
+     ===================================================================================================== */
+  function githubSignIn(authBase, { win = window, timeoutMs = 300000 } = {}) {
+    if (!authBase) return Promise.reject(new Error('Sign-in is not set up on this page.'));
+    const origin = new URL(authBase, win.location.href).origin, nonce = Array.from(win.crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    const popup = win.open(`${authBase.replace(/\/$/, '')}/login?origin=${encodeURIComponent(win.location.origin)}&nonce=${nonce}`, 'pf-auth', 'width=520,height=700');
+    if (!popup) return Promise.reject(new Error('The sign-in window was blocked. Allow pop-ups for this site and try again.'));
+    return new Promise((resolve, reject) => {
+      const done = (fn, v) => { win.removeEventListener('message', onMsg); clearInterval(poll); clearTimeout(to); try { popup.close(); } catch { /* already closed */ } fn(v); };
+      const onMsg = (e) => { const d = e.data; if (e.origin !== origin || !d || d.type !== 'pf-auth' || d.nonce !== nonce) return; d.error ? done(reject, new Error(d.error)) : d.token ? done(resolve, { token: d.token, expiresIn: d.expires_in || null }) : done(reject, new Error('The sign-in service returned no token.')); };
+      win.addEventListener('message', onMsg);
+      const poll = setInterval(() => { if (popup.closed) done(reject, new Error('The sign-in window was closed before finishing.')); }, 500);
+      const to = setTimeout(() => done(reject, new Error('Sign-in timed out.')), timeoutMs);
+    });
+  }
+  /** Who the token belongs to. */
+  async function githubUser(token, o = {}) {
+    const res = await (o.fetch || fetch.bind(globalThis))((o.apiBase || 'https://api.github.com') + '/user', { headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' } });
+    if (!res.ok) throw new Error(explainGithubError(res.status, '', 'GET /user'));
+    const j = JSON.parse(await res.text()); return { login: j.login, name: j.name || j.login };
+  }
+  /** Repositories this token can reach: through the GitHub App installations when it is an app token, else the user's recent repos. */
+  async function listRepos(token, o = {}) {
+    const api = (o.apiBase || 'https://api.github.com'), doFetch = o.fetch || fetch.bind(globalThis), get = async (u) => { const r = await doFetch(api + u, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' } }); return r.ok ? JSON.parse(await r.text()) : null; };
+    const out = [], inst = await get('/user/installations?per_page=30');
+    if (inst && inst.installations) for (const i of inst.installations.slice(0, 10)) { const r = await get(`/user/installations/${i.id}/repositories?per_page=100`); if (r && r.repositories) out.push(...r.repositories.map((x) => x.full_name)); }
+    if (!out.length) { const r = await get('/user/repos?sort=updated&per_page=50'); if (r) out.push(...r.map((x) => x.full_name)); }
+    return [...new Set(out)];
+  }
+  const PAT_URL = 'https://github.com/settings/personal-access-tokens/new?name=pixel-forge&description=Edit+sprites+and+open+pull+requests&expires_in=30&contents=write&pull_requests=write';
 
   /* =====================================================================================================
      The editor UI
@@ -465,10 +508,11 @@
         <div class="pf-note pf-keys">B pencil · E eraser · G fill · L line · R rect · I pick · M mirror · Ctrl+Z undo · scroll to zoom · space+drag or middle mouse to pan · right click erases</div>
       </aside>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
-        <label>Repository <input type="text" class="pf-pr-repo" placeholder="owner/name"></label>
+        <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
         <label>Base branch <input type="text" class="pf-pr-base" placeholder="default branch"></label>
         <label>Title <input type="text" class="pf-pr-title" placeholder="Update player sprite"></label>
         <label>Description <textarea class="pf-pr-desc" rows="3" style="width:100%" placeholder="What changed and why"></textarea></label>
+        <div class="pf-row pf-auth-row"><button type="button" class="primary pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div class="pf-note pf-auth-help"></div>
         <label>GitHub token <input type="password" class="pf-pr-token" autocomplete="off" placeholder="fine-grained token with Contents + Pull requests write"></label>
         <label><input type="checkbox" class="pf-pr-remember"> remember the token in this browser</label>
         <div class="pf-note">The token is only sent to GitHub. Without write access to the repository your fork is used automatically.</div>
@@ -479,8 +523,9 @@
           <div class="pf-row"><button type="button" class="primary pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></div></div>
         <div class="pf-note pf-conn-intro">Or work on a whole project: a GitHub repository (changes go back as a pull request) or a folder on this computer (saves in place).</div>
         <div class="pf-box"><b>GitHub repository</b>
-          <label>Repository <input type="text" class="pf-c-repo" placeholder="owner/name" autocomplete="off"></label>
+          <label>Repository <input type="text" class="pf-c-repo" list="pf-repos" placeholder="owner/name" autocomplete="off"></label><datalist id="pf-repos"></datalist>
           <label>Branch <input type="text" class="pf-c-branch" placeholder="default branch"></label>
+          <div class="pf-row pf-auth-row"><button type="button" class="primary pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div class="pf-note pf-auth-help"></div>
           <label>Token <input type="password" class="pf-c-token" autocomplete="off" placeholder="optional for public repos; needed for private repos and pull requests"></label>
           <label><input type="checkbox" class="pf-c-remember"> remember the token in this browser</label>
           <div class="pf-row"><button type="button" class="primary pf-c-gh">Open repository</button></div></div>
@@ -505,12 +550,37 @@
 
     /* ---------- state ---------- */
     const S = { sprites: [], docs: new Map(), cur: null, tool: 'pen', color: pack(57, 255, 122), mx: false, my: false, pp: true, grid: true, zoom: 8, ox: 0, oy: 0,
-      palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], src: null, meta: {}, anim: { timer: 0, t: 0 }, notice: '' };
+      palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], src: null, meta: {}, auth: { token: '', login: '' }, anim: { timer: 0, t: 0 }, notice: '' };
     const doc = () => S.docs.get(S.cur);
     const view = $('.pf-view'), stage = $('.pf-stage'), g = view.getContext('2d');
     const offscreen = document.createElement('canvas');
     let overlay = null; // preview pixels while dragging a shape: { pts, value }
     const note = (t) => { S.notice = t; status(); };
+
+    /* ---------- sign in ---------- */
+    const authBase = O.authBase || (typeof window !== 'undefined' && window.PF_AUTH_BASE) || '';
+    try { S.auth = { token: sessionStorage.getItem('pf:authtoken') || '', login: sessionStorage.getItem('pf:authuser') || '' }; } catch { /* storage blocked */ }
+    function renderAuth() {
+      const on = !!S.auth.token;
+      $$('.pf-auth-row').forEach((r) => { r.querySelector('.pf-signin').hidden = on || !authBase; r.querySelector('.pf-signout').hidden = !on; r.querySelector('.pf-who').textContent = on ? 'Signed in as ' + (S.auth.login || 'GitHub user') : ''; });
+      $$('.pf-auth-help').forEach((h) => { h.innerHTML = authBase ? (on ? '' : 'Signing in lets you open private repositories and send pull requests without pasting a token.') : `Sign-in is not set up on this page. Paste a token instead: <a href="${PAT_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">create one with the right permissions</a> (Contents and Pull requests: read and write, only for your repository).`; });
+      if (on) $$('.pf-c-token, .pf-pr-token').forEach((i) => { i.value = i.value || S.auth.token; });
+    }
+    async function afterSignIn() {
+      renderAuth();
+      try { const names = await listRepos(S.auth.token, { apiBase: O.apiBase }); $('#pf-repos').innerHTML = names.map((n) => `<option value="${esc(n)}">`).join(''); } catch { /* suggestions are optional */ }
+    }
+    async function doSignIn(msgEl) {
+      try {
+        if (msgEl) msgEl.textContent = 'Waiting for GitHub…';
+        const r = await githubSignIn(authBase); S.auth.token = r.token;
+        try { S.auth.login = (await githubUser(r.token, { apiBase: O.apiBase })).login; } catch { S.auth.login = ''; }
+        try { sessionStorage.setItem('pf:authtoken', S.auth.token); sessionStorage.setItem('pf:authuser', S.auth.login); sessionStorage.setItem('pf:token', S.auth.token); } catch { /* ignore */ }
+        if (msgEl) msgEl.textContent = 'Signed in' + (S.auth.login ? ' as ' + S.auth.login : '') + '.';
+        await afterSignIn();
+      } catch (e) { if (msgEl) msgEl.textContent = e.message; }
+    }
+    function signOut() { S.auth = { token: '', login: '' }; try { ['pf:authtoken', 'pf:authuser', 'pf:token'].forEach((k) => sessionStorage.removeItem(k)); } catch { /* ignore */ } $$('.pf-c-token, .pf-pr-token').forEach((i) => { i.value = ''; }); renderAuth(); }
 
     /* ---------- loading ---------- */
     const storedToken = () => { try { return sessionStorage.getItem('pf:token') || localStorage.getItem('pf:token') || ''; } catch { return ''; } };
@@ -778,7 +848,7 @@
         log.innerHTML = `${esc(log.textContent)}Done${res.forked ? ' (from your fork)' : ''}: <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">${esc(res.url)}</a>`;
         for (const d of changed) d.base = { w: d.w, h: d.h, px: d.px.slice() };
         status(); renderList();
-      } catch (e) { log.textContent += '\n' + e.message; } finally { go.disabled = false; }
+      } catch (e) { log.textContent += '\n' + e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { go.disabled = false; }
     }
 
     /* ---------- events ---------- */
@@ -824,6 +894,8 @@
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
     }
     $('.pf-source').onclick = () => openConnect();
+    $$('.pf-signin').forEach((b) => (b.onclick = () => doSignIn(b.closest('dialog').querySelector('.pf-c-msg, .pf-log'))));
+    $$('.pf-signout').forEach((b) => (b.onclick = signOut));
     $('.pf-c-upload').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-file').click(); };
     $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-dlg-new').showModal(); };
     $('.pf-c-gh').onclick = async () => {
@@ -833,7 +905,7 @@
         try { if (token) { if ($('.pf-c-remember').checked) localStorage.setItem('pf:token', token); else sessionStorage.setItem('pf:token', token); } } catch { /* storage blocked */ }
         msg.textContent = src.sprites.length + ' PNG file' + (src.sprites.length === 1 ? '' : 's') + ' found.';
         if (await useSource(src)) $('.pf-dlg-connect').close();
-      } catch (e) { msg.textContent = e.message; } finally { btn.disabled = false; }
+      } catch (e) { msg.textContent = e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { btn.disabled = false; }
     };
     $('.pf-c-folder').onclick = async () => {
       const msg = $('.pf-c-msg'); msg.textContent = '';
@@ -866,7 +938,7 @@
     const leaveGuard = (e) => { if ([...S.docs.values()].some((d) => d.unsaved && d.changed)) { e.preventDefault(); e.returnValue = ''; } }; /* unsaved work would be lost: ask first */
     window.addEventListener('beforeunload', leaveGuard);
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const had = doc(); resizeView(); if (had && !S.touched) fit(); render(); }) : null; if (ro) ro.observe(stage);
-    resizeView(); init();
+    resizeView(); renderAuth(); if (S.auth.token) afterSignIn(); init();
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setTool, undo, redo, state: S,
@@ -876,5 +948,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, floodFill, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, floodFill, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
 });

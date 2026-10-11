@@ -38,6 +38,8 @@ export interface MountOptions {
   save?: (doc: Doc, png: Blob) => Promise<void> | void;
   /** false hides the pull request button. */
   pr?: boolean;
+  /** URL of the sign-in service (see worker/): enables the "Sign in with GitHub" button. */
+  authBase?: string;
   /** Alternative GitHub API base (GitHub Enterprise, tests). */
   apiBase?: string;
 }
@@ -89,9 +91,16 @@ export const sources: {
   serverSource(manifest: { sprites: SpriteEntry[]; palette?: string[] | null; repo?: RepoInfo | null }, token?: string): Source;
   applyConfig<T extends { path: string }>(items: T[], config?: { dirs?: string[]; ignore?: string[]; exclude?: string[]; frames?: Record<string, { w: number; h: number; fps?: number }> }): T[];
 };
+export const auth: {
+  signIn(authBase: string): Promise<{ token: string; expiresIn: number | null }>;
+  user(token: string, o?: { apiBase?: string }): Promise<{ login: string; name: string }>;
+  listRepos(token: string, o?: { apiBase?: string }): Promise<string[]>;
+  explainError(status: number, message: string, what: string, repo?: string): string;
+  tokenUrl: string;
+};
 export const core: Record<string, unknown>;
 
-declare const PixelForge: { mount: typeof mount; createPullRequest: typeof createPullRequest; prBody: typeof prBody; png: typeof png; sources: typeof sources; core: typeof core };
+declare const PixelForge: { auth: typeof auth; mount: typeof mount; createPullRequest: typeof createPullRequest; prBody: typeof prBody; png: typeof png; sources: typeof sources; core: typeof core };
 export default PixelForge;
 
 declare global { interface Window { PixelForge: typeof PixelForge } }

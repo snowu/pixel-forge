@@ -1,0 +1,9 @@
+name = "pixel-forge-auth"
+main = "index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# the pages allowed to sign in (comma separated origins, no trailing slash)
+ALLOWED_ORIGINS = "https://snowu.github.io"
+# the public id of your GitHub App (a secret is NOT stored here, see worker/README.md)
+GITHUB_CLIENT_ID = ""

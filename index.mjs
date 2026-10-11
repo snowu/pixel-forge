@@ -3,4 +3,4 @@
 import './pixel-forge.js';
 const PF = globalThis.PixelForge;
 export default PF;
-export const { mount, createPullRequest, prBody, png, sources, core } = PF;
+export const { mount, createPullRequest, prBody, png, sources, auth, core } = PF;

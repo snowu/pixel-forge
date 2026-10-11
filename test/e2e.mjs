@@ -308,6 +308,67 @@ section('hosted page, fully in the session: upload, edit, download');
   await sctx.close(); stat.close();
 }
 
+section('sign in with GitHub (auth service and GitHub both mocked)');
+{
+  const http = await import('node:http');
+  const pkg = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const stat = http.createServer((req, res) => { const u = req.url.split('?')[0]; const f = u === '/pixel-forge.js' ? 'pixel-forge.js' : u === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
+  await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const hbase = `http://127.0.0.1:${stat.address().port}/`;
+  const actx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
+  const seen = []; let mode = 'ok';
+  await actx.route('https://auth.test/**', async (route) => {
+    const u = new URL(route.request().url()); if (u.pathname !== '/login') return route.fulfill({ status: 404, body: 'x' });
+    const origin = u.searchParams.get('origin'), nonce = u.searchParams.get('nonce');
+    const msg = mode === 'ok' ? { type: 'pf-auth', nonce, token: 'gho_fromsignin', expires_in: 28800 } : { type: 'pf-auth', nonce, error: 'The user denied access' };
+    route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>opener.postMessage(${JSON.stringify(msg)}, ${JSON.stringify(origin)}); window.close();</script>` });
+  });
+  await actx.route('https://api.github.com/**', async (route) => {
+    const r = route.request(), p = new URL(r.url()).pathname; seen.push({ p, auth: r.headers().authorization });
+    const j = (o) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(o) });
+    if (r.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,accept,x-github-api-version', 'access-control-allow-methods': '*' } });
+    if (p === '/user') return j({ login: 'artist', name: 'An Artist' });
+    if (p === '/user/installations') return j({ installations: [{ id: 1 }] });
+    if (p === '/user/installations/1/repositories') return j({ repositories: [{ full_name: 'me/game' }, { full_name: 'me/art-only' }] });
+    if (p === '/repos/me/game') return j({ default_branch: 'main', permissions: { push: true } });
+    if (p === '/repos/me/game/git/ref/heads/main') return j({ object: { sha: 'c1' } });
+    if (p === '/repos/me/game/git/commits/c1') return j({ tree: { sha: 't1' } });
+    if (p === '/repos/me/game/git/trees/t1') return j({ tree: [{ path: 'art/a.png', type: 'blob', sha: 'sha0', size: 99 }], truncated: false });
+    if (p === '/repos/me/game/git/blobs/sha0') return j({ encoding: 'base64', content: encodePng(4, 4, Buffer.alloc(64)).toString('base64') });
+    return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ message: 'Not Found' }) });
+  });
+  const ap = await actx.newPage(); const aerr = []; ap.on('pageerror', (e) => aerr.push(e.message)); ap.on('dialog', (d) => d.dismiss());
+  // 1. without an auth service the page explains how to get a token instead
+  await ap.goto(hbase); await ap.waitForSelector('.pf-dlg-connect[open]');
+  ok(await ap.locator('.pf-dlg-connect .pf-signin').isHidden() && /not set up/.test(await ap.locator('.pf-dlg-connect .pf-auth-help').innerText()), 'with no sign-in service configured the button is hidden and the page says so');
+  const link = await ap.locator('.pf-dlg-connect .pf-auth-help a').getAttribute('href'); ok(/personal-access-tokens\/new/.test(link) && /contents=write/.test(link) && /pull_requests=write/.test(link), 'and links to a pre-filled fine-grained token with the two permissions needed');
+  // 2. with a service configured
+  await ap.goto(hbase + '?auth=https://auth.test'); await ap.waitForSelector('.pf-dlg-connect[open]');
+  ok(await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'with ?auth= the "Sign in with GitHub" button appears');
+  await ap.locator('.pf-dlg-connect .pf-signin').click();
+  await ap.waitForFunction(() => /Signed in as artist/.test(document.querySelector('.pf-dlg-connect .pf-who').textContent));
+  ok(await ap.locator('.pf-dlg-connect .pf-signout').isVisible() && await ap.locator('.pf-dlg-connect .pf-signin').isHidden(), 'the popup login completes and the dialog shows who is signed in');
+  ok((await ap.locator('.pf-c-token').inputValue()) === 'gho_fromsignin', 'the token fills the token field');
+  const opts = await ap.locator('#pf-repos option').evaluateAll((os) => os.map((o) => o.value)); ok(opts.join() === 'me/game,me/art-only', 'repository suggestions come from the app installations: ' + opts.join());
+  await ap.locator('.pf-c-repo').fill('me/game'); await ap.locator('.pf-c-gh').click(); await ap.waitForSelector('.pf-item');
+  ok(seen.filter((x) => x.p.startsWith('/repos/me/game')).every((x) => x.auth === 'Bearer gho_fromsignin'), 'repository calls use the signed-in token');
+  ok(await ap.evaluate(() => sessionStorage.getItem('pf:authtoken')) === 'gho_fromsignin' && await ap.evaluate(() => localStorage.getItem('pf:token')) === null, 'the token lives in this tab\'s session storage only');
+  // 3. the PR dialog shows the same sign-in and pre-fills the token
+  await ap.waitForFunction(() => document.getElementById('app').__pf.current); await ap.waitForTimeout(300);
+  await ap.locator('.pf-chex').fill('#ff0000'); await ap.locator('.pf-chex').press('Tab'); await ap.keyboard.press('b'); await ap.locator('.pf-view').click();
+  ok(!(await ap.locator('.pf-prbtn').isDisabled()), 'after an edit, Propose PR is available');
+  { await ap.locator('.pf-prbtn').click(); await ap.waitForSelector('.pf-dlg-pr[open]'); ok(/Signed in as artist/.test(await ap.locator('.pf-dlg-pr .pf-who').innerText()) && (await ap.locator('.pf-pr-token').inputValue()) === 'gho_fromsignin', 'the pull request dialog is signed in too, with the token pre-filled'); await ap.locator('.pf-dlg-pr button[value=cancel]').click(); }
+  // 4. sign out
+  await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-dlg-connect[open]');
+  await ap.locator('.pf-dlg-connect .pf-signout').click();
+  ok((await ap.locator('.pf-c-token').inputValue()) === '' && await ap.evaluate(() => sessionStorage.getItem('pf:authtoken')) === null && await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'sign out clears the token everywhere');
+  // 5. a refused login shows the reason and signs nobody in
+  mode = 'denied'; await ap.locator('.pf-dlg-connect .pf-signin').click();
+  await ap.waitForFunction(() => /denied access/.test(document.querySelector('.pf-c-msg').textContent));
+  ok((await ap.locator('.pf-c-token').inputValue()) === '' && await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'a denied sign-in explains why and leaves you signed out');
+  ok(aerr.length === 0, 'no page errors ' + aerr.join('|'));
+  await actx.close(); stat.close();
+}
+
 section('standalone: folder on this computer (File System Access, mocked picker)');
 {
   const fctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });

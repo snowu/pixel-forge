@@ -78,6 +78,12 @@ Works with Vite and other bundlers (checked with a Vite build). Options: `source
 
 Static hosting with a manifest, if you prefer it to the GitHub mode: `pixel-forge scan . -o pixel-art.json`, publish it next to the page, and open `index.html?manifest=pixel-art.json&base=../&repo=owner/name`.
 
+## Signing in with GitHub (no tokens to paste)
+
+Reading **public** repositories needs no sign-in at all. To open **private** repositories and to send pull requests, the editor offers **Sign in with GitHub**: a popup on github.com (your normal login, SSO and 2FA included), then the editor can act on the repositories where the *pixel-forge GitHub App* is installed, with exactly two permissions (Contents and Pull requests, read and write). Tokens last 8 hours and stay in the tab's session storage.
+
+This needs a small auth service because GitHub's token exchange requires a secret and has no CORS: see [`worker/README.md`](worker/README.md) (a ~100-line Cloudflare Worker that stores nothing; about 10 minutes to set up). Until it is set up, the page says so and links to a **pre-filled fine-grained token** (Contents and Pull requests: read and write) as the fallback. Errors from GitHub are explained in plain language ("you are signed in, but the app is not installed on this repository" instead of `403`).
+
 ## Pull requests
 
 1. Edit one or more sprites.
@@ -86,7 +92,7 @@ Static hosting with a manifest, if you prefer it to the GitHub mode: `pixel-forg
 
 It uses only the REST API: read the repo and your permissions, fork it if you cannot push (and wait for the fork), read the base branch, upload each PNG as a blob, create a tree and a commit on top of the base branch, create a branch `art/<title>-<id>`, and open the pull request (head `you:branch` for forks). The description holds a table of changed files and, for public repositories, before/after images. GitHub shows PNG changes in the **Files changed** tab with 2-up, swipe and onion-skin views.
 
-**Tokens.** The token goes only to `api.github.com` (or your `apiBase`), is kept in `sessionStorage` (gone when the tab closes) unless "remember" is ticked, and is never written anywhere else.
+**Tokens.** (Signing in as above avoids all of this.) The token goes only to `api.github.com` (or your `apiBase`), is kept in `sessionStorage` (gone when the tab closes) unless "remember" is ticked, and is never written anywhere else.
 
 - Artist with write access: a fine-grained personal access token limited to the game repository with *Contents: read and write* and *Pull requests: read and write*. (Reading a **private** repository in GitHub mode needs *Contents: read* too.)
 - Outside contributor: the fork flow needs permission to create a fork and write to it. A classic token with `public_repo` is the simplest option. GitHub's token rules change over time, so check their current docs if a fork fails with 403.
@@ -105,10 +111,10 @@ It listens on `127.0.0.1` only, rejects requests whose `Host` header is not `loc
 ## Tests
 
 ```sh
-node --test test/unit.test.mjs     # drawing core, PNG codec, scanner, server security, GitHub source, PR client (fake GitHub), init
+node --test test/unit.test.mjs test/worker.test.mjs   # drawing core, PNG codec, scanner, server security, GitHub source, PR client (fake GitHub), init, the auth Worker
 node test/pack.mjs                 # npm pack, install into a throwaway project, CLI, ESM entry, TypeScript types, the installed server
 npm i -D playwright && npx playwright install chromium
-node test/e2e.mjs                  # real server + real browser: drawing, saving to disk, PR flow, hosted GitHub mode, folder mode, mobile
+node test/e2e.mjs                  # real server + real browser: drawing, saving to disk, PR flow, hosted GitHub mode, sign-in, folder mode, mobile
 ```
 
 ## Known limitations

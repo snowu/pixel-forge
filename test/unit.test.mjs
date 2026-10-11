@@ -309,8 +309,8 @@ test('GitHub source: branch names with slashes, truncated trees, and helpful err
   const src = await PF.sources.githubSource({ repo: 'me/game', branch: 'release/1.0', fetch: gh.fetch });
   assert.equal(src.sprites.length, 1); assert.ok(gh.calls.includes('/repos/me/game/git/ref/heads/release/1.0'), 'slashes are kept in the ref path');
   assert.match((await PF.sources.githubSource({ repo: 'me/game', fetch: fakeRepo({ files: {}, truncated: true }).fetch })).note, /incomplete/);
-  await assert.rejects(PF.sources.githubSource({ repo: 'me/game', fetch: fakeRepo({ files: {}, tokenRequired: true }).fetch }), /Private repositories need a token/);
-  await assert.rejects(PF.sources.githubSource({ repo: 'me/game', token: 'bad', fetch: fakeRepo({ files: {} }).fetch }), /rejected the token/);
+  await assert.rejects(PF.sources.githubSource({ repo: 'me/game', fetch: fakeRepo({ files: {}, tokenRequired: true }).fetch }), /not found.*private repository/s);
+  await assert.rejects(PF.sources.githubSource({ repo: 'me/game', token: 'bad', fetch: fakeRepo({ files: {} }).fetch }), /rejected the sign-in or token/);
   await assert.rejects(PF.sources.githubSource({ repo: 'me/game', fetch: fakeRepo({ files: {}, rate: true }).fetch }), /rate limit/);
   await assert.rejects(PF.sources.githubSource({ repo: 'nonsense' }), /owner\/name/);
   assert.equal((await PF.sources.githubSource({ repo: 'me/game', token: 'good', fetch: fakeRepo({ files: {}, tokenRequired: true }).fetch })).sprites.length, 0, 'with a token a private repository opens');
@@ -356,4 +356,41 @@ test('the file registers the global AND module.exports, so bundlers that treat i
   assert.equal(typeof cjs.module.exports.mount, 'function'); assert.equal(typeof cjs.PixelForge.mount, 'function');
   const script = {}; script.globalThis = script; vm.runInNewContext(src, script);
   assert.equal(typeof script.PixelForge.mount, 'function', 'plain <script> use');
+});
+
+test('error explanations are in plain language and keep the raw detail', () => {
+  const E = PF.auth.explainError;
+  assert.match(E(401, 'Bad credentials', 'GET /user'), /expired or was revoked.*Sign in again/s);
+  assert.match(E(403, 'Resource not accessible by integration', 'POST /x', 'me/game'), /not allowed.*me\/game.*Contents and Pull requests.*install the app/s);
+  assert.match(E(403, 'Resource protected by organization SAML enforcement', 'GET /x'), /single sign-on/);
+  assert.match(E(403, 'API rate limit exceeded', 'GET /x'), /rate limit/);
+  assert.match(E(404, 'Not Found', 'GET /x', 'me/game'), /not found for me\/game.*private/s);
+  assert.match(E(422, 'Reference already exists', 'POST /refs'), /already exists/);
+  assert.match(E(500, 'oops', 'GET /x'), /500 oops/);
+  assert.match(E(401, 'x', 'GET /user'), /\[GET \/user: 401 x\]/, 'the raw status and message stay at the end for bug reports');
+});
+test('listRepos prefers GitHub App installations and falls back to the user repos', async () => {
+  const json = (o) => ({ ok: true, status: 200, text: async () => JSON.stringify(o) });
+  const app = async (url) => (url.includes('/user/installations?') ? json({ installations: [{ id: 7 }] }) : url.includes('/installations/7/repositories') ? json({ repositories: [{ full_name: 'me/game' }, { full_name: 'me/art' }] }) : { ok: false, status: 404, text: async () => '{}' });
+  assert.deepEqual(await PF.auth.listRepos('t', { fetch: app }), ['me/game', 'me/art']);
+  const pat = async (url) => (url.includes('/user/repos') ? json([{ full_name: 'me/a' }, { full_name: 'me/a' }, { full_name: 'me/b' }]) : { ok: false, status: 404, text: async () => '{}' });
+  assert.deepEqual(await PF.auth.listRepos('t', { fetch: pat }), ['me/a', 'me/b']);
+});
+test('githubSignIn: accepts only the right origin and nonce, reports popup problems', async () => {
+  const listeners = []; let closed = false;
+  const win = { location: { href: 'https://app.example/', origin: 'https://app.example' }, crypto: { getRandomValues: (a) => a.fill(7) }, addEventListener: (t, f) => listeners.push(f), removeEventListener: (t, f) => listeners.splice(listeners.indexOf(f), 1),
+    open: (url) => { win.openedUrl = url; return { get closed() { return closed; }, close() { closed = true; } }; } };
+  const p = PF.auth.signIn('https://auth.example', { win });
+  assert.match(win.openedUrl, /^https:\/\/auth\.example\/login\?origin=https%3A%2F%2Fapp\.example&nonce=07070707/);
+  const nonce = '07'.repeat(16);
+  listeners[0]({ origin: 'https://evil.example', data: { type: 'pf-auth', nonce, token: 'stolen' } }); // wrong origin: ignored
+  listeners[0]({ origin: 'https://auth.example', data: { type: 'pf-auth', nonce: 'other', token: 'x' } }); // wrong nonce: ignored
+  listeners[0]({ origin: 'https://auth.example', data: { type: 'pf-auth', nonce, token: 'gho_ok', expires_in: 28800 } });
+  assert.deepEqual(await p, { token: 'gho_ok', expiresIn: 28800 });
+  assert.equal(listeners.length, 0, 'the listener is removed afterwards');
+  await assert.rejects(PF.auth.signIn('', { win }), /not set up/);
+  await assert.rejects(PF.auth.signIn('https://auth.example', { win: { ...win, open: () => null } }), /blocked/);
+  const w2 = { ...win, addEventListener: (t, f) => listeners.push(f), removeEventListener: () => {} };
+  const err = PF.auth.signIn('https://auth.example', { win: w2 }); listeners.at(-1)({ origin: 'https://auth.example', data: { type: 'pf-auth', nonce, error: 'access_denied' } });
+  await assert.rejects(err, /access_denied/);
 });
