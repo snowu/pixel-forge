@@ -1,4 +1,4 @@
-// pixel-forge-auth: the tiny service behind "Sign in with GitHub".
+// spritewright-auth: the tiny service behind "Sign in with GitHub".
 //
 // Why it exists: GitHub exchanges the login code for an access token with a client SECRET, and that endpoint has no CORS, so a static page
 // cannot do it alone. This Worker holds the secret, does the exchange, hands the token to the page that opened the popup, and forgets it.
@@ -41,7 +41,7 @@ const SAFE = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-
 /** The popup's last page: hand the result to the opener (only to the verified origin) and close. */
 function result(data, origin) {
   const json = JSON.stringify(data).replace(/</g, '\\u003c'), target = JSON.stringify(origin).replace(/</g, '\\u003c');
-  return new Response(`<!doctype html><meta charset="utf-8"><title>pixel-forge sign-in</title><p>${data.error ? 'Sign-in failed. You can close this window.' : 'Signed in. You can close this window.'}</p><script>(function(){try{window.opener&&window.opener.postMessage(${json},${target})}catch(e){}window.close()})()</script>`, { headers: SAFE });
+  return new Response(`<!doctype html><meta charset="utf-8"><title>spritewright sign-in</title><p>${data.error ? 'Sign-in failed. You can close this window.' : 'Signed in. You can close this window.'}</p><script>(function(){try{window.opener&&window.opener.postMessage(${json},${target})}catch(e){}window.close()})()</script>`, { headers: SAFE });
 }
 
 export async function handle(request, env, doFetch = fetch, now = Date.now()) {
@@ -70,7 +70,7 @@ export async function handle(request, env, doFetch = fetch, now = Date.now()) {
     if (!code) return fail('GitHub did not send a login code.');
     let data;
     try {
-      const r = await doFetch('https://github.com/login/oauth/access_token', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'pixel-forge-auth' },
+      const r = await doFetch('https://github.com/login/oauth/access_token', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'spritewright-auth' },
         body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code, redirect_uri: url.origin + '/callback' }) });
       data = await r.json();
     } catch { return fail('Could not reach GitHub. Try again.'); }

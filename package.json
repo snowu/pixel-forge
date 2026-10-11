@@ -1,14 +1,14 @@
 {
-  "name": "pixel-forge",
+  "name": "spritewright",
   "version": "0.1.0",
   "description": "A dependency-free pixel art editor that finds the sprites in a project, saves them back, and can open a pull request with the changes.",
   "type": "module",
   "bin": {
-    "pixel-forge": "bin/pixel-forge.mjs"
+    "spritewright": "bin/spritewright.mjs"
   },
   "main": "index.mjs",
   "files": [
-    "pixel-forge.js",
+    "spritewright.js",
     "index.mjs",
     "index.d.ts",
     "index.html",
@@ -34,7 +34,7 @@
       "types": "./index.d.ts",
       "default": "./index.mjs"
     },
-    "./pixel-forge.js": "./pixel-forge.js",
+    "./spritewright.js": "./spritewright.js",
     "./scan": "./src/scan.mjs",
     "./serve": "./src/serve.mjs",
     "./package.json": "./package.json"
@@ -48,10 +48,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/snowu/pixel-forge.git"
+    "url": "git+https://github.com/snowu/spritewright.git"
   },
-  "homepage": "https://github.com/snowu/pixel-forge#readme",
+  "homepage": "https://github.com/snowu/spritewright#readme",
   "bugs": {
-    "url": "https://github.com/snowu/pixel-forge/issues"
+    "url": "https://github.com/snowu/spritewright/issues"
   }
 }

@@ -41,7 +41,7 @@ export function createServer({ root, port = 5173, host = '127.0.0.1', config } =
         const html = fs.readFileSync(path.join(pkgDir, 'index.html'), 'utf8').replace('<!--PF_TOKEN-->', `<meta name="pf-token" content="${token}">`);
         return send(res, 200, html, MIME['.html']);
       }
-      if (req.method === 'GET' && p === '/pixel-forge.js') return send(res, 200, fs.readFileSync(path.join(pkgDir, 'pixel-forge.js')), MIME['.js']);
+      if (req.method === 'GET' && p === '/spritewright.js') return send(res, 200, fs.readFileSync(path.join(pkgDir, 'spritewright.js')), MIME['.js']);
       if (req.method === 'GET' && p === '/api/manifest') return send(res, 200, JSON.stringify(scan(root, config)), MIME['.json']);
       if (p.startsWith('/project/')) {
         const abs = safeResolve(root, p.slice('/project/'.length), ignore);
@@ -53,7 +53,7 @@ export function createServer({ root, port = 5173, host = '127.0.0.1', config } =
           return send(res, 200, fs.readFileSync(abs), MIME[ext]);
         }
         if (req.method === 'PUT') {
-          if (req.headers['x-pixel-forge'] !== token) return send(res, 403, 'Missing or wrong token');
+          if (req.headers['x-spritewright'] !== token) return send(res, 403, 'Missing or wrong token');
           if (ext !== '.png') return send(res, 400, 'Only .png files can be written');
           const chunks = []; let size = 0;
           for await (const c of req) { size += c.length; if (size > MAX_BYTES) return send(res, 413, 'File too large'); chunks.push(c); }

@@ -1,8 +1,8 @@
-# pixel-forge-auth: the service behind "Sign in with GitHub"
+# spritewright-auth: the service behind "Sign in with GitHub"
 
-A static page cannot sign users in with GitHub on its own: GitHub exchanges the login code for an access token using a client **secret**, and that endpoint has no CORS. This tiny Cloudflare Worker holds the secret, does the exchange, hands the token to the pixel-forge page that opened the popup, and forgets it. It stores nothing and logs nothing. ~100 lines, no dependencies, tested in `test/worker.test.mjs`.
+A static page cannot sign users in with GitHub on its own: GitHub exchanges the login code for an access token using a client **secret**, and that endpoint has no CORS. This tiny Cloudflare Worker holds the secret, does the exchange, hands the token to the spritewright page that opened the popup, and forgets it. It stores nothing and logs nothing. ~100 lines, no dependencies, tested in `test/worker.test.mjs`.
 
-What the person using pixel-forge gets: click **Sign in with GitHub**, sign in on github.com as usual (SSO and 2FA included), and the editor can read their private repositories and open pull requests as them. No tokens to create or paste.
+What the person using spritewright gets: click **Sign in with GitHub**, sign in on github.com as usual (SSO and 2FA included), and the editor can read their private repositories and open pull requests as them. No tokens to create or paste.
 
 ## One-time setup (about 10 minutes)
 
@@ -11,8 +11,8 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 
 | Field | Value |
 | --- | --- |
-| Name | `pixel-forge` (must be unique on GitHub, so pick your own) |
-| Homepage URL | `https://snowu.github.io/pixel-forge/` |
+| Name | `spritewright` (must be unique on GitHub, so pick your own) |
+| Homepage URL | `https://snowu.github.io/spritewright/` |
 | Callback URL | `https://<your-worker>.workers.dev/callback` (you get the host in step 3; you can edit it afterwards) |
 | Expire user authorization tokens | **on** (default): tokens last 8 hours |
 | Request user authorization (OAuth) during installation | off |
@@ -38,7 +38,7 @@ npx wrangler deploy
 Wrangler prints the Worker URL. Put `<that url>/callback` into the GitHub App's **Callback URL**.
 
 ### 4. Tell the page where the service is
-Open the editor with `?auth=https://<your-worker>.workers.dev`, or set `DEFAULT_AUTH_BASE` in `index.html`, or pass `authBase` to `PixelForge.mount`.
+Open the editor with `?auth=https://<your-worker>.workers.dev`, or set `DEFAULT_AUTH_BASE` in `index.html`, or pass `authBase` to `Spritewright.mount`.
 
 Check it with `curl https://<your-worker>.workers.dev/health` (should print `{"ok":true}`).
 

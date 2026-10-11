@@ -1,4 +1,4 @@
-# pixel-forge
+# spritewright
 
 A pixel art editor that works **by itself in a browser** or **as a dependency inside a game repository**. No runtime dependencies, no build step.
 
@@ -8,7 +8,7 @@ And it can hand art back as a **GitHub pull request**, so an artist never needs 
 
 ## Try it now (nothing to install)
 
-**https://snowu.github.io/pixel-forge/**
+**https://snowu.github.io/spritewright/**
 
 Click **Upload PNG** (or **Blank sprite**), draw, and press **Save** or **Export** to download the result. Everything happens in your browser tab: the file is never uploaded anywhere, and the page warns you before you close the tab with unsaved changes. The same page can also open a whole GitHub repository or a folder on your computer (below).
 
@@ -22,43 +22,43 @@ No install, nothing in the game repository.
 - **A folder on your computer** (Chrome, Edge, Opera). Choose the project folder; the sprites are found, and **Save** writes them back in place.
 - Or drag PNG files onto the canvas.
 
-To host the page yourself: copy `index.html` and `pixel-forge.js` to any static host (this repository publishes itself with GitHub Pages, see `.github/workflows/pages.yml`).
+To host the page yourself: copy `index.html` and `spritewright.js` to any static host (this repository publishes itself with GitHub Pages, see `.github/workflows/pages.yml`).
 
 ### 2. As a dependency of a game repository
 
 ```sh
-npm i -D pixel-forge            # or: npm i -D github:snowu/pixel-forge   (until it is on the npm registry)
-npx pixel-forge init            # writes pixel-forge.config.json (skips docs, screenshots, previews)
-npx pixel-forge --open          # editor + save-to-disk server on http://127.0.0.1:5173
+npm i -D spritewright            # or: npm i -D github:snowu/spritewright   (until it is on the npm registry)
+npx spritewright init            # writes spritewright.config.json (skips docs, screenshots, previews)
+npx spritewright --open          # editor + save-to-disk server on http://127.0.0.1:5173
 ```
 
-`pixel-forge init` looks at what a scan finds and writes a starter config; for a project with `art-handoff/`, `public/art/` and `docs/previews/` it picks the first two. Add a script so the artist just runs `npm run art`:
+`spritewright init` looks at what a scan finds and writes a starter config; for a project with `art-handoff/`, `public/art/` and `docs/previews/` it picks the first two. Add a script so the artist just runs `npm run art`:
 
 ```json
-{ "scripts": { "art": "pixel-forge --open" } }
+{ "scripts": { "art": "spritewright --open" } }
 ```
 
-Not using npm? Copy `pixel-forge.js`, `index.html`, `bin/` and `src/` into `tools/pixel-forge/` (or add a git submodule) and run `node tools/pixel-forge/bin/pixel-forge.mjs . --open`.
+Not using npm? Copy `spritewright.js`, `index.html`, `bin/` and `src/` into `tools/spritewright/` (or add a git submodule) and run `node tools/spritewright/bin/spritewright.mjs . --open`.
 
 **Save** writes the PNG straight back, atomically (temp file, then rename). New sprites can be created at any path inside the project. In the same session the artist can still use **Propose PR** instead of committing by hand.
 
-Other commands: `pixel-forge scan [dir] -o pixel-art.json` writes a manifest (for the static setup below), `--port`, `--help`.
+Other commands: `spritewright scan [dir] -o pixel-art.json` writes a manifest (for the static setup below), `--port`, `--help`.
 
 ### 3. As a library inside your own page or tool
 
 ```ts
-import PixelForge from 'pixel-forge';          // ESM + TypeScript types included; also a plain <script src="pixel-forge.js">
-const editor = PixelForge.mount(document.getElementById('editor')!, {
+import Spritewright from 'spritewright';          // ESM + TypeScript types included; also a plain <script src="spritewright.js">
+const editor = Spritewright.mount(document.getElementById('editor')!, {
   github: { slug: 'me/my-game', base: 'main' },   // used for pull requests; add connect: 'github' to open it on start
   accent: '#b98cff',
 });
 ```
 
-Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `pr: false` to hide the pull-request button. `PixelForge.createPullRequest`, `PixelForge.png.decode/encode`, `PixelForge.sources.*` and `PixelForge.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
+Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `pr: false` to hide the pull-request button. `Spritewright.createPullRequest`, `Spritewright.png.decode/encode`, `Spritewright.sources.*` and `Spritewright.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
 
 ## Project config (optional)
 
-`pixel-forge.config.json` in the project root. The local server, the folder mode and the GitHub mode all read it.
+`spritewright.config.json` in the project root. The local server, the folder mode and the GitHub mode all read it.
 
 ```json
 {
@@ -76,11 +76,11 @@ Works with Vite and other bundlers (checked with a Vite build). Options: `source
 - `frames` gives the frame size of sprite sheets for the animation preview (a wide image whose width is a multiple of its height is otherwise treated as a strip of square frames).
 - `repo` is detected from `.git/config` and the folder's position in the repository, so you rarely need it. `maxSize` limits sprite dimensions (default 1024); GitHub mode also skips files over 256 KB (`maxBytes`).
 
-Static hosting with a manifest, if you prefer it to the GitHub mode: `pixel-forge scan . -o pixel-art.json`, publish it next to the page, and open `index.html?manifest=pixel-art.json&base=../&repo=owner/name`.
+Static hosting with a manifest, if you prefer it to the GitHub mode: `spritewright scan . -o pixel-art.json`, publish it next to the page, and open `index.html?manifest=pixel-art.json&base=../&repo=owner/name`.
 
 ## Signing in with GitHub (no tokens to paste)
 
-Reading **public** repositories needs no sign-in at all. To open **private** repositories and to send pull requests, the editor offers **Sign in with GitHub**: a popup on github.com (your normal login, SSO and 2FA included), then the editor can act on the repositories where the *pixel-forge GitHub App* is installed, with exactly two permissions (Contents and Pull requests, read and write). Tokens last 8 hours and stay in the tab's session storage.
+Reading **public** repositories needs no sign-in at all. To open **private** repositories and to send pull requests, the editor offers **Sign in with GitHub**: a popup on github.com (your normal login, SSO and 2FA included), then the editor can act on the repositories where the *spritewright GitHub App* is installed, with exactly two permissions (Contents and Pull requests, read and write). Tokens last 8 hours and stay in the tab's session storage.
 
 This needs a small auth service because GitHub's token exchange requires a secret and has no CORS: see [`worker/README.md`](worker/README.md) (a ~100-line Cloudflare Worker that stores nothing; about 10 minutes to set up). Until it is set up, the page says so and links to a **pre-filled fine-grained token** (Contents and Pull requests: read and write) as the fallback. Errors from GitHub are explained in plain language ("you are signed in, but the app is not installed on this repository" instead of `403`).
 

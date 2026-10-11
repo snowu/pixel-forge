@@ -8,8 +8,8 @@ import { scan, readPngSize, slugFromRemote, gitInfo, globToRegExp, suggestConfig
 import { spawnSync } from 'node:child_process';
 import { createServer, safeResolve } from '../src/serve.mjs';
 import { encodePng, decodePng, fromRows, encodeRaw } from './png.mjs';
-await import('../pixel-forge.js');
-const PF = globalThis.PixelForge, C = PF.core;
+await import('../spritewright.js');
+const PF = globalThis.Spritewright, C = PF.core;
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pf-'));
 const SLIME = fromRows(['.gg.', 'gGGg', 'gGGg', '.gg.'], { g: [60, 180, 80], G: [120, 230, 130] });
@@ -95,7 +95,7 @@ test('config: dirs, exclude, maxSize, frames (exact and glob) and palette', () =
   for (const d of ['art', 'other', 'art/wip']) fs.mkdirSync(path.join(root, d), { recursive: true });
   for (const f of ['art/a.png', 'art/b.png', 'art/wip/c.png', 'other/d.png']) fs.writeFileSync(path.join(root, f), SLIME.png);
   fs.writeFileSync(path.join(root, 'pal.hex'), '1a1c2c\n5d275d\n');
-  fs.writeFileSync(path.join(root, 'pixel-forge.config.json'), JSON.stringify({ dirs: ['art'], exclude: ['art/wip/**'], palette: 'pal.hex', frames: { 'art/a.png': { w: 2, h: 4, fps: 6 }, 'art/b*': { w: 4, h: 2 } } }));
+  fs.writeFileSync(path.join(root, 'spritewright.config.json'), JSON.stringify({ dirs: ['art'], exclude: ['art/wip/**'], palette: 'pal.hex', frames: { 'art/a.png': { w: 2, h: 4, fps: 6 }, 'art/b*': { w: 4, h: 2 } } }));
   const m = scan(root);
   assert.deepEqual(m.sprites.map((s) => s.path), ['art/a.png', 'art/b.png']);
   assert.deepEqual(m.sprites[0].frames, { w: 2, h: 4, fps: 6 }); assert.deepEqual(m.sprites[1].frames, { w: 4, h: 2 });
@@ -135,23 +135,23 @@ test('the server lists, serves and writes sprites, and refuses everything else',
     const mf = JSON.parse((await req(base + 'api/manifest')).body);
     assert.deepEqual(mf.sprites.map((x) => x.path), ['art/slime.png']);
     const home = (await req(base)).body.toString(); assert.match(home, new RegExp(`name="pf-token" content="${s.token}"`));
-    assert.equal((await req(base + 'pixel-forge.js')).status, 200);
+    assert.equal((await req(base + 'spritewright.js')).status, 200);
     const png = await req(base + 'project/art/slime.png'); assert.equal(png.status, 200); assert.ok(png.body.equals(SLIME.png));
     assert.equal((await req(base + 'project/secret.txt')).status, 403, 'only png/hex are served');
     assert.equal((await req(base + 'project/..%2fsecret.txt')).status, 400);
     assert.equal((await req(base + 'project/.git/config')).status, 400);
     const edited = fromRows(['rrrr', 'rrrr'], { r: [255, 0, 0] }).png;
     assert.equal((await req(base + 'project/art/slime.png', { method: 'PUT', body: edited })).status, 403, 'no token');
-    assert.equal((await req(base + 'project/art/slime.png', { method: 'PUT', headers: { 'x-pixel-forge': 'wrong' }, body: edited })).status, 403, 'wrong token');
-    assert.equal((await req(base + 'project/art/slime.png', { method: 'PUT', headers: { 'x-pixel-forge': s.token }, body: Buffer.from('hello hello hello hello hello hello hello hello') })).status, 400, 'not a PNG');
-    assert.equal((await req(base + 'project/art/run.sh', { method: 'PUT', headers: { 'x-pixel-forge': s.token }, body: edited })).status, 400, 'only png');
-    assert.equal((await req(base + 'project/..%2f..%2fx.png', { method: 'PUT', headers: { 'x-pixel-forge': s.token }, body: edited })).status, 400, 'traversal');
-    assert.equal((await req(base + 'project/art/slime.png', { method: 'PUT', headers: { 'x-pixel-forge': s.token }, body: edited })).status, 200);
+    assert.equal((await req(base + 'project/art/slime.png', { method: 'PUT', headers: { 'x-spritewright': 'wrong' }, body: edited })).status, 403, 'wrong token');
+    assert.equal((await req(base + 'project/art/slime.png', { method: 'PUT', headers: { 'x-spritewright': s.token }, body: Buffer.from('hello hello hello hello hello hello hello hello') })).status, 400, 'not a PNG');
+    assert.equal((await req(base + 'project/art/run.sh', { method: 'PUT', headers: { 'x-spritewright': s.token }, body: edited })).status, 400, 'only png');
+    assert.equal((await req(base + 'project/..%2f..%2fx.png', { method: 'PUT', headers: { 'x-spritewright': s.token }, body: edited })).status, 400, 'traversal');
+    assert.equal((await req(base + 'project/art/slime.png', { method: 'PUT', headers: { 'x-spritewright': s.token }, body: edited })).status, 200);
     assert.ok(fs.readFileSync(path.join(root, 'art/slime.png')).equals(edited), 'written to disk');
-    assert.equal((await req(base + 'project/art/new/dir/x.png', { method: 'PUT', headers: { 'x-pixel-forge': s.token }, body: edited })).status, 200);
+    assert.equal((await req(base + 'project/art/new/dir/x.png', { method: 'PUT', headers: { 'x-spritewright': s.token }, body: edited })).status, 200);
     assert.ok(fs.existsSync(path.join(root, 'art/new/dir/x.png')), 'new files and folders can be created inside the project');
     assert.deepEqual(fs.readdirSync(path.join(root, 'art')).filter((n) => n.includes('pf-tmp')), [], 'no temp files left behind');
-    assert.equal((await req(base + 'project/art/slime.png', { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'PUT', 'access-control-request-headers': 'x-pixel-forge' } })).headers['access-control-allow-origin'], undefined, 'no CORS preflight approval');
+    assert.equal((await req(base + 'project/art/slime.png', { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'PUT', 'access-control-request-headers': 'x-spritewright' } })).headers['access-control-allow-origin'], undefined, 'no CORS preflight approval');
     assert.equal((await req(base + 'api/manifest', { host: 'evil.example' })).status, 403, 'DNS-rebinding style host header');
     assert.equal((await req(base + 'api/manifest', { host: `localhost:${new URL(base).port}` })).status, 200);
   } finally { await s.close(); }
@@ -294,7 +294,7 @@ function fakeRepo({ files, branch = 'main', canPush = true, truncated = false, t
 }
 test('GitHub source: lists PNGs, applies the repo config, skips junk, and reads exact bytes', async () => {
   const files = { 'art/hero.png': SLIME.png, 'art/wip/x.png': SLIME.png, 'docs/shot.png': SLIME.png, 'node_modules/a/b.png': SLIME.png, 'art/readme.md': Buffer.from('x'), 'art/big.png': Buffer.alloc(300000),
-    'pal.hex': Buffer.from('1a1c2c\n5d275d\n'), 'pixel-forge.config.json': Buffer.from(JSON.stringify({ dirs: ['art'], exclude: ['art/wip/**'], palette: 'pal.hex', frames: { 'art/hero.png': { w: 2, h: 4, fps: 6 } } })) };
+    'pal.hex': Buffer.from('1a1c2c\n5d275d\n'), 'spritewright.config.json': Buffer.from(JSON.stringify({ dirs: ['art'], exclude: ['art/wip/**'], palette: 'pal.hex', frames: { 'art/hero.png': { w: 2, h: 4, fps: 6 } } })) };
   const gh = fakeRepo({ files }), src = await PF.sources.githubSource({ repo: 'me/game', fetch: gh.fetch });
   assert.equal(src.kind, 'github'); assert.equal(src.branch, 'main');
   assert.deepEqual(src.sprites.map((s) => s.path), ['art/hero.png']);
@@ -342,20 +342,20 @@ test('suggestConfig picks the art folders and skips docs, screenshots and previe
 test('the init command writes a config that makes the next scan skip the junk, and refuses to overwrite', () => {
   const root = tmp(); for (const d of ['assets/art', 'docs/previews']) fs.mkdirSync(path.join(root, d), { recursive: true });
   for (const f of ['assets/art/a.png', 'assets/art/b.png', 'docs/previews/p.png']) fs.writeFileSync(path.join(root, f), SLIME.png);
-  const bin = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'pixel-forge.mjs');
+  const bin = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'spritewright.mjs');
   const r = spawnSync('node', [bin, 'init', root], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /3 PNGs found, 2 look like game art/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'pixel-forge.config.json'), 'utf8')).dirs, ['assets']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'spritewright.config.json'), 'utf8')).dirs, ['assets']);
   assert.deepEqual(scan(root).sprites.map((s) => s.path), ['assets/art/a.png', 'assets/art/b.png']);
   assert.equal(spawnSync('node', [bin, 'init', root], { encoding: 'utf8' }).status, 1, 'second run refuses');
   assert.equal(spawnSync('node', [bin, 'init', root, '--force'], { encoding: 'utf8' }).status, 0);
 });
 
 test('the file registers the global AND module.exports, so bundlers that treat it as CommonJS still work', async () => {
-  const vm = await import('node:vm'); const src = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'pixel-forge.js'), 'utf8');
+  const vm = await import('node:vm'); const src = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'spritewright.js'), 'utf8');
   const cjs = { module: { exports: {} } }; cjs.globalThis = cjs; vm.runInNewContext(src, cjs);
-  assert.equal(typeof cjs.module.exports.mount, 'function'); assert.equal(typeof cjs.PixelForge.mount, 'function');
+  assert.equal(typeof cjs.module.exports.mount, 'function'); assert.equal(typeof cjs.Spritewright.mount, 'function');
   const script = {}; script.globalThis = script; vm.runInNewContext(src, script);
-  assert.equal(typeof script.PixelForge.mount, 'function', 'plain <script> use');
+  assert.equal(typeof script.Spritewright.mount, 'function', 'plain <script> use');
 });
 
 test('error explanations are in plain language and keep the raw detail', () => {

@@ -1,11 +1,11 @@
-/* pixel-forge: a small pixel art editor with no dependencies and no build step.
-   Drop this one file into any project (or open the bundled index.html through `pixel-forge serve`), call PixelForge.mount(element, options),
+/* spritewright: a small pixel art editor with no dependencies and no build step.
+   Drop this one file into any project (or open the bundled index.html through `spritewright serve`), call Spritewright.mount(element, options),
    and it lists the project's PNG sprites, lets you edit them, saves them back, and can propose the change as a GitHub pull request.
    https://developer.mozilla.org/en-US/docs/Web/API/ImageData is the only "API" it leans on, plus fetch and canvas. */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api; // CommonJS and bundlers that treat this file as CommonJS
-  root.PixelForge = api; // always register the global too: <script> tags, and index.mjs read it
+  root.Spritewright = api; // always register the global too: <script> tags, and index.mjs read it
 })(typeof globalThis !== 'undefined' ? globalThis : typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
@@ -195,7 +195,7 @@
   function prBody(o) {
     const rows = o.files.map((f) => `| \`${f.path}\` | ${f.w}×${f.h} | ${f.pixels} |`).join('\n');
     const imgs = o.files.map((f) => o.repo && o.baseSha && o.commit ? `**${f.path}**\n\nBefore | After\n--- | ---\n<img src="https://raw.githubusercontent.com/${o.repo}/${o.baseSha}/${o.prefix || ''}${f.path}" width="128"> | <img src="https://raw.githubusercontent.com/${o.headRepo || o.repo}/${o.commit}/${o.prefix || ''}${f.path}" width="128">` : '').filter(Boolean).join('\n\n');
-    return `${o.description ? o.description + '\n\n' : ''}| Sprite | Size | Pixels changed |\n| --- | --- | --- |\n${rows}\n${imgs ? '\n' + imgs + '\n' : ''}\n_Proposed with pixel-forge. GitHub shows PNG changes in the "Files changed" tab with 2-up, swipe and onion-skin views._`;
+    return `${o.description ? o.description + '\n\n' : ''}| Sprite | Size | Pixels changed |\n| --- | --- | --- |\n${rows}\n${imgs ? '\n' + imgs + '\n' : ''}\n_Proposed with spritewright. GitHub shows PNG changes in the "Files changed" tab with 2-up, swipe and onion-skin views._`;
   }
 
 
@@ -278,7 +278,7 @@
      Sources: where sprites come from and how they are read and written. The editor itself does not care.
        { kind, note, sprites: [{ path, w?, h?, bytes?, frames? }], read(path) -> Uint8Array, write?(path, Uint8Array),
          repo?: { slug, base, prefix }, palette?: ['#rrggbb'], thumbs: boolean }
-     Built in: a list of files served over HTTP (static), the local `pixel-forge serve` server, a GitHub repository (read through the
+     Built in: a list of files served over HTTP (static), the local `spritewright serve` server, a GitHub repository (read through the
      API, changes go back as a pull request) and a folder on your disk (browser File System Access API, saves in place).
      ===================================================================================================== */
   const IGNORE = ['node_modules', '.git', '.godot', '.import', '.zig-cache', 'zig-cache', 'zig-out', 'dist', 'build', 'target', '.venv', '__pycache__', '.next', 'coverage'];
@@ -305,12 +305,12 @@
     return { kind: 'static', thumbs: true, note: 'Static mode: Save downloads the PNG. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(base + path.split('/').map(encodeURIComponent).join('/')); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); } };
   }
-  /** The local `pixel-forge serve` server: reads and writes the project folder. */
+  /** The local `spritewright serve` server: reads and writes the project folder. */
   function serverSource(mf, token) {
     const url = (path) => 'project/' + path.split('/').map(encodeURIComponent).join('/');
     return { kind: 'server', thumbs: true, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
-      async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-pixel-forge': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
+      async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
   }
 
   /** A GitHub repository, read through the REST API (a token is only needed for private repos and for pull requests). */
@@ -333,7 +333,7 @@
     const entries = new Map((tree.tree || []).filter((e) => e.type === 'blob').map((e) => [e.path, e]));
     const blob = async (path) => { const e = entries.get(path); if (!e) throw new Error('not in the repository: ' + path); const b = await call('/repos/' + o.repo + '/git/blobs/' + e.sha); return b.encoding === 'base64' ? b64ToBytes(b.content) : new TextEncoder().encode(b.content); };
     let cfg = {}, palette = null;
-    if (entries.has('pixel-forge.config.json')) { try { cfg = JSON.parse(new TextDecoder().decode(await blob('pixel-forge.config.json'))); } catch { /* ignore a broken config */ } }
+    if (entries.has('spritewright.config.json')) { try { cfg = JSON.parse(new TextDecoder().decode(await blob('spritewright.config.json'))); } catch { /* ignore a broken config */ } }
     if (cfg.palette && entries.has(cfg.palette)) { try { palette = palFromText(new TextDecoder().decode(await blob(cfg.palette))); } catch { /* none */ } }
     const png = [...entries.values()].filter((e) => /\.png$/i.test(e.path) && e.size <= (cfg.maxBytes || maxBytes)).map((e) => ({ path: e.path, bytes: e.size }));
     const sprites = applyConfig(png, cfg);
@@ -346,7 +346,7 @@
   async function folderSource(root, o = {}) {
     const maxSize = o.maxSize || 1024, files = new Map();
     const readText = async (dir, ...names) => { try { let d = dir; for (const n of names.slice(0, -1)) d = await d.getDirectoryHandle(n); return await (await (await d.getFileHandle(names.at(-1))).getFile()).text(); } catch { return null; } };
-    let cfg = {}; const cfgText = await readText(root, 'pixel-forge.config.json'); if (cfgText) { try { cfg = JSON.parse(cfgText); } catch { /* ignore */ } }
+    let cfg = {}; const cfgText = await readText(root, 'spritewright.config.json'); if (cfgText) { try { cfg = JSON.parse(cfgText); } catch { /* ignore */ } }
     const ign = new Set([...IGNORE, ...(cfg.ignore || [])]), found = [];
     const walk = async (dir, prefix) => {
       for await (const [name, h] of dir.entries()) {
@@ -401,7 +401,7 @@
     if (!out.length) { const r = await get('/user/repos?sort=updated&per_page=50'); if (r) out.push(...r.map((x) => x.full_name)); }
     return [...new Set(out)];
   }
-  const PAT_URL = 'https://github.com/settings/personal-access-tokens/new?name=pixel-forge&description=Edit+sprites+and+open+pull+requests&expires_in=30&contents=write&pull_requests=write';
+  const PAT_URL = 'https://github.com/settings/personal-access-tokens/new?name=spritewright&description=Edit+sprites+and+open+pull+requests&expires_in=30&contents=write&pull_requests=write';
 
   /* =====================================================================================================
      The editor UI

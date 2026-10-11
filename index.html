@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pixel-forge</title>
+<title>spritewright</title>
 <!--PF_TOKEN-->
 <style>
   html,body{margin:0;height:100%;background:#040608;color:#d6e4dc;font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -14,13 +14,13 @@
 </style>
 </head>
 <body>
-<header><b>pixel-forge</b><span>a pixel art editor in your browser: upload a PNG, edit, download. Nothing leaves this tab.</span><a href="https://github.com/snowu/pixel-forge" target="_blank" rel="noopener" style="margin-left:auto;color:#7f948a;font-size:12px">source</a></header>
+<header><b>spritewright</b><span>a pixel art editor in your browser: upload a PNG, edit, download. Nothing leaves this tab.</span><a href="https://github.com/snowu/spritewright" target="_blank" rel="noopener" style="margin-left:auto;color:#7f948a;font-size:12px">source</a></header>
 <div id="app"></div>
-<script src="pixel-forge.js"></script>
+<script src="spritewright.js"></script>
 <script>
   // Standalone use (this page hosted anywhere, e.g. GitHub Pages): it asks which GitHub repository or folder to open.
   // Query options:  ?repo=owner/name[&branch=main]       open that GitHub repository straight away
-  //                 ?manifest=pixel-art.json&base=../      a generated manifest (see `pixel-forge scan`); add &repo=owner/name for pull requests
+  //                 ?manifest=pixel-art.json&base=../      a generated manifest (see `spritewright scan`); add &repo=owner/name for pull requests
   //                 &accent=%23b98cff                      theme colour
   const q = new URLSearchParams(location.search);
   const opts = {};
@@ -31,7 +31,7 @@
   // Sign in with GitHub needs the small auth service in worker/. Point at yours with ?auth=https://your-worker.example or set the default below.
   const DEFAULT_AUTH_BASE = '';
   const auth = q.get('auth') || DEFAULT_AUTH_BASE; if (auth) opts.authBase = auth;
-  PixelForge.mount(document.getElementById('app'), opts);
+  Spritewright.mount(document.getElementById('app'), opts);
 </script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-# Publishes the standalone editor (index.html + pixel-forge.js) with GitHub Pages, so it can be used by itself with no install.
+# Publishes the standalone editor (index.html + spritewright.js) with GitHub Pages, so it can be used by itself with no install.
 # One-time setup (done for this repository): Settings > Pages > Build and deployment > Source: GitHub Actions.
 name: pages
 on:
@@ -12,7 +12,7 @@ jobs:
     environment: { name: github-pages, url: '${{ steps.deployment.outputs.page_url }}' }
     steps:
       - uses: actions/checkout@v4
-      - run: mkdir site && cp index.html pixel-forge.js site/
+      - run: mkdir site && cp index.html spritewright.js site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with: { path: site }

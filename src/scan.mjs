@@ -21,7 +21,7 @@ export function readPngSize(file) {
 }
 
 export function loadConfig(root) {
-  const f = path.join(root, 'pixel-forge.config.json');
+  const f = path.join(root, 'spritewright.config.json');
   if (!fs.existsSync(f)) return {};
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { throw new Error(`${f} is not valid JSON: ${e.message}`); }
 }
@@ -96,7 +96,7 @@ export function scan(root, userConfig) {
 
 const NON_ART = /^(docs?|documentation|screenshots?|previews?|tests?|e2e|coverage|examples?|samples?|marketing|promo|store)$/i;
 /**
- * A starting pixel-forge.config.json for a project, from a scan: the top-level folders that hold sprites (skipping docs, screenshots,
+ * A starting spritewright.config.json for a project, from a scan: the top-level folders that hold sprites (skipping docs, screenshots,
  * previews and test folders) plus exclude patterns for such folders nested inside them.
  */
 export function suggestConfig(manifest) {

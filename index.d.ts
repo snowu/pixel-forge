@@ -21,7 +21,7 @@ export interface MountOptions {
   /** A fixed list of sprites, fetched relative to baseUrl. */
   sprites?: SpriteEntry[];
   paletteList?: string[];
-  /** URL of a manifest made by `pixel-forge scan`. */
+  /** URL of a manifest made by `spritewright scan`. */
   manifestUrl?: string;
   /** Where sprite paths resolve to (static mode). */
   baseUrl?: string;
@@ -100,7 +100,7 @@ export const auth: {
 };
 export const core: Record<string, unknown>;
 
-declare const PixelForge: { auth: typeof auth; mount: typeof mount; createPullRequest: typeof createPullRequest; prBody: typeof prBody; png: typeof png; sources: typeof sources; core: typeof core };
-export default PixelForge;
+declare const Spritewright: { auth: typeof auth; mount: typeof mount; createPullRequest: typeof createPullRequest; prBody: typeof prBody; png: typeof png; sources: typeof sources; core: typeof core };
+export default Spritewright;
 
-declare global { interface Window { PixelForge: typeof PixelForge } }
+declare global { interface Window { Spritewright: typeof Spritewright } }

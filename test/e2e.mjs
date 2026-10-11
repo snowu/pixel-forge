@@ -25,7 +25,7 @@ const sheet = fromRows(['g....g....g....g', '................', '...............
 fs.writeFileSync(path.join(root, 'art/slime.png'), slime.png);
 fs.writeFileSync(path.join(root, 'art/enemies/walk.png'), sheet.png);
 fs.writeFileSync(path.join(root, 'palette.hex'), '1a1c2c\n3cb450\n78e682\nffffff\nff0000\n');
-fs.writeFileSync(path.join(root, 'pixel-forge.config.json'), JSON.stringify({ palette: 'palette.hex', frames: { 'art/enemies/walk.png': { w: 4, h: 4, fps: 12 } } }));
+fs.writeFileSync(path.join(root, 'spritewright.config.json'), JSON.stringify({ palette: 'palette.hex', frames: { 'art/enemies/walk.png': { w: 4, h: 4, fps: 12 } } }));
 const srv = createServer({ root, port: 0 }); const base = await srv.listen();
 
 const browser = await launch();
@@ -201,9 +201,9 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   const http = await import('node:http');
   const pkg = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
   // a static host that only serves the editor, like GitHub Pages would
-  const stat = http.createServer((req, res) => { const f = req.url.split('?')[0] === '/pixel-forge.js' ? 'pixel-forge.js' : req.url.split('?')[0] === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
+  const stat = http.createServer((req, res) => { const f = req.url.split('?')[0] === '/spritewright.js' ? 'spritewright.js' : req.url.split('?')[0] === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
   await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const sbase = `http://127.0.0.1:${stat.address().port}/`;
-  const REPO = { 'art/hero.png': slime.png, 'art/enemies/walk.png': sheet.png, 'docs/shot.png': slime.png, 'pixel-forge.config.json': Buffer.from(JSON.stringify({ dirs: ['art'], palette: 'palette.hex' })), 'palette.hex': Buffer.from('1a1c2c\n3cb450\n78e682\nff0000\n') };
+  const REPO = { 'art/hero.png': slime.png, 'art/enemies/walk.png': sheet.png, 'docs/shot.png': slime.png, 'spritewright.config.json': Buffer.from(JSON.stringify({ dirs: ['art'], palette: 'palette.hex' })), 'palette.hex': Buffer.from('1a1c2c\n3cb450\n78e682\nff0000\n') };
   const tree = Object.entries(REPO).map(([p, b], i) => ({ path: p, type: 'blob', sha: 'sha' + i, size: b.length }));
   const gcalls = []; let canPush = true, tokenOnly = false;
   const gctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
@@ -234,7 +234,7 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.locator('.pf-c-repo').fill('me/game'); await gp.locator('.pf-c-token').fill('ghp_standalone'); await gp.locator('.pf-c-gh').click();
   await gp.waitForSelector('.pf-item'); await gp.waitForTimeout(400);
   const names = await gp.locator('.pf-item .n').allInnerTexts();
-  ok(names.length === 2 && names.some((n) => n.startsWith('hero.png')) && names.some((n) => n.startsWith('walk.png')), 'the repository\'s sprites are listed, honouring its pixel-forge.config.json (docs/ excluded): ' + names.map((n) => n.split('\n')[0]).join(', '));
+  ok(names.length === 2 && names.some((n) => n.startsWith('hero.png')) && names.some((n) => n.startsWith('walk.png')), 'the repository\'s sprites are listed, honouring its spritewright.config.json (docs/ excluded): ' + names.map((n) => n.split('\n')[0]).join(', '));
   ok(!(await gp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'the connect dialog closes');
   ok(await gp.locator('.pf-pal-colors button').count() === 4, 'the repository palette is loaded');
   ok(/GitHub me\/game @ main/.test(await gp.locator('.pf-src').innerText()), 'the sidebar says where the art comes from');
@@ -272,7 +272,7 @@ section('hosted page, fully in the session: upload, edit, download');
 {
   const http = await import('node:http');
   const pkg = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-  const stat = http.createServer((req, res) => { const u = req.url.split('?')[0]; const f = u === '/pixel-forge.js' ? 'pixel-forge.js' : u === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
+  const stat = http.createServer((req, res) => { const u = req.url.split('?')[0]; const f = u === '/spritewright.js' ? 'spritewright.js' : u === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
   await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const hbase = `http://127.0.0.1:${stat.address().port}/`;
   const sctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
   const net = []; sctx.on('request', (r) => { if (!r.url().startsWith(hbase) && !r.url().startsWith('data:')) net.push(r.url()); });
@@ -312,7 +312,7 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
 {
   const http = await import('node:http');
   const pkg = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-  const stat = http.createServer((req, res) => { const u = req.url.split('?')[0]; const f = u === '/pixel-forge.js' ? 'pixel-forge.js' : u === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
+  const stat = http.createServer((req, res) => { const u = req.url.split('?')[0]; const f = u === '/spritewright.js' ? 'spritewright.js' : u === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
   await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const hbase = `http://127.0.0.1:${stat.address().port}/`;
   const actx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
   const seen = []; let mode = 'ok';
@@ -373,7 +373,7 @@ section('standalone: folder on this computer (File System Access, mocked picker)
 {
   const fctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
   const enc = (b) => Buffer.from(b).toString('base64');
-  const FILES = { 'art/slime.png': enc(slime.png), 'art/enemies/walk.png': enc(sheet.png), 'node_modules/dep/x.png': enc(slime.png), 'notes.txt': enc('hello'), 'palette.hex': enc('1a1c2c\n3cb450\n'), 'pixel-forge.config.json': enc(JSON.stringify({ palette: 'palette.hex' })), '.git/config': enc('[remote "origin"]\n\turl = git@github.com:me/folder-game.git\n') };
+  const FILES = { 'art/slime.png': enc(slime.png), 'art/enemies/walk.png': enc(sheet.png), 'node_modules/dep/x.png': enc(slime.png), 'notes.txt': enc('hello'), 'palette.hex': enc('1a1c2c\n3cb450\n'), 'spritewright.config.json': enc(JSON.stringify({ palette: 'palette.hex' })), '.git/config': enc('[remote "origin"]\n\turl = git@github.com:me/folder-game.git\n') };
   await fctx.addInitScript((files) => {
     const dec = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), tree = {};
     for (const [p, b64] of Object.entries(files)) { const parts = p.split('/'); let d = tree; for (const n of parts.slice(0, -1)) d = d[n] = d[n] || {}; d[parts.at(-1)] = dec(b64); }
