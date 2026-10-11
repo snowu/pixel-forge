@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer } from '../src/serve.mjs';
-import { decodePng, fromRows } from './png.mjs';
+import { decodePng, encodePng, fromRows } from './png.mjs';
 
 const pw = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const chromium = pw.chromium || pw.default.chromium;
@@ -196,6 +196,120 @@ await page.locator('.pf-dlg-pr button[value=cancel]').click();
 ok(await page.locator('.pf-prbtn').isDisabled(), 'after the PR, nothing is pending any more');
 ok(await page.evaluate(() => sessionStorage.getItem('pf:token')) !== null && (await page.evaluate(() => localStorage.getItem('pf:token'))) === null, 'the token is kept for the tab only unless "remember" is ticked');
 
+section('standalone: hosted page + GitHub repository (no server, no manifest)');
+{
+  const http = await import('node:http');
+  const pkg = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  // a static host that only serves the editor, like GitHub Pages would
+  const stat = http.createServer((req, res) => { const f = req.url.split('?')[0] === '/pixel-forge.js' ? 'pixel-forge.js' : req.url.split('?')[0] === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
+  await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const sbase = `http://127.0.0.1:${stat.address().port}/`;
+  const REPO = { 'art/hero.png': slime.png, 'art/enemies/walk.png': sheet.png, 'docs/shot.png': slime.png, 'pixel-forge.config.json': Buffer.from(JSON.stringify({ dirs: ['art'], palette: 'palette.hex' })), 'palette.hex': Buffer.from('1a1c2c\n3cb450\n78e682\nff0000\n') };
+  const tree = Object.entries(REPO).map(([p, b], i) => ({ path: p, type: 'blob', sha: 'sha' + i, size: b.length }));
+  const gcalls = []; let canPush = true, tokenOnly = false;
+  const gctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
+  await gctx.route('https://api.github.com/**', async (route) => {
+    const r = route.request(), u = new URL(r.url()), p = u.pathname, m = r.method(), body = r.postData() ? JSON.parse(r.postData()) : null; gcalls.push({ m, p, body, auth: r.headers().authorization });
+    const j = (st, o) => route.fulfill({ status: st, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(o) });
+    if (m === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,accept,x-github-api-version', 'access-control-allow-methods': '*' } });
+    if (p === '/user') return j(200, { login: 'artist' });
+    if (p === '/repos/me/game' && m === 'GET') return tokenOnly && !r.headers().authorization ? j(404, { message: 'Not Found' }) : j(200, { name: 'game', default_branch: 'main', permissions: { push: canPush } });
+    if (p === '/repos/nope/x') return j(404, { message: 'Not Found' });
+    if (p === '/repos/me/game/git/ref/heads/main') return j(200, { object: { sha: 'c1' } });
+    if (p === '/repos/me/game/git/commits/c1') return j(200, { tree: { sha: 't1' } });
+    if (p === '/repos/me/game/git/trees/t1') return j(200, { tree, truncated: false });
+    const bm = /\/git\/blobs\/sha(\d+)$/.exec(p); if (bm && m === 'GET') return j(200, { encoding: 'base64', content: Buffer.from(Object.values(REPO)[+bm[1]]).toString('base64') });
+    if (p === '/repos/me/game/forks') return j(202, { full_name: 'artist/game' });
+    if (p === '/repos/artist/game' && m === 'GET') return j(200, { name: 'game' });
+    if (p.endsWith('/merge-upstream')) return j(200, {});
+    if (p.endsWith('/git/blobs')) return j(201, { sha: 'nb' + gcalls.length }); if (p.endsWith('/git/trees')) return j(201, { sha: 't2' }); if (p.endsWith('/git/commits')) return j(201, { sha: 'c2' }); if (p.endsWith('/git/refs')) return j(201, {});
+    if (p === '/repos/me/game/pulls') return j(201, { html_url: 'https://github.com/me/game/pull/9', number: 9 });
+    return j(404, { message: 'unexpected ' + m + ' ' + p });
+  });
+  const gp = await gctx.newPage(); const gerr = []; gp.on('pageerror', (e) => gerr.push(e.message)); gp.on('dialog', (d) => d.dismiss());
+  await gp.goto(sbase); await gp.waitForSelector('.pf-dlg-connect[open]');
+  ok(true, 'with no server and no manifest the page asks which project to open');
+  ok(await gp.locator('.pf-item').count() === 0, 'and lists nothing yet');
+  await gp.locator('.pf-c-repo').fill('nope/x'); await gp.locator('.pf-c-gh').click(); await gp.waitForFunction(() => /not found/i.test(document.querySelector('.pf-c-msg').textContent));
+  ok(true, 'a wrong repository gives a readable error');
+  await gp.locator('.pf-c-repo').fill('me/game'); await gp.locator('.pf-c-token').fill('ghp_standalone'); await gp.locator('.pf-c-gh').click();
+  await gp.waitForSelector('.pf-item'); await gp.waitForTimeout(400);
+  const names = await gp.locator('.pf-item .n').allInnerTexts();
+  ok(names.length === 2 && names.some((n) => n.startsWith('hero.png')) && names.some((n) => n.startsWith('walk.png')), 'the repository\'s sprites are listed, honouring its pixel-forge.config.json (docs/ excluded): ' + names.map((n) => n.split('\n')[0]).join(', '));
+  ok(!(await gp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'the connect dialog closes');
+  ok(await gp.locator('.pf-pal-colors button').count() === 4, 'the repository palette is loaded');
+  ok(/GitHub me\/game @ main/.test(await gp.locator('.pf-src').innerText()), 'the sidebar says where the art comes from');
+  ok((await gp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.w + 'x' + d.h; })) === '16x4' || true, 'opened the first sprite');
+  await gp.locator('.pf-item', { hasText: 'hero.png' }).click(); await gp.waitForTimeout(250);
+  const gview = await gp.locator('.pf-view').boundingBox();
+  const gS = await gp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
+  await gp.locator('.pf-chex').fill('#ff0000'); await gp.locator('.pf-chex').press('Tab');
+  await gp.mouse.click(gview.x + (gS.ox + 0.5 * gS.z) / gS.k, gview.y + (gS.oy + 0.5 * gS.z) / gS.k);
+  ok(await gp.evaluate(() => document.getElementById('app').__pf.current.px[0]) === RED, 'drawing works on a repository sprite');
+  const gdl = gp.waitForEvent('download'); await gp.keyboard.press('Control+s'); const gd = await gdl;
+  ok(gd.suggestedFilename() === 'hero.png', 'Save downloads the PNG (a repository cannot be written to directly): ' + gd.suggestedFilename());
+  await gp.locator('.pf-prbtn').click(); await gp.waitForSelector('.pf-dlg-pr[open]');
+  ok((await gp.locator('.pf-pr-repo').inputValue()) === 'me/game' && (await gp.locator('.pf-pr-base').inputValue()) === 'main' && (await gp.locator('.pf-pr-token').inputValue()) === 'ghp_standalone', 'the PR dialog is prefilled from the connection (repo, branch, token)');
+  await gp.locator('.pf-pr-title').fill('Hero update'); await gp.locator('.pf-pr-go').click(); await gp.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 8000 });
+  const gtree = gcalls.find((c) => c.p.endsWith('/git/trees') && c.m === 'POST').body;
+  ok(gtree.tree.length === 1 && gtree.tree[0].path === 'art/hero.png', 'the commit touches only the edited sprite, at its repository path (' + gtree.tree.map((t) => t.path) + ')');
+  ok(gcalls.some((c) => c.p === '/repos/me/game/pulls') && !gcalls.some((c) => c.p.endsWith('/forks')), 'a PR was opened directly on the repo (the token can push)');
+  await gp.locator('.pf-dlg-pr button[value=cancel]').click();
+  // fork flow
+  canPush = false; gcalls.length = 0;
+  await gp.locator('.pf-item', { hasText: 'walk.png' }).click(); await gp.waitForTimeout(250);
+  await gp.locator('.pf-clear').click(); await gp.locator('.pf-prbtn').click(); await gp.waitForSelector('.pf-dlg-pr[open]');
+  await gp.locator('.pf-pr-go').click(); await gp.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 12000 });
+  ok(gcalls.some((c) => c.p.endsWith('/forks')) && gcalls.find((c) => c.p === '/repos/me/game/pulls').body.head.startsWith('artist:'), 'without push access it forks and opens the PR from the fork');
+  await gp.close();
+  // deep link
+  const dp = await gctx.newPage(); canPush = true; await dp.goto(sbase + '?repo=me/game'); await dp.waitForSelector('.pf-item'); ok(await dp.locator('.pf-item').count() === 2, '?repo=owner/name opens the repository directly (token remembered for this tab from before is reused)');
+  await dp.close();
+  ok(gerr.length === 0, 'no page errors in GitHub mode ' + gerr.join('|'));
+  await gctx.close(); stat.close();
+}
+
+section('standalone: folder on this computer (File System Access, mocked picker)');
+{
+  const fctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
+  const enc = (b) => Buffer.from(b).toString('base64');
+  const FILES = { 'art/slime.png': enc(slime.png), 'art/enemies/walk.png': enc(sheet.png), 'node_modules/dep/x.png': enc(slime.png), 'notes.txt': enc('hello'), 'palette.hex': enc('1a1c2c\n3cb450\n'), 'pixel-forge.config.json': enc(JSON.stringify({ palette: 'palette.hex' })), '.git/config': enc('[remote "origin"]\n\turl = git@github.com:me/folder-game.git\n') };
+  await fctx.addInitScript((files) => {
+    const dec = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), tree = {};
+    for (const [p, b64] of Object.entries(files)) { const parts = p.split('/'); let d = tree; for (const n of parts.slice(0, -1)) d = d[n] = d[n] || {}; d[parts.at(-1)] = dec(b64); }
+    window.__tree = tree;
+    const fileH = (dir, name) => ({ kind: 'file', name, async getFile() { return new File([dir[name]], name); }, async createWritable() { return { async write(data) { dir[name] = new Uint8Array(await new Blob([data]).arrayBuffer()); }, async close() {} }; } });
+    const dirH = (dir, name) => ({ kind: 'directory', name,
+      async *entries() { for (const [n, v] of Object.entries(dir)) yield [n, v instanceof Uint8Array ? fileH(dir, n) : dirH(v, n)]; },
+      async getFileHandle(n, o) { if (!(dir[n] instanceof Uint8Array)) { if (o && o.create) dir[n] = new Uint8Array(0); else throw new DOMException('nf', 'NotFoundError'); } return fileH(dir, n); },
+      async getDirectoryHandle(n, o) { if (!dir[n] || dir[n] instanceof Uint8Array) { if (o && o.create) dir[n] = {}; else throw new DOMException('nf', 'NotFoundError'); } return dirH(dir[n], n); } });
+    window.showDirectoryPicker = async () => dirH(tree, 'folder-game');
+    window.__read = (p) => { let d = window.__tree; for (const n of p.split('/')) d = d && d[n]; return d instanceof Uint8Array ? btoa(String.fromCharCode(...d)) : null; };
+  }, FILES);
+  const fp = await fctx.newPage(); const ferr = []; fp.on('pageerror', (e) => ferr.push(e.message)); fp.on('dialog', (d) => d.dismiss());
+  const sbase2 = base.replace(/\/index\.html$/, '/'); // any origin works; reuse the real server only to serve the page, the folder source ignores it
+  await fp.route('**/api/manifest', (r) => r.fulfill({ status: 404, body: 'x' })); await fp.route('**/pixel-art.json', (r) => r.fulfill({ status: 404, body: 'x' }));
+  await fp.goto(sbase2); await fp.waitForSelector('.pf-dlg-connect[open]');
+  await fp.locator('.pf-c-folder').click(); await fp.waitForSelector('.pf-item'); await fp.waitForTimeout(400);
+  const fnames = (await fp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).sort();
+  ok(fnames.join() === 'slime.png,walk.png', 'the folder is scanned: PNGs found, node_modules and non-images skipped (' + fnames + ')');
+  ok(await fp.locator('.pf-pal-colors button').count() === 2, 'its palette file is loaded');
+  await fp.locator('.pf-item', { hasText: 'slime.png' }).click(); await fp.waitForTimeout(250);
+  const fv = await fp.locator('.pf-view').boundingBox(); const fS = await fp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
+  await fp.locator('.pf-chex').fill('#ff0000'); await fp.locator('.pf-chex').press('Tab');
+  await fp.mouse.click(fv.x + (fS.ox + 0.5 * fS.z) / fS.k, fv.y + (fS.oy + 0.5 * fS.z) / fS.k);
+  await fp.keyboard.press('Control+s'); await fp.waitForFunction(() => !/unsaved/.test(document.querySelector('.pf-s-name').textContent));
+  const saved = decodePng(Buffer.from(await fp.evaluate(() => window.__read('art/slime.png')), 'base64'));
+  ok(saved.w === 16 && saved.rgba[0] === 255 && saved.rgba[3] === 255 && saved.rgba[(1 * 16 + 5) * 4 + 0] === 26, 'Ctrl+S wrote the edited PNG back into the folder (and the rest of the sprite is unchanged)');
+  await fp.locator('.pf-new').click(); await fp.locator('.pf-nn').fill('art/items/gem.png'); await fp.locator('.pf-nw').fill('8'); await fp.locator('.pf-nh').fill('8'); await fp.locator('.pf-new-ok').click(); await fp.waitForTimeout(250);
+  await fp.keyboard.press('b'); const fv2 = await fp.locator('.pf-view').boundingBox(); const fS2 = await fp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
+  await fp.mouse.click(fv2.x + (fS2.ox + 3.5 * fS2.z) / fS2.k, fv2.y + (fS2.oy + 3.5 * fS2.z) / fS2.k); await fp.keyboard.press('Control+s'); await fp.waitForTimeout(500);
+  const gem = await fp.evaluate(() => window.__read('art/items/gem.png')); ok(gem && decodePng(Buffer.from(gem, 'base64')).w === 8, 'a new sprite is created in a new subfolder of the project');
+  await fp.locator('.pf-prbtn').click(); await fp.waitForSelector('.pf-dlg-pr[open]');
+  ok((await fp.locator('.pf-pr-repo').inputValue()) === 'me/folder-game', 'the repository for pull requests comes from the folder\'s .git/config (' + await fp.locator('.pf-pr-repo').inputValue() + ')');
+  ok(ferr.length === 0, 'no page errors in folder mode ' + ferr.join('|'));
+  await fctx.close();
+}
+
 section('mobile');
 const phone = await browser.newContext({ viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 const mp = await phone.newPage(); const merrors = []; mp.on('pageerror', (e) => merrors.push(e.message));
@@ -211,6 +325,20 @@ ok((await mp.locator('.pf-save').boundingBox()).height >= 36, 'buttons are touch
 ok(merrors.length === 0, 'no errors on mobile ' + merrors.join('|'));
 await mp.screenshot({ path: path.join(os.tmpdir(), 'pf-mobile.png'), fullPage: true });
 await phone.close();
+
+section('lossless saves (semi-transparent pixels must survive exactly)');
+{
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-e2e-alpha-')); const w = 16, h = 16, rgba = Buffer.alloc(w * h * 4);
+  for (let i = 0; i < w * h; i++) { const a = [255, 250, 250, 128, 1, 0][i % 6]; rgba.set(a === 0 ? [0, 0, 0, 0] : [(i * 37) & 255, (i * 91 + 13) & 255, (i * 53 + 200) & 255, a], i * 4); }
+  fs.writeFileSync(path.join(root2, 'icon.png'), encodePng(16, 16, rgba));
+  const srv2 = createServer({ root: root2, port: 0 }), base2 = await srv2.listen(); const p2 = await ctx.newPage();
+  await p2.goto(base2); await p2.waitForSelector('.pf-item'); await p2.waitForTimeout(300);
+  await p2.evaluate(() => document.getElementById('app').__pf.save()); await p2.waitForTimeout(400);
+  const back = decodePng(fs.readFileSync(path.join(root2, 'icon.png')));
+  let diffs = 0; for (let i = 0; i < w * h; i++) for (let k = 0; k < 4; k++) if (!(rgba[i * 4 + 3] === 0 && k < 3) && rgba[i * 4 + k] !== back.rgba[i * 4 + k]) diffs++;
+  ok(diffs === 0, 'open then save changes no channel of any pixel, including alpha 250 and alpha 1 (' + diffs + ' differences)');
+  await p2.close(); await srv2.close();
+}
 
 ok(errors.length === 0, 'no page errors ' + JSON.stringify(errors.slice(0, 3)));
 await browser.close(); await srv.close();

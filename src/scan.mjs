@@ -93,3 +93,23 @@ export function scan(root, userConfig) {
   const git = gitInfo(root);
   return { version: 1, generated: new Date().toISOString(), repo: { slug: cfg.repo?.slug || git.slug, base: cfg.repo?.base || null, prefix: cfg.repo?.prefix ?? git.prefix }, palette, sprites };
 }
+
+const NON_ART = /^(docs?|documentation|screenshots?|previews?|tests?|e2e|coverage|examples?|samples?|marketing|promo|store)$/i;
+/**
+ * A starting pixel-forge.config.json for a project, from a scan: the top-level folders that hold sprites (skipping docs, screenshots,
+ * previews and test folders) plus exclude patterns for such folders nested inside them.
+ */
+export function suggestConfig(manifest) {
+  const keep = (p) => !p.split('/').slice(0, -1).some((seg) => NON_ART.test(seg));
+  const art = manifest.sprites.filter((s) => keep(s.path));
+  const tops = new Set(art.map((s) => (s.path.includes('/') ? s.path.split('/')[0] : '.')));
+  const cfg = {};
+  if (tops.size && !tops.has('.')) cfg.dirs = [...tops].sort();
+  const exclude = new Set();
+  for (const s of manifest.sprites) {
+    const segs = s.path.split('/').slice(0, -1), i = segs.findIndex((x, k) => k > 0 && NON_ART.test(x));
+    if (i > 0 && (!cfg.dirs || cfg.dirs.includes(segs[0]))) exclude.add(segs.slice(0, i + 1).join('/') + '/**');
+  }
+  if (exclude.size) cfg.exclude = [...exclude].sort();
+  return { config: cfg, kept: art.length, skipped: manifest.sprites.length - art.length };
+}

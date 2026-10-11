@@ -1,0 +1,19 @@
+# Publishes the standalone editor (index.html + pixel-forge.js) with GitHub Pages, so it can be used by itself with no install.
+# One-time setup: repository Settings > Pages > Build and deployment > Source: GitHub Actions.
+name: pages
+on:
+  workflow_dispatch: # run it by hand after enabling Pages (Settings > Pages > Source: GitHub Actions); add a push trigger once it works
+permissions: { contents: read, pages: write, id-token: write }
+concurrency: { group: pages, cancel-in-progress: true }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: '${{ steps.deployment.outputs.page_url }}' }
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir site && cp index.html pixel-forge.js site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: deployment
+        uses: actions/deploy-pages@v4

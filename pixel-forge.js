@@ -4,8 +4,8 @@
    https://developer.mozilla.org/en-US/docs/Web/API/ImageData is the only "API" it leans on, plus fetch and canvas. */
 (function (root, factory) {
   const api = factory();
-  if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.PixelForge = api;
+  if (typeof module === 'object' && module.exports) module.exports = api; // CommonJS and bundlers that treat this file as CommonJS
+  root.PixelForge = api; // always register the global too: <script> tags, and index.mjs read it
 })(typeof globalThis !== 'undefined' ? globalThis : typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
@@ -129,6 +129,7 @@
        - If not (an outside contributor), the repo is forked first and the pull request is opened from the fork.
      files: [{ path, blob }]  where path is relative to the repository root and blob is the PNG as a Blob/Uint8Array.
      ===================================================================================================== */
+  const refPath = (b) => String(b).split('/').map(encodeURIComponent).join('/'); // keep the slashes in branch names like release/1.0
   async function createPullRequest(o) {
     const api = (o.apiBase || 'https://api.github.com').replace(/\/$/, ''), doFetch = o.fetch || fetch.bind(globalThis), log = o.onProgress || (() => {});
     const call = async (method, url, body) => {
@@ -157,7 +158,7 @@
       try { await call('POST', '/repos/' + headRepo + '/merge-upstream', { branch: base }); } catch { /* already up to date, or not allowed: carry on */ }
     }
     log('Reading ' + base + '…');
-    const baseRef = await call('GET', '/repos/' + o.repo + '/git/ref/heads/' + encodeURIComponent(base));
+    const baseRef = await call('GET', '/repos/' + o.repo + '/git/ref/heads/' + refPath(base));
     const baseSha = baseRef.object.sha;
     const baseCommit = await call('GET', '/repos/' + o.repo + '/git/commits/' + baseSha);
     const tree = [];
@@ -184,6 +185,179 @@
     const rows = o.files.map((f) => `| \`${f.path}\` | ${f.w}×${f.h} | ${f.pixels} |`).join('\n');
     const imgs = o.files.map((f) => o.repo && o.baseSha && o.commit ? `**${f.path}**\n\nBefore | After\n--- | ---\n<img src="https://raw.githubusercontent.com/${o.repo}/${o.baseSha}/${o.prefix || ''}${f.path}" width="128"> | <img src="https://raw.githubusercontent.com/${o.headRepo || o.repo}/${o.commit}/${o.prefix || ''}${f.path}" width="128">` : '').filter(Boolean).join('\n\n');
     return `${o.description ? o.description + '\n\n' : ''}| Sprite | Size | Pixels changed |\n| --- | --- | --- |\n${rows}\n${imgs ? '\n' + imgs + '\n' : ''}\n_Proposed with pixel-forge. GitHub shows PNG changes in the "Files changed" tab with 2-up, swipe and onion-skin views._`;
+  }
+
+
+  /* =====================================================================================================
+     Lossless PNG reading and writing. Browsers decode images through a canvas, which stores premultiplied alpha, so a pixel
+     such as (229, 120, 7, alpha 250) comes back as (230, ...): silently changing colours that a game may match exactly.
+     Reading and writing the PNG bytes ourselves keeps every channel of every pixel intact. Uses the browsers' built-in
+     DecompressionStream/CompressionStream ("deflate" is the zlib format PNG uses); older browsers fall back to the canvas.
+     ===================================================================================================== */
+  const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = (u8, start, end) => { let c = 0xffffffff; for (let i = start; i < end; i++) c = CRC[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const pipe = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+  const inflate = (b) => pipe(b, new DecompressionStream('deflate'));
+  const deflate = (b) => pipe(b, new CompressionStream('deflate'));
+  const hasStreams = () => typeof DecompressionStream !== 'undefined' && typeof CompressionStream !== 'undefined';
+
+  /** PNG bytes to { w, h, px } (px is straight-alpha 0xAABBGGRR). Throws for interlaced files and other unsupported variants. */
+  async function decodePngBytes(u8) {
+    if (u8.length < 33 || PNG_SIG.some((v, i) => u8[i] !== v)) throw new Error('not a PNG file');
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    let off = 8, ihdr = null, plte = null, trns = null; const idat = [];
+    while (off + 12 <= u8.length) {
+      const len = dv.getUint32(off), type = String.fromCharCode(u8[off + 4], u8[off + 5], u8[off + 6], u8[off + 7]), data = u8.subarray(off + 8, off + 8 + len);
+      if (type === 'IHDR') ihdr = { w: dv.getUint32(off + 8), h: dv.getUint32(off + 12), depth: data[8], ct: data[9], interlace: data[12] };
+      else if (type === 'PLTE') plte = data; else if (type === 'tRNS') trns = data; else if (type === 'IDAT') idat.push(data); else if (type === 'IEND') break;
+      off += 12 + len;
+    }
+    if (!ihdr || !idat.length) throw new Error('damaged PNG');
+    const { w, h, depth, ct } = ihdr;
+    if (ihdr.interlace) throw new Error('interlaced PNG');
+    const chans = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[ct];
+    if (!chans || ![1, 2, 4, 8, 16].includes(depth) || (depth < 8 && ct !== 0 && ct !== 3) || (ct === 3 && depth === 16)) throw new Error('unsupported PNG variant');
+    const total = idat.reduce((n, c) => n + c.length, 0), z = new Uint8Array(total); let o = 0; for (const c of idat) { z.set(c, o); o += c.length; }
+    const raw = await inflate(z), bits = chans * depth, stride = Math.ceil((w * bits) / 8), bpp = Math.max(1, bits >> 3);
+    if (raw.length < (stride + 1) * h) throw new Error('damaged PNG data');
+    const img = new Uint8Array(stride * h);
+    for (let y = 0; y < h; y++) {
+      const f = raw[y * (stride + 1)], src = y * (stride + 1) + 1, dst = y * stride, up = dst - stride;
+      for (let i = 0; i < stride; i++) {
+        const a = i >= bpp ? img[dst + i - bpp] : 0, b = y ? img[up + i] : 0, c = y && i >= bpp ? img[up + i - bpp] : 0; let v = raw[src + i];
+        if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+        else if (f === 4) { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; } else if (f !== 0) throw new Error('bad PNG filter');
+        img[dst + i] = v & 255;
+      }
+    }
+    const rgba = new Uint8Array(w * h * 4), sample = (y, x, k) => { // k-th sample of pixel (x,y), scaled to 8 bits
+      if (depth === 8) return img[y * stride + x * chans + k]; if (depth === 16) return img[y * stride + (x * chans + k) * 2];
+      const bit = (x * depth), byte = img[y * stride + (bit >> 3)]; return (byte >> (8 - depth - (bit & 7))) & ((1 << depth) - 1);
+    };
+    const key = trns && (ct === 0 || ct === 2) ? [(trns[0] << 8) | trns[1], (trns[2] << 8) | trns[3], (trns[4] << 8) | trns[5]] : null;
+    const full = (v) => (depth < 8 ? Math.round((v * 255) / ((1 << depth) - 1)) : v);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let r, g, b, a = 255; const i = (y * w + x) * 4;
+      if (ct === 3) { const k = sample(y, x, 0); if (!plte || k * 3 + 2 >= plte.length) throw new Error('missing palette'); r = plte[k * 3]; g = plte[k * 3 + 1]; b = plte[k * 3 + 2]; if (trns && k < trns.length) a = trns[k]; }
+      else if (ct === 0) { const v = sample(y, x, 0); r = g = b = full(v); const raw = depth === 16 ? (img[y * stride + x * 2] << 8) | img[y * stride + x * 2 + 1] : v; if (key && raw === key[0]) a = 0; }
+      else if (ct === 4) { r = g = b = sample(y, x, 0); a = sample(y, x, 1); }
+      else { r = sample(y, x, 0); g = sample(y, x, 1); b = sample(y, x, 2); if (ct === 6) a = sample(y, x, 3); else if (key && depth === 8 && r === key[0] && g === key[1] && b === key[2]) a = 0; }
+      rgba[i] = r; rgba[i + 1] = g; rgba[i + 2] = b; rgba[i + 3] = a;
+    }
+    return { w, h, px: new Uint32Array(rgba.buffer) };
+  }
+
+  /** { w, h, px } to PNG bytes: 8-bit RGBA, no ancillary chunks. scale > 1 repeats each pixel (nearest neighbour). */
+  async function encodePngBytes(w, h, px, scale = 1) {
+    if (scale > 1) { const W = w * scale, H = h * scale, out = new Uint32Array(W * H); for (let y = 0; y < H; y++) { const sy = ((y / scale) | 0) * w; for (let x = 0; x < W; x++) out[y * W + x] = px[sy + ((x / scale) | 0)]; } px = out; w = W; h = H; }
+    const rgba = new Uint8Array(px.buffer, px.byteOffset, px.length * 4), row = w * 4, raw = new Uint8Array((row + 1) * h);
+    for (let y = 0; y < h; y++) raw.set(rgba.subarray(y * row, (y + 1) * row), y * (row + 1) + 1);
+    const z = await deflate(raw), out = new Uint8Array(8 + 25 + 12 + z.length + 12), dv = new DataView(out.buffer);
+    out.set(PNG_SIG, 0);
+    const chunk = (at, type, len) => { dv.setUint32(at, len); for (let i = 0; i < 4; i++) out[at + 4 + i] = type.charCodeAt(i); };
+    chunk(8, 'IHDR', 13); dv.setUint32(16, w); dv.setUint32(20, h); out[24] = 8; out[25] = 6; out[26] = out[27] = out[28] = 0; dv.setUint32(29, crc32(out, 12, 29));
+    chunk(33, 'IDAT', z.length); out.set(z, 41); dv.setUint32(41 + z.length, crc32(out, 37, 41 + z.length));
+    const e = 45 + z.length; chunk(e, 'IEND', 0); dv.setUint32(e + 8, crc32(out, e + 4, e + 8));
+    return out;
+  }
+
+
+  /* =====================================================================================================
+     Sources: where sprites come from and how they are read and written. The editor itself does not care.
+       { kind, note, sprites: [{ path, w?, h?, bytes?, frames? }], read(path) -> Uint8Array, write?(path, Uint8Array),
+         repo?: { slug, base, prefix }, palette?: ['#rrggbb'], thumbs: boolean }
+     Built in: a list of files served over HTTP (static), the local `pixel-forge serve` server, a GitHub repository (read through the
+     API, changes go back as a pull request) and a folder on your disk (browser File System Access API, saves in place).
+     ===================================================================================================== */
+  const IGNORE = ['node_modules', '.git', '.godot', '.import', '.zig-cache', 'zig-cache', 'zig-out', 'dist', 'build', 'target', '.venv', '__pycache__', '.next', 'coverage'];
+  const globRe = (g) => new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*') + '$');
+  const slugFromRemote = (url) => { const m = /github\.com[:/]+([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(String(url).trim()); return m ? m[1] + '/' + m[2] : null; };
+  const b64ToBytes = (b64) => { const bin = atob(String(b64).replace(/\s/g, '')), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return u8; };
+  const pngSize = (u8) => (u8.length >= 24 && PNG_SIG.every((v, i) => u8[i] === v) && String.fromCharCode(u8[12], u8[13], u8[14], u8[15]) === 'IHDR' ? { w: new DataView(u8.buffer, u8.byteOffset).getUint32(16), h: new DataView(u8.buffer, u8.byteOffset).getUint32(20) } : null);
+  const palFromText = (t) => parsePalette(t).map(toHex);
+  /** Keep the paths a project config wants (dirs, exclude, ignore) and attach frame sizes. */
+  function applyConfig(items, cfg = {}) {
+    const dirs = (cfg.dirs && cfg.dirs.length ? cfg.dirs : ['']).map((d) => (d === '.' ? '' : d.replace(/\/+$/, '')));
+    const ign = new Set([...IGNORE, ...(cfg.ignore || [])]), exc = (cfg.exclude || []).map(globRe);
+    return items.filter((it) => {
+      const parts = it.path.split('/');
+      if (parts.slice(0, -1).some((x) => ign.has(x))) return false;
+      if (!dirs.some((d) => !d || it.path === d || it.path.startsWith(d + '/'))) return false;
+      return !exc.some((r) => r.test(it.path));
+    }).map((it) => { const fr = cfg.frames && (cfg.frames[it.path] || Object.entries(cfg.frames).find(([k]) => k.includes('*') && globRe(k).test(it.path))?.[1]); return fr ? { ...it, frames: fr } : it; });
+  }
+
+  /** Sprites listed in a manifest and fetched over HTTP relative to baseUrl. Read-only (Save downloads). */
+  function staticSource(mf, baseUrl) {
+    const base = baseUrl == null ? '' : baseUrl && !baseUrl.endsWith('/') ? baseUrl + '/' : baseUrl;
+    return { kind: 'static', thumbs: true, note: 'Static mode: Save downloads the PNG. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), repo: mf.repo || null, palette: mf.palette || null,
+      async read(path) { const r = await fetch(base + path.split('/').map(encodeURIComponent).join('/')); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); } };
+  }
+  /** The local `pixel-forge serve` server: reads and writes the project folder. */
+  function serverSource(mf, token) {
+    const url = (path) => 'project/' + path.split('/').map(encodeURIComponent).join('/');
+    return { kind: 'server', thumbs: true, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), repo: mf.repo || null, palette: mf.palette || null,
+      async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
+      async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-pixel-forge': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
+  }
+
+  /** A GitHub repository, read through the REST API (a token is only needed for private repos and for pull requests). */
+  async function githubSource(o) {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(o.repo || '')) throw new Error('Repository must look like owner/name.');
+    const api = (o.apiBase || 'https://api.github.com').replace(/\/$/, ''), doFetch = o.fetch || fetch.bind(globalThis), maxBytes = o.maxBytes || 262144;
+    const call = async (path) => {
+      const res = await doFetch(api + path, { headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(o.token ? { Authorization: 'Bearer ' + o.token } : {}) } });
+      const text = await res.text(); let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
+      if (!res.ok) {
+        const left = res.headers && res.headers.get && res.headers.get('x-ratelimit-remaining');
+        if (res.status === 403 && (left === '0' || /rate limit/i.test((json && json.message) || ''))) throw new Error('GitHub rate limit reached. Add a token (even a read-only one) to raise it.');
+        if (res.status === 401) throw new Error('GitHub rejected the token.');
+        if (res.status === 404) throw new Error('Repository or branch not found. Private repositories need a token with Contents: read.');
+        throw new Error('GitHub ' + res.status + ': ' + ((json && json.message) || text.slice(0, 100)));
+      }
+      return json;
+    };
+    const info = await call('/repos/' + o.repo), branch = o.branch || info.default_branch;
+    const ref = await call('/repos/' + o.repo + '/git/ref/heads/' + refPath(branch));
+    const commit = await call('/repos/' + o.repo + '/git/commits/' + ref.object.sha);
+    const tree = await call('/repos/' + o.repo + '/git/trees/' + commit.tree.sha + '?recursive=1');
+    const entries = new Map((tree.tree || []).filter((e) => e.type === 'blob').map((e) => [e.path, e]));
+    const blob = async (path) => { const e = entries.get(path); if (!e) throw new Error('not in the repository: ' + path); const b = await call('/repos/' + o.repo + '/git/blobs/' + e.sha); return b.encoding === 'base64' ? b64ToBytes(b.content) : new TextEncoder().encode(b.content); };
+    let cfg = {}, palette = null;
+    if (entries.has('pixel-forge.config.json')) { try { cfg = JSON.parse(new TextDecoder().decode(await blob('pixel-forge.config.json'))); } catch { /* ignore a broken config */ } }
+    if (cfg.palette && entries.has(cfg.palette)) { try { palette = palFromText(new TextDecoder().decode(await blob(cfg.palette))); } catch { /* none */ } }
+    const png = [...entries.values()].filter((e) => /\.png$/i.test(e.path) && e.size <= (cfg.maxBytes || maxBytes)).map((e) => ({ path: e.path, bytes: e.size }));
+    const sprites = applyConfig(png, cfg);
+    return { kind: 'github', thumbs: false, sprites, palette, branch,
+      note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Save downloads; Propose PR sends changes back.',
+      repo: { slug: o.repo, base: branch, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
+  }
+
+  /** A folder on disk through the File System Access API (Chromium browsers): lists, reads and saves in place. */
+  async function folderSource(root, o = {}) {
+    const maxSize = o.maxSize || 1024, files = new Map();
+    const readText = async (dir, ...names) => { try { let d = dir; for (const n of names.slice(0, -1)) d = await d.getDirectoryHandle(n); return await (await (await d.getFileHandle(names.at(-1))).getFile()).text(); } catch { return null; } };
+    let cfg = {}; const cfgText = await readText(root, 'pixel-forge.config.json'); if (cfgText) { try { cfg = JSON.parse(cfgText); } catch { /* ignore */ } }
+    const ign = new Set([...IGNORE, ...(cfg.ignore || [])]), found = [];
+    const walk = async (dir, prefix) => {
+      for await (const [name, h] of dir.entries()) {
+        if (h.kind === 'directory') { if (!ign.has(name) && !name.startsWith('.')) await walk(h, prefix + name + '/'); continue; }
+        if (!/\.png$/i.test(name)) continue;
+        const f = await h.getFile(), head = pngSize(new Uint8Array(await f.slice(0, 24).arrayBuffer())), lim = cfg.maxSize || maxSize;
+        if (!head || head.w > lim || head.h > lim) continue;
+        files.set(prefix + name, h); found.push({ path: prefix + name, w: head.w, h: head.h, bytes: f.size });
+      }
+    };
+    await walk(root, ''); found.sort((a, b) => a.path.localeCompare(b.path));
+    let palette = null; if (cfg.palette) { const t = await readText(root, ...cfg.palette.split('/')); if (t) palette = palFromText(t); }
+    const gitCfg = await readText(root, '.git', 'config'), m = gitCfg && /\[remote "origin"\][^[]*?url\s*=\s*(.+)/.exec(gitCfg), slug = (m && slugFromRemote(m[1])) || (cfg.repo && cfg.repo.slug) || null;
+    return { kind: 'folder', thumbs: true, sprites: applyConfig(found, cfg), palette, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
+      async read(path) { const h = files.get(path); if (!h) throw new Error('not found: ' + path); return new Uint8Array(await (await h.getFile()).arrayBuffer()); },
+      async write(path, bytes) {
+        const parts = path.split('/'); let dir = root; for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
+        const h = await dir.getFileHandle(parts.at(-1), { create: true }), w = await h.createWritable(); await w.write(bytes); await w.close(); files.set(path, h);
+      } };
   }
 
   /* =====================================================================================================
@@ -224,9 +398,10 @@
 .pf-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .pf-prev canvas{image-rendering:pixelated;background:repeating-conic-gradient(#1a2229 0 25%,#10161a 0 50%) 0 0/8px 8px;max-width:100%;display:block}
 .pf-note{color:var(--pf-muted);font-size:12px}.pf-bad{color:var(--pf-bad)}
+.pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px}
 .pf dialog{background:var(--pf-panel);color:var(--pf-ink);border:1px solid var(--pf-accent);padding:16px;width:min(560px,94vw);max-height:92vh;overflow:auto}
 .pf dialog::backdrop{background:rgba(0,0,0,.7)}
-.pf-form{display:flex;flex-direction:column;gap:10px}.pf-log{white-space:pre-wrap;color:var(--pf-muted);max-height:140px;overflow:auto;border:1px solid var(--pf-line);padding:6px;min-height:34px}
+.pf-form{display:flex;flex-direction:column;gap:10px}.pf-log:empty{display:none}.pf-log{white-space:pre-wrap;color:var(--pf-muted);max-height:140px;overflow:auto;border:1px solid var(--pf-line);padding:6px;min-height:34px}
 .pf-chg{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--pf-line)}.pf-chg canvas{width:40px;height:40px;image-rendering:pixelated;background:#10161a}
 @media (max-width:900px){
   .pf{grid-template-columns:1fr;grid-template-rows:auto minmax(380px,1fr) auto;height:auto}
@@ -245,6 +420,7 @@
     canvas.width = doc.w * scale; canvas.height = doc.h * scale; const g = canvas.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, canvas.width, canvas.height); g.drawImage(t, 0, 0, canvas.width, canvas.height);
   };
   async function decodePng(blob) {
+    if (hasStreams()) { try { return await decodePngBytes(new Uint8Array(await blob.arrayBuffer())); } catch (e) { if (!/interlaced|unsupported/.test(e.message)) throw e; /* rare variants: let the browser decode (may round semi-transparent pixels) */ } }
     const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
     const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
     const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(bmp, 0, 0);
@@ -260,7 +436,7 @@
     const root = el(`<div class="pf" tabindex="-1">
       <aside class="pf-side"><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
-        <div class="pf-row"><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
+        <div class="pf-row"><button class="pf-source" title="Connect a GitHub repository or a folder on this computer">Source…</button><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
         <div class="pf-note pf-src"></div><input type="file" class="pf-file" accept="image/png,image/*" multiple hidden></aside>
       <section class="pf-main">
         <div class="pf-bar">
@@ -298,6 +474,19 @@
         <div class="pf-note">The token is only sent to GitHub. Without write access to the repository your fork is used automatically.</div>
         <div class="pf-log" aria-live="polite"></div>
         <div class="pf-row"><button type="button" class="primary pf-pr-go">Create pull request</button><button value="cancel">Close</button></div></form></dialog>
+      <dialog class="pf-dlg-connect"><form method="dialog" class="pf-form"><h4>Open a project</h4>
+        <div class="pf-note pf-conn-intro">Edit the pixel art in a GitHub repository (changes go back as a pull request) or in a folder on this computer (saves in place). Nothing is uploaded anywhere else.</div>
+        <div class="pf-box"><b>GitHub repository</b>
+          <label>Repository <input type="text" class="pf-c-repo" placeholder="owner/name" autocomplete="off"></label>
+          <label>Branch <input type="text" class="pf-c-branch" placeholder="default branch"></label>
+          <label>Token <input type="password" class="pf-c-token" autocomplete="off" placeholder="optional for public repos; needed for private repos and pull requests"></label>
+          <label><input type="checkbox" class="pf-c-remember"> remember the token in this browser</label>
+          <div class="pf-row"><button type="button" class="primary pf-c-gh">Open repository</button></div></div>
+        <div class="pf-box pf-c-folderbox"><b>Folder on this computer</b><div class="pf-note pf-c-foldernote">Pick the game project's folder. Works in Chrome, Edge and Opera.</div>
+          <div class="pf-row"><button type="button" class="primary pf-c-folder">Choose folder…</button></div></div>
+        <div class="pf-note">Or just drop PNG files onto the canvas, or use Open PNG.</div>
+        <div class="pf-log pf-c-msg" aria-live="polite"></div>
+        <div class="pf-row"><button value="cancel">Close</button></div></form></dialog>
       <dialog class="pf-dlg-size"><form method="dialog" class="pf-form"><h4>Canvas size</h4>
         <div class="pf-row"><label>width <input type="number" class="pf-sz-w" min="1" max="1024"></label><label>height <input type="number" class="pf-sz-h" min="1" max="1024"></label></div>
         <label>keep <select class="pf-sz-a"><option value="tl">top-left</option><option value="c">centre</option></select></label>
@@ -314,7 +503,7 @@
 
     /* ---------- state ---------- */
     const S = { sprites: [], docs: new Map(), cur: null, tool: 'pen', color: pack(57, 255, 122), mx: false, my: false, pp: true, grid: true, zoom: 8, ox: 0, oy: 0,
-      palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], server: null, meta: {}, dir: null, anim: { timer: 0, t: 0 }, notice: '' };
+      palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], src: null, meta: {}, anim: { timer: 0, t: 0 }, notice: '' };
     const doc = () => S.docs.get(S.cur);
     const view = $('.pf-view'), stage = $('.pf-stage'), g = view.getContext('2d');
     const offscreen = document.createElement('canvas');
@@ -322,57 +511,66 @@
     const note = (t) => { S.notice = t; status(); };
 
     /* ---------- loading ---------- */
-    const urlFor = (path) => { const b = S.server ? 'project/' : (O.baseUrl != null ? O.baseUrl : (S.meta.base || '')); return (b && !b.endsWith('/') ? b + '/' : b) + path.split('/').map(encodeURIComponent).join('/'); };
+    const storedToken = () => { try { return sessionStorage.getItem('pf:token') || localStorage.getItem('pf:token') || ''; } catch { return ''; } };
     async function fetchJson(u) { const r = await fetch(u); if (!r.ok) throw new Error(u + ': ' + r.status); return r.json(); }
-    async function init() {
-      let mf = null;
-      try {
-        if (O.sprites) mf = { sprites: O.sprites, palette: O.paletteList || null, repo: O.github || null };
-        else if (O.manifestUrl) mf = await fetchJson(O.manifestUrl);
-        else { try { mf = await fetchJson('api/manifest'); S.server = true; } catch { mf = await fetchJson('pixel-art.json'); } }
-      } catch (e) { mf = { sprites: [] }; note('No sprite list found (' + e.message + '). Open PNG files to start.'); }
-      S.meta = mf; S.sprites = (mf.sprites || []).map((s) => ({ ...s }));
-      if (S.server === null || S.server === undefined) S.server = false;
-      if (S.server) { const m = document.querySelector('meta[name="pf-token"]'); S.token = m ? m.content : ''; }
-      if (mf.palette && !S.palette.length) S.palette = mf.palette.map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
-      if (O.github) S.meta.repo = Object.assign({}, S.meta.repo || {}, O.github);
-      $('.pf-src').textContent = S.server ? 'Saving writes straight to the project folder.' : 'Static mode: Save downloads the PNG' + ('showDirectoryPicker' in window ? ' (or writes to a folder you pick).' : '.');
+    /** Make `src` the project being edited. Returns false if the user chose to keep their unsaved session. */
+    async function useSource(src) {
+      if ([...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
+      play(false); S.docs.clear(); S.cur = null; S.src = src; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
+      S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
+      if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
+      $('.pf-src').textContent = src.note || '';
       renderList(); renderPalette();
-      if (S.sprites.length) openSprite(S.sprites[0].path);
-      else { status(); render(); }
+      if (S.sprites.length) await openSprite(S.sprites[0].path); else { status(); render(); }
+      return true;
+    }
+    async function init() {
+      try {
+        if (O.source) return void (await useSource(O.source));
+        if (O.sprites) return void (await useSource(staticSource({ sprites: O.sprites, palette: O.paletteList || null, repo: O.github || null }, O.baseUrl)));
+        if (O.manifestUrl) { const mf = await fetchJson(O.manifestUrl); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); }
+        if (O.connect === 'github' && O.github && O.github.slug) {
+          try { return void (await useSource(await githubSource({ repo: O.github.slug, branch: O.github.base, token: storedToken(), apiBase: O.apiBase }))); } catch (e) { return openConnect(e.message); }
+        }
+        try { const mf = await fetchJson('api/manifest'), m = document.querySelector('meta[name="pf-token"]'); return void (await useSource(serverSource(mf, m ? m.content : ''))); } catch { /* no local server here */ }
+        try { const mf = await fetchJson('pixel-art.json'); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); } catch { /* no manifest here */ }
+        status(); render(); openConnect();
+      } catch (e) { note('Could not start: ' + e.message); }
     }
     async function openSprite(path) {
       if (!S.docs.has(path)) {
         const meta = S.sprites.find((s) => s.path === path);
         try {
-          const r = await fetch(urlFor(path)); if (!r.ok) throw new Error(r.status);
-          const img = await decodePng(await r.blob());
+          const img = await decodePng(new Blob([await S.src.read(path)], { type: 'image/png' }));
           S.docs.set(path, new Doc(path, img.w, img.h, img.px, { frames: meta && meta.frames }));
         } catch (e) { note('Could not open ' + path + ': ' + e.message); return; }
       }
       S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); renderList(); renderColors(); status(); render(); drawPreview();
     }
-    /** Add an image that is not in the manifest. inProject = Save should write it to that path in the project (needs the local server). */
+    /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject) {
       let path = name, n = 1; while (S.docs.has(path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
       S.docs.set(path, new Doc(path, w, h, px, { local: !inProject })); S.sprites.push({ path, w, h, local: !inProject }); return openSprite(path);
     }
+    const canWrite = () => !!(S.src && S.src.write);
 
     /* ---------- list ---------- */
     const thumbs = new Map();
+    const io = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); paintThumb(e.target, e.target.__s); } }), { root: $('.pf-list') }) : null;
     function renderList() {
       const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'); list.innerHTML = '';
       for (const s of S.sprites.filter((x) => x.path.toLowerCase().includes(q))) {
         const d = S.docs.get(s.path), b = el(`<button class="pf-item${s.path === S.cur ? ' on' : ''}" role="option" data-path="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(s.path.split('/').pop())}<small>${esc(s.path.split('/').slice(0, -1).join('/') || '.')} · ${d ? d.w + '×' + d.h : (s.w || '?') + '×' + (s.h || '?')}</small></span>${d && d.unsaved ? '<i class="dot" title="unsaved"></i>' : d && d.changed ? '<i class="dot base" title="saved, not yet proposed"></i>' : ''}</button>`);
-        list.appendChild(b); paintThumb(b.querySelector('canvas'), s);
+        list.appendChild(b); const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s);
       }
     }
     async function paintThumb(canvas, s) {
       const d = S.docs.get(s.path);
       if (d) return drawPx(canvas, d);
+      if (!S.src || !S.src.thumbs) return;
       try {
         let bm = thumbs.get(s.path);
-        if (!bm) { const r = await fetch(urlFor(s.path)); bm = await createImageBitmap(await r.blob()); thumbs.set(s.path, bm); }
+        if (!bm) { bm = await createImageBitmap(new Blob([await S.src.read(s.path)], { type: 'image/png' })); thumbs.set(s.path, bm); }
         canvas.width = bm.width; canvas.height = bm.height; const c = canvas.getContext('2d'); c.imageSmoothingEnabled = false; c.drawImage(bm, 0, 0);
       } catch { /* leave blank */ }
     }
@@ -509,24 +707,19 @@
     const redo = () => { const d = doc(); if (d && d.redoOnce()) { fit(); changedUi(); } };
 
     /* ---------- saving & exporting ---------- */
-    async function pngOf(d, scale = 1) { const c = document.createElement('canvas'); drawPx(c, d, scale); return toBlob(c); }
+    async function pngOf(d, scale = 1) {
+      if (hasStreams()) return new Blob([await encodePngBytes(d.w, d.h, d.px, scale)], { type: 'image/png' });
+      const c = document.createElement('canvas'); drawPx(c, d, scale); return toBlob(c);
+    }
     async function save() {
       const d = doc(); if (!d) return;
       try {
         const blob = await pngOf(d);
         if (O.save) await O.save(d, blob);
-        else if (S.server && !d.local) {
-          const r = await fetch('project/' + d.path.split('/').map(encodeURIComponent).join('/'), { method: 'PUT', headers: { 'x-pixel-forge': S.token || '', 'content-type': 'image/png' }, body: blob });
-          if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80));
-        } else if (S.dir) { await writeToDir(d.path, blob); }
-        else if (!d.local && 'showDirectoryPicker' in window && O.pickFolder !== false && confirm('Pick the project folder so Save can write the file in place? Cancel to download instead.')) { S.dir = await window.showDirectoryPicker({ mode: 'readwrite' }); await writeToDir(d.path, blob); }
+        else if (canWrite() && !d.local) await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
         else download(blob, d.path.split('/').pop());
-        d.markSaved(); note('saved ' + d.path); changedUi();
+        d.markSaved(); note(canWrite() && !d.local ? 'saved ' + d.path : 'downloaded ' + d.path.split('/').pop()); changedUi();
       } catch (e) { note('Save failed: ' + e.message); }
-    }
-    async function writeToDir(path, blob) {
-      const parts = path.split('/'); let dir = S.dir; for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
-      const f = await dir.getFileHandle(parts[parts.length - 1], { create: true }), w = await f.createWritable(); await w.write(blob); await w.close();
     }
     function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000); }
     async function exportPng() { const d = doc(); if (!d) return; const s = +(prompt('Export scale (1 = original size, 8 = each pixel becomes 8×8):', '1') || 0); if (!s || s < 1 || s > 64) return; download(await pngOf(d, Math.floor(s)), d.path.split('/').pop().replace(/\.png$/i, '') + (s > 1 ? '@' + s + 'x' : '') + '.png'); }
@@ -615,12 +808,36 @@
     $('.pf-resize').onclick = () => { const d = doc(); if (!d) return; $('.pf-sz-w').value = d.w; $('.pf-sz-h').value = d.h; $('.pf-dlg-size').showModal(); };
     $('.pf-sz-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-sz-w').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-sz-h').value | 0)); edit((d) => { d.px = resizePx(d.px, d.w, d.h, w, h, $('.pf-sz-a').value); d.w = w; d.h = h; fit(); }); $('.pf-dlg-size').close(); };
     $('.pf-new').onclick = () => $('.pf-dlg-new').showModal();
-    $('.pf-new-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-nw').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-nh').value | 0)); let n = $('.pf-nn').value.trim().replace(/^\/+/, '') || 'new-sprite.png'; if (!/\.png$/i.test(n)) n += '.png'; $('.pf-dlg-new').close(); addLocal(n, w, h, new Uint32Array(w * h), !!S.server); };
+    $('.pf-new-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-nw').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-nh').value | 0)); let n = $('.pf-nn').value.trim().replace(/^\/+/, '') || 'new-sprite.png'; if (!/\.png$/i.test(n)) n += '.png'; $('.pf-dlg-new').close(); addLocal(n, w, h, new Uint32Array(w * h), canWrite()); };
     $('.pf-open').onclick = () => $('.pf-file').click();
     $('.pf-file').onchange = async (e) => { for (const f of e.target.files) await importFile(f); e.target.value = ''; };
     async function importFile(f) { try { const img = await decodePng(f); addLocal(f.name, img.w, img.h, img.px); } catch (err) { note('Could not read ' + f.name + ': ' + err.message); } }
     stage.addEventListener('dragover', (e) => e.preventDefault());
     stage.addEventListener('drop', async (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) if (/^image\//.test(f.type)) await importFile(f); });
+    function openConnect(msg) {
+      const dlg = $('.pf-dlg-connect'), gh = O.github || {};
+      $('.pf-c-repo').value = $('.pf-c-repo').value || gh.slug || ''; $('.pf-c-branch').value = $('.pf-c-branch').value || gh.base || ''; $('.pf-c-token').value = $('.pf-c-token').value || storedToken();
+      const canFolder = typeof window.showDirectoryPicker === 'function'; $('.pf-c-folder').disabled = !canFolder; $('.pf-c-foldernote').textContent = canFolder ? 'Pick the game project\'s folder. Saving writes the PNGs in place. Works in Chrome, Edge and Opera.' : 'This browser cannot open folders (use Chrome, Edge or Opera), but GitHub and Open PNG work everywhere.';
+      $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
+    }
+    $('.pf-source').onclick = () => openConnect();
+    $('.pf-c-gh').onclick = async () => {
+      const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), token = $('.pf-c-token').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
+      try {
+        const src = await githubSource({ repo: $('.pf-c-repo').value.trim(), branch: $('.pf-c-branch').value.trim() || undefined, token, apiBase: O.apiBase });
+        try { if (token) { if ($('.pf-c-remember').checked) localStorage.setItem('pf:token', token); else sessionStorage.setItem('pf:token', token); } } catch { /* storage blocked */ }
+        msg.textContent = src.sprites.length + ' PNG file' + (src.sprites.length === 1 ? '' : 's') + ' found.';
+        if (await useSource(src)) $('.pf-dlg-connect').close();
+      } catch (e) { msg.textContent = e.message; } finally { btn.disabled = false; }
+    };
+    $('.pf-c-folder').onclick = async () => {
+      const msg = $('.pf-c-msg'); msg.textContent = '';
+      try {
+        const dir = await window.showDirectoryPicker({ mode: 'readwrite' }); msg.textContent = 'Scanning ' + dir.name + '…';
+        const src = await folderSource(dir); msg.textContent = src.sprites.length + ' PNG file' + (src.sprites.length === 1 ? '' : 's') + ' found.';
+        if (await useSource(src)) $('.pf-dlg-connect').close();
+      } catch (e) { msg.textContent = e && e.name === 'AbortError' ? '' : 'Could not open the folder: ' + (e && e.message); }
+    };
     $('.pf-palload').onclick = () => $('.pf-palfile').click();
     $('.pf-palfile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const p = parsePalette(await f.text()); if (p.length) { S.palette = p; renderPalette(); renderColors(); note('palette: ' + p.length + ' colours'); } else note('No colours found in ' + f.name); e.target.value = ''; };
     $('.pf-palsave').onclick = () => { const d = doc(); if (!d) return; const cols = S.palette.length ? S.palette : colorsOf(d.px).filter(([c]) => c !== 0).map(([c]) => c); download(new Blob([cols.map((c) => toHex(c).slice(1)).join('\n') + '\n'], { type: 'text/plain' }), 'palette.hex'); };
@@ -652,5 +869,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, floodFill, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, floodFill, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
 });

@@ -18,12 +18,15 @@
 <div id="app"></div>
 <script src="pixel-forge.js"></script>
 <script>
-  // Query options for static hosting: ?manifest=pixel-art.json&base=../   (base is where the sprite paths are relative to)
+  // Standalone use (this page hosted anywhere, e.g. GitHub Pages): it asks which GitHub repository or folder to open.
+  // Query options:  ?repo=owner/name[&branch=main]       open that GitHub repository straight away
+  //                 ?manifest=pixel-art.json&base=../      a generated manifest (see `pixel-forge scan`); add &repo=owner/name for pull requests
+  //                 &accent=%23b98cff                      theme colour
   const q = new URLSearchParams(location.search);
   const opts = {};
   if (q.get('manifest')) opts.manifestUrl = q.get('manifest');
   if (q.get('base') != null) opts.baseUrl = q.get('base');
-  if (q.get('repo')) opts.github = { slug: q.get('repo'), base: q.get('branch') || undefined, prefix: q.get('prefix') || '' };
+  if (q.get('repo')) { opts.github = { slug: q.get('repo') }; if (q.get('branch')) opts.github.base = q.get('branch'); if (q.get('prefix')) opts.github.prefix = q.get('prefix'); if (!q.get('manifest')) opts.connect = 'github'; }
   if (q.get('accent')) opts.accent = q.get('accent');
   PixelForge.mount(document.getElementById('app'), opts);
 </script>

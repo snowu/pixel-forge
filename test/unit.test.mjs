@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { scan, readPngSize, slugFromRemote, gitInfo, globToRegExp } from '../src/scan.mjs';
+import { scan, readPngSize, slugFromRemote, gitInfo, globToRegExp, suggestConfig } from '../src/scan.mjs';
+import { spawnSync } from 'node:child_process';
 import { createServer, safeResolve } from '../src/serve.mjs';
-import { encodePng, decodePng, fromRows } from './png.mjs';
+import { encodePng, decodePng, fromRows, encodeRaw } from './png.mjs';
 await import('../pixel-forge.js');
 const PF = globalThis.PixelForge, C = PF.core;
 
@@ -102,8 +103,8 @@ test('config: dirs, exclude, maxSize, frames (exact and glob) and palette', () =
   assert.equal(scan(root, { maxSize: 2, dirs: ['art'] }).sprites.length, 0);
 });
 test('git info: slug from the remote and the folder prefix inside the repo', () => {
-  assert.equal(slugFromRemote('git@github.com:snowu/looting-simulator.git'), 'snowu/looting-simulator');
-  assert.equal(slugFromRemote('https://github.com/snowu/senior-interview-lab'), 'snowu/senior-interview-lab');
+  assert.equal(slugFromRemote('git@github.com:me/my-game.git'), 'me/my-game');
+  assert.equal(slugFromRemote('https://github.com/me/my-game'), 'me/my-game');
   assert.equal(slugFromRemote('https://gitlab.com/a/b.git'), null);
   const repo = tmp(); fs.mkdirSync(path.join(repo, '.git')); fs.mkdirSync(path.join(repo, 'game/art'), { recursive: true });
   fs.writeFileSync(path.join(repo, '.git/config'), '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:me/game.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n');
@@ -214,4 +215,145 @@ test('PR: clear errors for bad input and bad tokens', async () => {
 test('prBody lists the files and pixel counts', () => {
   const b = PF.prBody({ files: [{ path: 'a/b.png', w: 16, h: 16, pixels: 12 }], description: 'Better eyes', repo: 'me/game', baseSha: 'abc', commit: 'def', prefix: '' });
   assert.match(b, /Better eyes/); assert.match(b, /\| `a\/b.png` \| 16×16 \| 12 \|/); assert.match(b, /raw.githubusercontent.com\/me\/game\/abc\/a\/b.png/); assert.match(b, /raw.githubusercontent.com\/me\/game\/def\/a\/b.png/);
+});
+
+/* ---------- lossless PNG codec ---------- */
+const rgbaOf = (r) => [...new Uint8Array(r.px.buffer)];
+test('codec: RGBA round trip is exact, including semi-transparent pixels (a game may use an alpha value such as 250 as a marker)', async () => {
+  const w = 16, h = 16, rgba = Buffer.alloc(w * h * 4);
+  for (let i = 0; i < w * h; i++) { const a = [255, 250, 250, 128, 1, 0][i % 6]; rgba.set(a === 0 ? [0, 0, 0, 0] : [(i * 37) & 255, (i * 91 + 13) & 255, (i * 53 + 200) & 255, a], i * 4); }
+  const png = await PF.png.encode(w, h, new Uint32Array(rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset + rgba.length)));
+  const viaTestDecoder = decodePng(Buffer.from(png));
+  assert.deepEqual([...viaTestDecoder.rgba], [...rgba], 'an independent decoder reads back what we wrote');
+  const back = await PF.png.decode(new Uint8Array(png));
+  assert.deepEqual(rgbaOf(back), [...rgba], 'and so do we');
+});
+test('codec: transparent pixels keep their hidden RGB too (nothing is premultiplied)', async () => {
+  const px = new Uint32Array([C.pack(10, 20, 30, 0), C.pack(255, 255, 255, 3)]);
+  const back = await PF.png.decode(await PF.png.encode(2, 1, px));
+  assert.deepEqual([...back.px], [...px]);
+});
+test('codec: scaled export repeats every pixel', async () => {
+  const px = new Uint32Array([C.pack(1, 2, 3), C.pack(4, 5, 6)]);
+  const big = await PF.png.decode(await PF.png.encode(2, 1, px, 3));
+  assert.equal(big.w, 6); assert.equal(big.h, 3);
+  assert.deepEqual([...big.px], [px[0], px[0], px[0], px[1], px[1], px[1], px[0], px[0], px[0], px[1], px[1], px[1], px[0], px[0], px[0], px[1], px[1], px[1]]);
+});
+test('codec: reads every filter type (rows cycle through 0-4)', async () => {
+  const w = 7, h = 10, rows = Array.from({ length: h }, (_, y) => Uint8Array.from({ length: w * 4 }, (_, i) => (y * 31 + i * 17 + ((i * y) % 7)) & 255));
+  const r = await PF.png.decode(new Uint8Array(encodeRaw({ w, h, depth: 8, ct: 6, rows })));
+  assert.deepEqual(rgbaOf(r), rows.flatMap((x) => [...x]));
+});
+test('codec: reads 8-bit RGB, grey and grey+alpha', async () => {
+  const rgb = await PF.png.decode(new Uint8Array(encodeRaw({ w: 2, h: 2, depth: 8, ct: 2, rows: [[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]] })));
+  assert.deepEqual(rgbaOf(rgb), [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]);
+  const grey = await PF.png.decode(new Uint8Array(encodeRaw({ w: 3, h: 1, depth: 8, ct: 0, rows: [[0, 128, 255]] })));
+  assert.deepEqual(rgbaOf(grey), [0, 0, 0, 255, 128, 128, 128, 255, 255, 255, 255, 255]);
+  const ga = await PF.png.decode(new Uint8Array(encodeRaw({ w: 2, h: 1, depth: 8, ct: 4, rows: [[50, 200, 90, 0]] })));
+  assert.deepEqual(rgbaOf(ga), [50, 50, 50, 200, 90, 90, 90, 0]);
+});
+test('codec: reads indexed PNGs at 1, 2, 4 and 8 bits with tRNS transparency', async () => {
+  const plte = [255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30];
+  for (const [depth, row, idx] of [[8, [0, 1, 2, 3], [0, 1, 2, 3]], [4, [0x01, 0x23], [0, 1, 2, 3]], [2, [0b00011011], [0, 1, 2, 3]], [1, [0b01000000], [0, 1, 0, 0]]]) {
+    const n = idx.length;
+    const r = await PF.png.decode(new Uint8Array(encodeRaw({ w: n, h: 1, depth, ct: 3, rows: [row], plte, trns: [255, 128], filters: [0] })));
+    const want = idx.flatMap((k) => [plte[k * 3], plte[k * 3 + 1], plte[k * 3 + 2], k === 0 ? 255 : k === 1 ? 128 : 255]);
+    assert.deepEqual(rgbaOf(r), want, depth + '-bit indexed');
+  }
+});
+test('codec: grey tRNS colour key and 16-bit images', async () => {
+  const k = await PF.png.decode(new Uint8Array(encodeRaw({ w: 2, h: 1, depth: 8, ct: 0, rows: [[7, 9]], trns: [0, 7] })));
+  assert.deepEqual(rgbaOf(k), [7, 7, 7, 0, 9, 9, 9, 255]);
+  const sixteen = await PF.png.decode(new Uint8Array(encodeRaw({ w: 1, h: 1, depth: 16, ct: 6, rows: [[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xff, 0xff]] })));
+  assert.deepEqual(rgbaOf(sixteen), [0x12, 0x56, 0x9a, 0xff], '16-bit is reduced to its high byte');
+});
+test('codec: refuses damaged, non-PNG and interlaced input with a clear error', async () => {
+  await assert.rejects(PF.png.decode(new Uint8Array(50)), /not a PNG/);
+  const ok = encodePng(2, 2, Buffer.alloc(16));
+  await assert.rejects(PF.png.decode(new Uint8Array(ok.subarray(0, 40))), /damaged/);
+  const inter = Buffer.from(ok); inter[28] = 1; await assert.rejects(PF.png.decode(new Uint8Array(inter)), /interlaced/);
+});
+
+/* ---------- sources: GitHub repository ---------- */
+function fakeRepo({ files, branch = 'main', canPush = true, truncated = false, tokenRequired = false, rate = false }) {
+  const tree = Object.entries(files).map(([path, bytes], i) => ({ path, type: 'blob', sha: 'sha' + i, size: bytes.length })), calls = [];
+  const res = (status, body, headers = {}) => ({ ok: status < 300, status, headers: { get: (k) => headers[k.toLowerCase()] ?? null }, text: async () => JSON.stringify(body) });
+  const fetch = async (url, init = {}) => {
+    const u = new URL(url), p = u.pathname; calls.push(p + u.search);
+    if (rate) return res(403, { message: 'API rate limit exceeded' }, { 'x-ratelimit-remaining': '0' });
+    if (tokenRequired && !init.headers.Authorization) return res(404, { message: 'Not Found' });
+    if (init.headers.Authorization === 'Bearer bad') return res(401, { message: 'Bad credentials' });
+    if (p === '/repos/me/game') return res(200, { default_branch: branch, permissions: { push: canPush } });
+    if (p === '/repos/me/game/git/ref/heads/' + branch) return res(200, { object: { sha: 'c1' } });
+    if (p === '/repos/me/game/git/commits/c1') return res(200, { tree: { sha: 't1' } });
+    if (p === '/repos/me/game/git/trees/t1') return res(200, { tree, truncated });
+    const m = /\/git\/blobs\/(sha\d+)$/.exec(p); if (m) { const e = tree[+m[1].slice(3)]; return res(200, { encoding: 'base64', content: Buffer.from(files[e.path]).toString('base64').replace(/(.{60})/g, '$1\n') }); }
+    return res(404, { message: 'Not Found' });
+  };
+  return { fetch, calls };
+}
+test('GitHub source: lists PNGs, applies the repo config, skips junk, and reads exact bytes', async () => {
+  const files = { 'art/hero.png': SLIME.png, 'art/wip/x.png': SLIME.png, 'docs/shot.png': SLIME.png, 'node_modules/a/b.png': SLIME.png, 'art/readme.md': Buffer.from('x'), 'art/big.png': Buffer.alloc(300000),
+    'pal.hex': Buffer.from('1a1c2c\n5d275d\n'), 'pixel-forge.config.json': Buffer.from(JSON.stringify({ dirs: ['art'], exclude: ['art/wip/**'], palette: 'pal.hex', frames: { 'art/hero.png': { w: 2, h: 4, fps: 6 } } })) };
+  const gh = fakeRepo({ files }), src = await PF.sources.githubSource({ repo: 'me/game', fetch: gh.fetch });
+  assert.equal(src.kind, 'github'); assert.equal(src.branch, 'main');
+  assert.deepEqual(src.sprites.map((s) => s.path), ['art/hero.png']);
+  assert.deepEqual(src.sprites[0].frames, { w: 2, h: 4, fps: 6 });
+  assert.deepEqual(src.palette, ['#1a1c2c', '#5d275d']);
+  assert.deepEqual(src.repo, { slug: 'me/game', base: 'main', prefix: '', canPush: true });
+  assert.ok(Buffer.from(await src.read('art/hero.png')).equals(SLIME.png), 'the PNG survives the base64 transport byte for byte (even with line breaks in the base64)');
+  await assert.rejects(src.read('nope.png'), /not in the repository/);
+});
+test('GitHub source: branch names with slashes, truncated trees, and helpful errors', async () => {
+  const gh = fakeRepo({ files: { 'a.png': SLIME.png }, branch: 'release/1.0' });
+  const src = await PF.sources.githubSource({ repo: 'me/game', branch: 'release/1.0', fetch: gh.fetch });
+  assert.equal(src.sprites.length, 1); assert.ok(gh.calls.includes('/repos/me/game/git/ref/heads/release/1.0'), 'slashes are kept in the ref path');
+  assert.match((await PF.sources.githubSource({ repo: 'me/game', fetch: fakeRepo({ files: {}, truncated: true }).fetch })).note, /incomplete/);
+  await assert.rejects(PF.sources.githubSource({ repo: 'me/game', fetch: fakeRepo({ files: {}, tokenRequired: true }).fetch }), /Private repositories need a token/);
+  await assert.rejects(PF.sources.githubSource({ repo: 'me/game', token: 'bad', fetch: fakeRepo({ files: {} }).fetch }), /rejected the token/);
+  await assert.rejects(PF.sources.githubSource({ repo: 'me/game', fetch: fakeRepo({ files: {}, rate: true }).fetch }), /rate limit/);
+  await assert.rejects(PF.sources.githubSource({ repo: 'nonsense' }), /owner\/name/);
+  assert.equal((await PF.sources.githubSource({ repo: 'me/game', token: 'good', fetch: fakeRepo({ files: {}, tokenRequired: true }).fetch })).sprites.length, 0, 'with a token a private repository opens');
+});
+test('PR client: a base branch with slashes works', async () => {
+  const seen = [];
+  const fetch = async (url, init) => { const p = new URL(url).pathname; seen.push(p); const j = (st, b) => ({ ok: true, status: st, text: async () => JSON.stringify(b) });
+    if (p === '/user') return j(200, { login: 'a' }); if (p === '/repos/me/game') return j(200, { name: 'game', default_branch: 'main', permissions: { push: true } });
+    if (p.includes('/git/ref/heads/')) return j(200, { object: { sha: 'b' } }); if (p.includes('/git/commits/')) return j(200, { tree: { sha: 't' } });
+    if (p.endsWith('/blobs')) return j(201, { sha: 'x' }); if (p.endsWith('/trees')) return j(201, { sha: 't2' }); if (p.endsWith('/commits')) return j(201, { sha: 'c' }); if (p.endsWith('/refs')) return j(201, {});
+    return j(201, { html_url: 'https://github.com/me/game/pull/1', number: 1 }); };
+  await PF.createPullRequest({ token: 't', repo: 'me/game', base: 'release/1.0', title: 'x', files: [{ path: 'a.png', blob: new Uint8Array([1]) }], fetch });
+  assert.ok(seen.includes('/repos/me/game/git/ref/heads/release/1.0'));
+});
+test('applyConfig: dirs, ignore, exclude and frames', () => {
+  const items = ['art/a.png', 'art/sub/b.png', 'other/c.png', 'art/node_modules/d.png', 'art/tmp/e.png'].map((path) => ({ path }));
+  const out = PF.sources.applyConfig(items, { dirs: ['art'], exclude: ['art/tmp/**'], frames: { 'art/sub/*.png': { w: 8, h: 8 } } });
+  assert.deepEqual(out.map((x) => x.path), ['art/a.png', 'art/sub/b.png']); assert.deepEqual(out[1].frames, { w: 8, h: 8 });
+  assert.equal(PF.sources.applyConfig(items, {}).length, 4, 'no config: everything except ignored folders');
+});
+
+/* ---------- init ---------- */
+test('suggestConfig picks the art folders and skips docs, screenshots and previews', () => {
+  const sprites = ['art/hero.png', 'art/enemies/bat.png', 'art/previews/bat-preview.png', 'public/ui/icon.png', 'docs/previews/a.png', 'docs/b.png', 'tests/fixtures/c.png'].map((path) => ({ path }));
+  const { config, kept, skipped } = suggestConfig({ sprites });
+  assert.deepEqual(config.dirs, ['art', 'public']); assert.deepEqual(config.exclude, ['art/previews/**']); assert.equal(kept, 3); assert.equal(skipped, 4);
+  assert.deepEqual(suggestConfig({ sprites: [{ path: 'hero.png' }, { path: 'bat.png' }] }).config, {}, 'sprites at the project root: scan everything');
+});
+test('the init command writes a config that makes the next scan skip the junk, and refuses to overwrite', () => {
+  const root = tmp(); for (const d of ['assets/art', 'docs/previews']) fs.mkdirSync(path.join(root, d), { recursive: true });
+  for (const f of ['assets/art/a.png', 'assets/art/b.png', 'docs/previews/p.png']) fs.writeFileSync(path.join(root, f), SLIME.png);
+  const bin = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'pixel-forge.mjs');
+  const r = spawnSync('node', [bin, 'init', root], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /3 PNGs found, 2 look like game art/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'pixel-forge.config.json'), 'utf8')).dirs, ['assets']);
+  assert.deepEqual(scan(root).sprites.map((s) => s.path), ['assets/art/a.png', 'assets/art/b.png']);
+  assert.equal(spawnSync('node', [bin, 'init', root], { encoding: 'utf8' }).status, 1, 'second run refuses');
+  assert.equal(spawnSync('node', [bin, 'init', root, '--force'], { encoding: 'utf8' }).status, 0);
+});
+
+test('the file registers the global AND module.exports, so bundlers that treat it as CommonJS still work', async () => {
+  const vm = await import('node:vm'); const src = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'pixel-forge.js'), 'utf8');
+  const cjs = { module: { exports: {} } }; cjs.globalThis = cjs; vm.runInNewContext(src, cjs);
+  assert.equal(typeof cjs.module.exports.mount, 'function'); assert.equal(typeof cjs.PixelForge.mount, 'function');
+  const script = {}; script.globalThis = script; vm.runInNewContext(src, script);
+  assert.equal(typeof script.PixelForge.mount, 'function', 'plain <script> use');
 });

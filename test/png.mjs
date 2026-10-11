@@ -49,3 +49,20 @@ export function fromRows(rows, colors) {
   rows.forEach((row, y) => [...row].forEach((ch, x) => { const c = ch === '.' ? [0, 0, 0, 0] : colors[ch]; rgba.set(c.length === 3 ? [...c, 255] : c, (y * w + x) * 4); }));
   return { w, h, rgba, png: encodePng(w, h, rgba) };
 }
+
+/** Build any PNG variant for decoder tests. rows: array of Uint8Array/arrays of raw (unfiltered, already bit-packed) scanline bytes.
+ *  filters: per-row filter type 0-4 (default cycles 0..4 so every filter is exercised). */
+export function encodeRaw({ w, h, depth, ct, rows, plte, trns, filters }) {
+  const stride = rows[0].length, bpp = Math.max(1, Math.round((({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[ct] * depth) / 8));
+  const out = Buffer.alloc((stride + 1) * h);
+  rows.forEach((row, y) => {
+    const f = filters ? filters[y] : y % 5, prev = y ? rows[y - 1] : new Uint8Array(stride); out[y * (stride + 1)] = f;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? row[i - bpp] : 0, b = prev[i], c = i >= bpp ? prev[i - bpp] : 0; let pred = 0;
+      if (f === 1) pred = a; else if (f === 2) pred = b; else if (f === 3) pred = (a + b) >> 1; else if (f === 4) { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); pred = pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      out[y * (stride + 1) + 1 + i] = (row[i] - pred) & 255;
+    }
+  });
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = depth; ihdr[9] = ct;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), ...(plte ? [chunk('PLTE', Buffer.from(plte))] : []), ...(trns ? [chunk('tRNS', Buffer.from(trns))] : []), chunk('IDAT', zlib.deflateSync(out)), chunk('IEND', Buffer.alloc(0))]);
+}
