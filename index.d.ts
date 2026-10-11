@@ -29,7 +29,9 @@ export interface MountOptions {
   palette?: string[];
   /** Repository used for pull requests; with connect: 'github' it is also opened on start. */
   github?: { slug?: string; base?: string; prefix?: string };
-  connect?: 'github';
+  connect?: 'github' | false;
+  /** Start with an empty sprite (and no project dialog): handy for embedding a scratch pad. */
+  blank?: { w?: number; h?: number; name?: string };
   /** Theme colour. */
   accent?: string;
   /** Replace the default Save behaviour. */

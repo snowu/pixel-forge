@@ -475,7 +475,9 @@
         <div class="pf-log" aria-live="polite"></div>
         <div class="pf-row"><button type="button" class="primary pf-pr-go">Create pull request</button><button value="cancel">Close</button></div></form></dialog>
       <dialog class="pf-dlg-connect"><form method="dialog" class="pf-form"><h4>Open a project</h4>
-        <div class="pf-note pf-conn-intro">Edit the pixel art in a GitHub repository (changes go back as a pull request) or in a folder on this computer (saves in place). Nothing is uploaded anywhere else.</div>
+        <div class="pf-box"><b>Just draw</b><div class="pf-note">Upload a PNG, or start a blank sprite. You work on it in this browser tab and download the result. Nothing is sent anywhere.</div>
+          <div class="pf-row"><button type="button" class="primary pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></div></div>
+        <div class="pf-note pf-conn-intro">Or work on a whole project: a GitHub repository (changes go back as a pull request) or a folder on this computer (saves in place).</div>
         <div class="pf-box"><b>GitHub repository</b>
           <label>Repository <input type="text" class="pf-c-repo" placeholder="owner/name" autocomplete="off"></label>
           <label>Branch <input type="text" class="pf-c-branch" placeholder="default branch"></label>
@@ -484,7 +486,7 @@
           <div class="pf-row"><button type="button" class="primary pf-c-gh">Open repository</button></div></div>
         <div class="pf-box pf-c-folderbox"><b>Folder on this computer</b><div class="pf-note pf-c-foldernote">Pick the game project's folder. Works in Chrome, Edge and Opera.</div>
           <div class="pf-row"><button type="button" class="primary pf-c-folder">Choose folder…</button></div></div>
-        <div class="pf-note">Or just drop PNG files onto the canvas, or use Open PNG.</div>
+        <div class="pf-note">You can also drop PNG files onto the canvas at any time.</div>
         <div class="pf-log pf-c-msg" aria-live="polite"></div>
         <div class="pf-row"><button value="cancel">Close</button></div></form></dialog>
       <dialog class="pf-dlg-size"><form method="dialog" class="pf-form"><h4>Canvas size</h4>
@@ -534,7 +536,8 @@
         }
         try { const mf = await fetchJson('api/manifest'), m = document.querySelector('meta[name="pf-token"]'); return void (await useSource(serverSource(mf, m ? m.content : ''))); } catch { /* no local server here */ }
         try { const mf = await fetchJson('pixel-art.json'); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); } catch { /* no manifest here */ }
-        status(); render(); openConnect();
+        status(); render();
+        if (O.blank) await addLocal(O.blank.name || 'sprite.png', O.blank.w || 16, O.blank.h || 16, new Uint32Array((O.blank.w || 16) * (O.blank.h || 16)), false); else if (O.connect !== false) openConnect();
       } catch (e) { note('Could not start: ' + e.message); }
     }
     async function openSprite(path) {
@@ -821,6 +824,8 @@
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
     }
     $('.pf-source').onclick = () => openConnect();
+    $('.pf-c-upload').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-file').click(); };
+    $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-dlg-new').showModal(); };
     $('.pf-c-gh').onclick = async () => {
       const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), token = $('.pf-c-token').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
       try {
@@ -858,12 +863,14 @@
     }
     const keyup = (e) => { if (e.key === ' ') space = false; };
     document.addEventListener('keydown', keydown); document.addEventListener('keyup', keyup);
+    const leaveGuard = (e) => { if ([...S.docs.values()].some((d) => d.unsaved && d.changed)) { e.preventDefault(); e.returnValue = ''; } }; /* unsaved work would be lost: ask first */
+    window.addEventListener('beforeunload', leaveGuard);
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const had = doc(); resizeView(); if (had && !S.touched) fit(); render(); }) : null; if (ro) ro.observe(stage);
     resizeView(); init();
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setTool, undo, redo, state: S,
-      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
+      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); window.removeEventListener('beforeunload', leaveGuard); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
     };
     host.__pf = ctrl;
     return ctrl;

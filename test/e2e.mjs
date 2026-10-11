@@ -268,6 +268,46 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gctx.close(); stat.close();
 }
 
+section('hosted page, fully in the session: upload, edit, download');
+{
+  const http = await import('node:http');
+  const pkg = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const stat = http.createServer((req, res) => { const u = req.url.split('?')[0]; const f = u === '/pixel-forge.js' ? 'pixel-forge.js' : u === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
+  await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const hbase = `http://127.0.0.1:${stat.address().port}/`;
+  const sctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
+  const net = []; sctx.on('request', (r) => { if (!r.url().startsWith(hbase) && !r.url().startsWith('data:')) net.push(r.url()); });
+  const sp = await sctx.newPage(); const serr = []; sp.on('pageerror', (e) => serr.push(e.message));
+  await sp.goto(hbase); await sp.waitForSelector('.pf-dlg-connect[open]');
+  ok(await sp.locator('.pf-c-upload').isVisible() && await sp.locator('.pf-c-blank').isVisible(), 'the first screen offers "Upload PNG" and "Blank sprite" above the project options');
+  const up = fromRows(['.rr.', 'rrrr', 'rrrr', '.rr.'], { r: [255, 0, 0, 250] }); const upFile = path.join(os.tmpdir(), 'my-heart.png'); fs.writeFileSync(upFile, up.png);
+  const [chooser] = await Promise.all([sp.waitForEvent('filechooser'), sp.locator('.pf-c-upload').click()]); await chooser.setFiles(upFile);
+  await sp.waitForFunction(() => document.getElementById('app').__pf && document.getElementById('app').__pf.current && document.getElementById('app').__pf.current.path === 'my-heart.png');
+  ok(!(await sp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'the uploaded PNG opens and the dialog is gone');
+  const v = await sp.locator('.pf-view').boundingBox(); const S0 = await sp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; });
+  await sp.locator('.pf-chex').fill('#00ff00'); await sp.locator('.pf-chex').press('Tab');
+  await sp.mouse.click(v.x + (S0.ox + 0.5 * S0.z) / S0.k, v.y + (S0.oy + 0.5 * S0.z) / S0.k);
+  ok(/unsaved/.test(await sp.locator('.pf-s-name').innerText()), 'drawing marks the sprite unsaved');
+  const dl = sp.waitForEvent('download'); await sp.keyboard.press('Control+s'); const d1 = await dl;
+  const f1 = path.join(os.tmpdir(), 'pf-session-out.png'); await d1.saveAs(f1); const out = decodePng(fs.readFileSync(f1));
+  ok(d1.suggestedFilename() === 'my-heart.png', 'Save downloads the edited file under its own name: ' + d1.suggestedFilename());
+  ok(out.rgba[0] === 0 && out.rgba[1] === 255 && out.rgba[3] === 255, 'the downloaded PNG contains the edit');
+  ok(out.rgba[(1 * 4 + 1) * 4 + 3] === 250 && out.rgba[(1 * 4 + 1) * 4] === 255, 'and the semi-transparent pixels of the upload (alpha 250) are unchanged');
+  ok(!/unsaved/.test(await sp.locator('.pf-s-name').innerText()), 'after downloading it is marked saved');
+  // leaving with unsaved work asks first
+  await sp.mouse.click(v.x + (S0.ox + 1.5 * S0.z) / S0.k, v.y + (S0.oy + 1.5 * S0.z) / S0.k);
+  let asked = false; sp.once('dialog', async (d) => { asked = d.type() === 'beforeunload'; await d.dismiss(); });
+  await sp.close({ runBeforeUnload: true }); await new Promise((r) => setTimeout(r, 300));
+  ok(asked, 'closing the tab with unsaved changes shows the browser\'s "leave site?" warning');
+  // blank sprite path
+  const bp = await sctx.newPage(); await bp.goto(hbase); await bp.waitForSelector('.pf-dlg-connect[open]');
+  await bp.locator('.pf-c-blank').click(); await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(250);
+  ok((await bp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.path + ' ' + d.w + 'x' + d.h; })) === 'gem.png 8x8', 'a blank sprite starts a new document of the chosen size');
+  await bp.close();
+  ok(net.length === 0, 'the whole session made no network requests beyond the page itself (' + net.length + ')');
+  ok(serr.length === 0, 'no page errors ' + serr.join('|'));
+  await sctx.close(); stat.close();
+}
+
 section('standalone: folder on this computer (File System Access, mocked picker)');
 {
   const fctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });

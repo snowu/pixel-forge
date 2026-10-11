@@ -9,12 +9,12 @@
   html,body{margin:0;height:100%;background:#040608;color:#d6e4dc;font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   body{display:flex;flex-direction:column}
   header{padding:8px 12px;border-bottom:1px solid #232d34;display:flex;gap:12px;align-items:baseline}
-  header b{color:#39ff7a}header span{color:#7f948a;font-size:12px}
+  header b{color:#39ff7a}header span{color:#7f948a;font-size:12px}header a:hover{color:#39ff7a}
   #app{flex:1;min-height:0}
 </style>
 </head>
 <body>
-<header><b>pixel-forge</b><span>edit the pixel art in this project</span></header>
+<header><b>pixel-forge</b><span>a pixel art editor in your browser: upload a PNG, edit, download. Nothing leaves this tab.</span><a href="https://github.com/snowu/pixel-forge" target="_blank" rel="noopener" style="margin-left:auto;color:#7f948a;font-size:12px">source</a></header>
 <div id="app"></div>
 <script src="pixel-forge.js"></script>
 <script>

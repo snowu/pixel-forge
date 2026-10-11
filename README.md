@@ -6,6 +6,12 @@ Draw with pencil, eraser, fill, line, rectangles, colour picker, mirror drawing 
 
 And it can hand art back as a **GitHub pull request**, so an artist never needs git.
 
+## Try it now (nothing to install)
+
+**https://snowu.github.io/pixel-forge/**
+
+Click **Upload PNG** (or **Blank sprite**), draw, and press **Save** or **Export** to download the result. Everything happens in your browser tab: the file is never uploaded anywhere, and the page warns you before you close the tab with unsaved changes. The same page can also open a whole GitHub repository or a folder on your computer (below).
+
 ## Three ways to use it
 
 ### 1. By itself: open the hosted page, pick a project
@@ -16,7 +22,7 @@ No install, nothing in the game repository.
 - **A folder on your computer** (Chrome, Edge, Opera). Choose the project folder; the sprites are found, and **Save** writes them back in place.
 - Or drag PNG files onto the canvas.
 
-To host the page yourself: copy `index.html` and `pixel-forge.js` to any static host (GitHub Pages works; see `.github/workflows/pages.yml`).
+To host the page yourself: copy `index.html` and `pixel-forge.js` to any static host (this repository publishes itself with GitHub Pages, see `.github/workflows/pages.yml`).
 
 ### 2. As a dependency of a game repository
 
