@@ -326,19 +326,26 @@ ok(seen.size >= 3, 'playing the animation cycles through the frames (' + seen.si
 section('pull request flow (GitHub API mocked)');
 const calls = []; let pushAccess = true;
 const authSeen = new Set();
+const refs = { main: 'base1' }; const pulls = []; // refs and pull requests the test run creates, so later sections build on them
 await ctx.route('https://api.github.com/**', async (route) => {
   const r = route.request(), u = new URL(r.url()), p = u.pathname, m = r.method(), body = r.postData() ? JSON.parse(r.postData()) : null; calls.push({ m, p, body, auth: r.headers().authorization }); if (m !== 'OPTIONS') authSeen.add(r.headers().authorization);
   const j = (status, obj) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(obj) });
   if (m === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,accept,x-github-api-version', 'access-control-allow-methods': '*' } });
   if (p === '/user') return j(200, { login: 'artist' });
   if (p === '/repos/me/game' && m === 'GET') return j(200, { name: 'game', default_branch: 'main', permissions: { push: pushAccess } });
-  if (p === '/repos/me/game/git/ref/heads/main') return j(200, { object: { sha: 'base1' } });
-  if (p === '/repos/me/game/git/commits/base1') return j(200, { tree: { sha: 'tree0' } });
+  if (p === '/repos/me/game/branches') return j(200, [{ name: 'main', protected: true }, { name: 'art/wip', protected: false }]);
+  { const mr = /^\/repos\/me\/game\/git\/ref\/heads\/(.+)$/.exec(p);
+    if (mr && m === 'GET') { const b = decodeURIComponent(mr[1]); return refs[b] ? j(200, { object: { sha: refs[b] } }) : j(404, { message: 'no such ref' }); } }
+  { const mc = /^\/repos\/me\/game\/git\/commits\/([^/]+)$/.exec(p);
+    if (mc && m === 'GET') return j(200, { tree: { sha: 'tree-of-' + mc[1] } }); }
   if (p.endsWith('/git/blobs')) return j(201, { sha: 'b' + calls.length });
-  if (p.endsWith('/git/trees')) return j(201, { sha: 'tree1' });
-  if (p.endsWith('/git/commits')) return j(201, { sha: 'c1' });
-  if (p.endsWith('/git/refs')) return j(201, {});
-  if (p === '/repos/me/game/pulls') return j(201, { html_url: 'https://github.com/me/game/pull/3', number: 3 });
+  if (p.endsWith('/git/trees') && m === 'POST') return j(201, { sha: 'tree1' });
+  if (p.endsWith('/git/commits') && m === 'POST') return j(201, { sha: 'c1' });
+  if (p.endsWith('/git/refs') && m === 'POST') { refs[body.ref.replace(/^refs\/heads\//, '')] = body.sha; return j(201, {}); }
+  { const mp = /^\/repos\/me\/game\/git\/refs\/heads\/(.+)$/.exec(p);
+    if (mp && m === 'PATCH') { refs[decodeURIComponent(mp[1])] = body.sha; return j(200, {}); } }
+  if (p === '/repos/me/game/pulls' && m === 'POST') { const n = 3 + pulls.length; const pr = { html_url: 'https://github.com/me/game/pull/' + n, number: n, title: body.title, head: body.head, base: body.base }; pulls.push(pr); return j(201, pr); }
+  if (p === '/repos/me/game/pulls' && m === 'GET') { const head = u.searchParams.get('head'); const list = pulls.filter((x) => !head || x.head === head || x.head.split(':').pop() === String(head).split(':').pop()).map(({ number, html_url, title }) => ({ number, html_url, title })); return j(200, list); }
   return j(404, { message: 'unexpected ' + m + ' ' + p });
 });
 await page.locator('.pf-item', { hasText: 'slime.png' }).click(); await page.waitForTimeout(200);
@@ -365,6 +372,35 @@ const prCall = calls.find((c) => c.p === '/repos/me/game/pulls'); ok(prCall.body
 await page.locator('.pf-dlg-pr button[value=cancel]').click();
 ok(await page.locator('.pf-prbtn').isDisabled(), 'after the PR, nothing is pending any more');
 ok(await page.evaluate(() => sessionStorage.getItem('pf:token')) !== null && (await page.evaluate(() => localStorage.getItem('pf:token'))) === null, 'the token is kept for the tab only unless "remember" is ticked');
+
+section('commit in chunks, branches, pull requests later');
+await page.locator('.pf-item', { hasText: 'slime.png' }).click(); await page.waitForTimeout(200);
+await page.keyboard.press('b');
+await setHex('#00ff00'); await click(3, 3);
+await page.locator('.pf-item', { hasText: 'gem.png' }).click(); await page.waitForTimeout(200);
+await click(4, 4);
+ok((await page.locator('.pf-commit-list input[type=checkbox]').count()) === 2, 'the commit panel lists both changed sprites');
+await page.locator('.pf-commit-list input[type=checkbox]').first().uncheck();
+await page.locator('.pf-commit-msg').fill('chunk one');
+await page.locator('.pf-commit-branch').fill('art/chunks');
+const at = calls.length;
+await page.locator('.pf-commit-go').click();
+try { await page.waitForFunction(() => /Committed/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   commit note:', JSON.stringify(await page.locator('.pf-commit-note').innerText()), calls.slice(at).map((c) => c.m + ' ' + c.p).join(' | ')); }
+const chunkTree = calls.slice(at).find((c) => c.p.endsWith('/git/trees') && c.body.base_tree).body;
+ok(chunkTree.tree.length === 1, 'only the ticked sprite is committed');
+ok(await page.locator('.pf-commit-openpr').count() === 1, 'with no open pull request for the branch, the panel offers to open one');
+await page.locator('.pf-commit-openpr').click();
+await page.waitForFunction(() => /pull\/4/.test(document.querySelector('.pf-commit-note').innerHTML), null, { timeout: 8000 });
+ok((await page.locator('.pf-commit-note a').getAttribute('href')) === 'https://github.com/me/game/pull/4', 'one click opens the pull request for the whole branch');
+await setHex('#0000ff'); await click(5, 5);
+await page.locator('.pf-commit-msg').fill('chunk two');
+const pullsBefore = calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length;
+await page.locator('.pf-commit-go').click();
+await page.waitForFunction(() => /added to/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 });
+ok(calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length === pullsBefore && /pull\/4/.test(await page.locator('.pf-commit-note').innerHTML), 'the second chunk joins pull request #4 instead of opening a new one');
+ok(calls.some((c) => c.m === 'PATCH' && /art\/chunks$/.test(c.p)), 'appending to the branch updates its ref');
+await page.locator('.pf-commit-branch').click();
+ok(await until(async () => (await page.locator('#pf-branchlist option').count()) >= 2), 'the branch picker lists the repository branches');
 
 section('standalone: hosted page + GitHub repository (no server, no manifest)');
 {
