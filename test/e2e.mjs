@@ -471,7 +471,7 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.waitForFunction(() => /⎇ main/.test(document.querySelector('.pf-source').textContent));
   await gp.waitForFunction(() => document.getElementById('app').__pf.current);
   ok(/⎇ main/.test(await gp.locator('.pf-source').innerText()), 'and back again');
-  ok((await gp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.w + 'x' + d.h; })) === '16x4' || true, 'opened the first sprite');
+  ok(await gp.evaluate(() => { const pf = document.getElementById('app').__pf; return pf.current.path === pf.state.sprites[0].path; }), 'switching branches opens the first sprite again');
   await gp.locator('.pf-item', { hasText: 'hero.png' }).click(); await gp.waitForTimeout(250);
   const gview = await gp.locator('.pf-view').boundingBox();
   const gS = await gp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
