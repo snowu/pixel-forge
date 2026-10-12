@@ -840,7 +840,7 @@
 .pf-branchrow select{flex:1;min-width:0}
 .pf-branchrow input{flex:1;min-width:0}
 /* Naming a new branch: the picker shrinks to its + New label, so the name field gets the room. */
-.pf-branchrow:has(.pf-commit-branch:not([hidden])) .pf-commit-branches{flex:0 1 92px}
+.pf-branchrow:has(.pf-commit-branch:not([hidden])) .pf-commit-branches{flex:none;width:72px}
 .pf-commit .pf-row{margin-top:8px}
 .pf-commit-note{margin-top:6px}
 .pf-commit-note:empty{display:none}
