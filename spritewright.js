@@ -264,29 +264,54 @@
     const baseRef = await call('GET', '/repos/' + o.repo + '/git/ref/heads/' + refPath(base));
     const baseSha = baseRef.object.sha;
     const baseCommit = await call('GET', '/repos/' + o.repo + '/git/commits/' + baseSha);
+    const upload = async (data) => {
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(await data.arrayBuffer());
+      let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return (await call('POST', '/repos/' + headRepo + '/git/blobs', { content: btoa(bin), encoding: 'base64' })).sha;
+    };
     const tree = [];
     for (const f of o.files) {
       log('Uploading ' + f.path + '…');
-      const bytes = f.blob instanceof Uint8Array ? f.blob : new Uint8Array(await f.blob.arrayBuffer());
-      let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-      const blob = await call('POST', '/repos/' + headRepo + '/git/blobs', { content: btoa(bin), encoding: 'base64' });
-      tree.push({ path: (o.prefix || '') + f.path, mode: '100644', type: 'blob', sha: blob.sha });
+      tree.push({ path: (o.prefix || '') + f.path, mode: '100644', type: 'blob', sha: await upload(f.blob) });
     }
     log('Creating the commit…');
     const newTree = await call('POST', '/repos/' + headRepo + '/git/trees', { base_tree: baseCommit.tree.sha, tree });
     const commit = await call('POST', '/repos/' + headRepo + '/git/commits', { message: o.message || o.title, tree: newTree.sha, parents: [baseSha] });
     const branch = o.branch || 'art/update-' + Date.now().toString(36);
     await call('POST', '/repos/' + headRepo + '/git/refs', { ref: 'refs/heads/' + branch, sha: commit.sha });
+    /* Upscaled previews for the description live in a commit of their own that is on no branch (so they never show up in the
+       pull request's files or history), kept alive by a hidden ref. GitHub smooths small images it scales up; these need no scaling. */
+    let previewSha = null;
+    if (o.previews && o.previews.length) {
+      try {
+        log('Uploading previews…');
+        const ptree = [];
+        for (const [i, p] of o.previews.entries()) for (const side of ['before', 'after']) if (p[side]) ptree.push({ path: `${i}-${side}.png`, mode: '100644', type: 'blob', sha: await upload(p[side]) });
+        const pt = await call('POST', '/repos/' + headRepo + '/git/trees', { tree: ptree });
+        const pc = await call('POST', '/repos/' + headRepo + '/git/commits', { message: 'spritewright: previews for the pull request description (on no branch)', tree: pt.sha, parents: [] });
+        await call('POST', '/repos/' + headRepo + '/git/refs', { ref: 'refs/spritewright/previews/' + branch, sha: pc.sha });
+        previewSha = pc.sha;
+      } catch (e) { log('Previews skipped (' + e.message + '); the description links the files instead.'); }
+    }
     log('Opening the pull request…');
-    const pr = await call('POST', '/repos/' + o.repo + '/pulls', { title: o.title, body: typeof o.body === 'function' ? o.body({ baseSha, commit: commit.sha, headRepo }) : (o.body || ''), head: headOwner ? headOwner + ':' + branch : branch, base, maintainer_can_modify: true });
-    return { url: pr.html_url, number: pr.number, branch, forked: !!headOwner, commit: commit.sha, headRepo };
+    const pr = await call('POST', '/repos/' + o.repo + '/pulls', { title: o.title, body: typeof o.body === 'function' ? o.body({ baseSha, commit: commit.sha, headRepo, previewSha }) : (o.body || ''), head: headOwner ? headOwner + ':' + branch : branch, base, maintainer_can_modify: true });
+    return { url: pr.html_url, number: pr.number, branch, forked: !!headOwner, commit: commit.sha, headRepo, previewSha };
   }
+  /** How much to blow a sprite up for the pull request description: about 256 px on the long side, 1× to 16×. */
+  const previewScale = (w, h) => Math.max(1, Math.min(16, Math.floor(256 / Math.max(w, h, 1))));
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'art';
 
   /** Markdown for the pull request body: what changed and how much, with before/after links when the repo is public. */
   function prBody(o) {
     const rows = o.files.map((f) => `| \`${f.path}\` | ${f.w}×${f.h} | ${f.pixels} |`).join('\n');
-    const imgs = o.files.map((f) => o.repo && o.baseSha && o.commit ? `**${f.path}**\n\nBefore | After\n--- | ---\n<img src="https://raw.githubusercontent.com/${o.repo}/${o.baseSha}/${o.prefix || ''}${f.path}" width="128"> | <img src="https://raw.githubusercontent.com/${o.headRepo || o.repo}/${o.commit}/${o.prefix || ''}${f.path}" width="128">` : '').filter(Boolean).join('\n\n');
+    const raw = (repo, sha, file) => `https://raw.githubusercontent.com/${repo}/${sha}/${file}`;
+    const imgs = o.files.map((f, i) => {
+      if (o.previewSha) { // pre-scaled, nearest-neighbour copies shown at their real size, so GitHub never smooths them
+        const sc = f.scale || 1, wpx = f.w * sc, bw = (f.baseW || f.w) * sc, prev = (side) => raw(o.headRepo || o.repo, o.previewSha, `${i}-${side}.png`);
+        return `**${f.path}** (shown ${sc}×)\n\nBefore | After\n--- | ---\n${f.isNew ? '_new file_' : `<img src="${prev('before')}" width="${bw}">`} | <img src="${prev('after')}" width="${wpx}">`;
+      }
+      return o.repo && o.baseSha && o.commit ? `**${f.path}**\n\nBefore | After\n--- | ---\n<img src="${raw(o.repo, o.baseSha, (o.prefix || '') + f.path)}" width="128"> | <img src="${raw(o.headRepo || o.repo, o.commit, (o.prefix || '') + f.path)}" width="128">` : '';
+    }).filter(Boolean).join('\n\n');
     return `${o.description ? o.description + '\n\n' : ''}| Sprite | Size | Pixels changed |\n| --- | --- | --- |\n${rows}\n${imgs ? '\n' + imgs + '\n' : ''}\n_Proposed with spritewright. GitHub shows PNG changes in the "Files changed" tab with 2-up, swipe and onion-skin views._`;
   }
 
@@ -1208,10 +1233,15 @@
       try {
         const token = (S.auth.token && !typed ? await authToken() : typed) || '';
         if (!token) throw new Error(authBase ? 'Sign in with GitHub first.' : 'Paste a GitHub token first.');
-        const files = []; for (const d of changed) files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels() });
+        const files = [], previews = [];
+        for (const d of changed) {
+          const sc = previewScale(Math.max(d.w, d.base.w), Math.max(d.h, d.base.h)); // one scale for both sides so they compare 1:1
+          files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels(), scale: sc, baseW: d.base.w, isNew: !!d.local });
+          previews.push({ before: d.local ? null : await pngOf(new Doc(d.path, d.base.w, d.base.h, d.base.px), sc), after: await pngOf(d, sc) });
+        }
         const prefix = (S.meta.repo && S.meta.repo.prefix) || '';
-        const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })), branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
-          body: (ctx) => prBody({ files, repo, prefix, description: $('.pf-pr-desc').value.trim(), baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
+        const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
+          body: (ctx) => prBody({ files, repo, prefix, description: $('.pf-pr-desc').value.trim(), baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
         log.innerHTML = `${esc(log.textContent)}Done${res.forked ? ' (from your fork)' : ''}: <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">${esc(res.url)}</a>`;
         for (const d of changed) d.base = { w: d.w, h: d.h, px: d.px.slice() };
         status(); renderList();

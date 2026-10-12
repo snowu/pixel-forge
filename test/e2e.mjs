@@ -296,10 +296,15 @@ try { await page.waitForFunction(() => /Done/.test(document.querySelector('.pf-l
 ok(await page.locator('.pf-log a').getAttribute('href') === 'https://github.com/me/game/pull/3', 'a link to the new pull request appears');
 ok([...authSeen].join() === 'Bearer ghp_testtoken', 'the token is sent as a bearer header and nowhere else');
 const blobs = calls.filter((c) => c.p.endsWith('/blobs')); const tree = calls.find((c) => c.p.endsWith('/trees')).body;
-ok(blobs.length === 2 && tree.tree.map((t) => t.path).sort().join() === 'art/items/gem.png,art/slime.png', 'two blobs and a tree with repo-relative paths: ' + tree.tree.map((t) => t.path).join(','));
+ok(blobs.length === 6 && tree.tree.map((t) => t.path).sort().join() === 'art/items/gem.png,art/slime.png', 'the branch tree has just the two sprites, with repo-relative paths: ' + tree.tree.map((t) => t.path).join(','));
+{ const trees = calls.filter((c) => c.p.endsWith('/trees')).map((c) => c.body), pcommit = calls.filter((c) => c.m === 'POST' && c.p.endsWith('/commits'))[1].body;
+  ok(trees[1].tree.map((t) => t.path).join() === '0-before.png,0-after.png,1-before.png,1-after.png' && pcommit.parents.length === 0 && calls.some((c) => c.p.endsWith('/refs') && /^refs\/spritewright\/previews\/art\/improve-slime-/.test(c.body.ref)), 'upscaled before/after previews go in a separate commit on no branch, kept by a hidden ref');
+  const iAfter = trees[1].tree.findIndex((t) => t.path.endsWith('-after.png') && t.path.startsWith(String(tree.tree.findIndex((x) => x.path === 'art/slime.png'))));
+  const prev = decodePng(Buffer.from(blobs[2 + iAfter].body.content, 'base64'));
+  ok(prev.w === 256 && prev.h === 256 && prev.rgba[0] === 255 && prev.rgba[(15 * 256 + 15) * 4] === 255, 'the slime preview is 16× nearest-neighbour (256 px, crisp blocks): ' + prev.w + 'x' + prev.h); }
 const slimeBlob = decodePng(Buffer.from(blobs[tree.tree.findIndex((t) => t.path === 'art/slime.png')].body.content, 'base64'));
 ok(slimeBlob.w === 16 && slimeBlob.rgba[0] === 255 && slimeBlob.rgba[3] === 255, 'the committed PNG contains the edit');
-const prCall = calls.find((c) => c.p === '/repos/me/game/pulls'); ok(prCall.body.title === 'Improve slime' && /Redder eyes/.test(prCall.body.body) && /pixels changed/i.test(prCall.body.body) && prCall.body.head.startsWith('art/improve-slime-') && prCall.body.base === 'main', 'PR title, body (description + table) and branch are right');
+const prCall = calls.find((c) => c.p === '/repos/me/game/pulls'); ok(prCall.body.title === 'Improve slime' && /Redder eyes/.test(prCall.body.body) && /pixels changed/i.test(prCall.body.body) && /raw\.githubusercontent\.com\/me\/game\/c1\/\d-after\.png" width="256"/.test(prCall.body.body) && prCall.body.head.startsWith('art/improve-slime-') && prCall.body.base === 'main', 'PR title, body (description + table) and branch are right');
 await page.locator('.pf-dlg-pr button[value=cancel]').click();
 ok(await page.locator('.pf-prbtn').isDisabled(), 'after the PR, nothing is pending any more');
 ok(await page.evaluate(() => sessionStorage.getItem('pf:token')) !== null && (await page.evaluate(() => localStorage.getItem('pf:token'))) === null, 'the token is kept for the tab only unless "remember" is ticked');

@@ -74,17 +74,19 @@ export interface Editor {
 export interface PullRequestOptions {
   token: string; repo: string; title: string;
   files: { path: string; blob: Blob | Uint8Array }[];
+  /** Upscaled before/after PNGs for the description, one entry per file (same order). Committed on no branch, kept by refs/spritewright/previews/<branch>. */
+  previews?: { before?: Blob | Uint8Array | null; after?: Blob | Uint8Array | null }[];
   base?: string; branch?: string; message?: string; prefix?: string;
-  body?: string | ((ctx: { baseSha: string; commit: string; headRepo: string }) => string);
+  body?: string | ((ctx: { baseSha: string; commit: string; headRepo: string; previewSha: string | null }) => string);
   apiBase?: string; fetch?: typeof fetch; onProgress?: (message: string) => void;
 }
-export interface PullRequestResult { url: string; number: number; branch: string; forked: boolean; commit: string; headRepo: string }
+export interface PullRequestResult { url: string; number: number; branch: string; forked: boolean; commit: string; headRepo: string; previewSha: string | null }
 
 export interface GithubSourceOptions { repo: string; branch?: string; token?: string; apiBase?: string; fetch?: typeof fetch; maxBytes?: number }
 
 export function mount(host: HTMLElement, options?: MountOptions): Editor;
 export function createPullRequest(options: PullRequestOptions): Promise<PullRequestResult>;
-export function prBody(o: { files: { path: string; w: number; h: number; pixels: number }[]; description?: string; repo?: string; baseSha?: string; commit?: string; headRepo?: string; prefix?: string }): string;
+export function prBody(o: { files: { path: string; w: number; h: number; pixels: number; scale?: number; baseW?: number; isNew?: boolean }[]; description?: string; repo?: string; baseSha?: string; commit?: string; headRepo?: string; prefix?: string; previewSha?: string | null }): string;
 
 export const png: {
   /** Lossless PNG decode (all 8-bit types, 1/2/4-bit indexed and grey, 16-bit reduced to 8). Throws for interlaced files. */

@@ -277,6 +277,28 @@ test('prBody lists the files and pixel counts', () => {
   assert.match(b, /Better eyes/); assert.match(b, /\| `a\/b.png` \| 16×16 \| 12 \|/); assert.match(b, /raw.githubusercontent.com\/me\/game\/abc\/a\/b.png/); assert.match(b, /raw.githubusercontent.com\/me\/game\/def\/a\/b.png/);
 });
 
+test('prBody with previews: upscaled copies from the preview commit, shown at their real size (no blurry scaling)', () => {
+  const b = PF.prBody({ files: [{ path: 'a/b.png', w: 32, h: 32, pixels: 5, scale: 8, baseW: 32 }, { path: 'new.png', w: 16, h: 16, pixels: 256, scale: 16, isNew: true }], repo: 'me/game', headRepo: 'artist/game', baseSha: 'abc', commit: 'def', previewSha: 'p1' });
+  assert.match(b, /<img src="https:\/\/raw.githubusercontent.com\/artist\/game\/p1\/0-before.png" width="256">/);
+  assert.match(b, /<img src="https:\/\/raw.githubusercontent.com\/artist\/game\/p1\/0-after.png" width="256">/);
+  assert.match(b, /a\/b.png\*\* \(shown 8×\)/); assert.match(b, /_new file_ \| <img src="[^"]*\/1-after.png" width="256">/);
+  assert.ok(!/width="128"/.test(b), 'no browser-scaled images');
+});
+test('PR: previews go in a commit on no branch, kept by a hidden ref; the PR files and branch are untouched', async () => {
+  const gh = fakeGithub(); let ctxSeen;
+  const r = await PF.createPullRequest({ token: 'good', repo: 'me/game', title: 't', files: FILES.slice(0, 1), previews: [{ before: new Uint8Array([9]), after: new Uint8Array([8]) }], branch: 'art/x', fetch: gh.fetch, body: (ctx) => { ctxSeen = ctx; return 'b'; } });
+  const trees = gh.calls.filter((c) => c.p.endsWith('/trees')).map((c) => c.body), commits = gh.calls.filter((c) => c.method === 'POST' && c.p.endsWith('/commits')).map((c) => c.body), refs = gh.calls.filter((c) => c.p.endsWith('/refs')).map((c) => c.body);
+  assert.deepEqual(trees[0].tree.map((t) => t.path), ['art/slime.png'], 'the branch commit only has the sprite');
+  assert.deepEqual(trees[1].tree.map((t) => t.path), ['0-before.png', '0-after.png']); assert.equal(trees[1].base_tree, undefined, 'the preview tree is standalone');
+  assert.deepEqual(commits[0].parents, ['base123']); assert.deepEqual(commits[1].parents, [], 'the preview commit is not part of the branch history');
+  assert.deepEqual(refs.map((x) => x.ref), ['refs/heads/art/x', 'refs/spritewright/previews/art/x']);
+  assert.equal(ctxSeen.previewSha, 'commit1'); assert.equal(r.previewSha, 'commit1');
+  // a failure while making previews still opens the PR, with the old links
+  const gh2 = fakeGithub(), f2 = async (url, init = {}) => (String(url).includes('/refs') && init.body && init.body.includes('refs/spritewright') ? { ok: false, status: 422, text: async () => '{"message":"nope"}' } : gh2.fetch(url, init)), log = [];
+  const r2 = await PF.createPullRequest({ token: 'good', repo: 'me/game', title: 't', files: FILES.slice(0, 1), previews: [{ after: new Uint8Array([8]) }], branch: 'art/y', fetch: f2, body: (ctx) => 'p=' + ctx.previewSha, onProgress: (m) => log.push(m) });
+  assert.equal(r2.previewSha, null); assert.equal(gh2.calls.find((c) => c.p.endsWith('/pulls')).body.body, 'p=null'); assert.ok(log.some((m) => /Previews skipped/.test(m)));
+});
+
 /* ---------- lossless PNG codec ---------- */
 const rgbaOf = (r) => [...new Uint8Array(r.px.buffer)];
 test('codec: RGBA round trip is exact, including semi-transparent pixels (a game may use an alpha value such as 250 as a marker)', async () => {
