@@ -34,7 +34,7 @@ Click **Upload PNG** (or **Blank sprite**) and draw. Everything happens in your 
 
 No install, nothing in the game repository.
 
-- **A GitHub repository.** Enter `owner/name` (and a token for private repos or to open pull requests). The editor lists the repository's PNGs, you edit them, press **Propose PR**. Or deep-link: `…/index.html?repo=owner/name&branch=main`.
+- **A GitHub repository.** Enter `owner/name` (and a token for private repos or to open pull requests). The editor lists the repository's PNGs, you edit them, press **Propose PR**. Or deep-link: `…/index.html?repo=owner/name&branch=main`. The sidebar names the repo and branch (`owner/name ⎇ branch`); click it to switch branches.
 - **A folder on your computer** (Chrome, Edge, Opera). Choose the project folder; the sprites are found, and **Save** writes them back in place.
 - Or drag PNG files onto the canvas.
 
