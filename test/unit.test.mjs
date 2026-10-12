@@ -684,3 +684,40 @@ test('githubSignIn: accepts only the right origin and nonce, reports popup probl
   const err = PF.auth.signIn('https://auth.example', { win: w2 }); listeners.at(-1)({ origin: 'https://auth.example', data: { type: 'pf-auth', nonce, error: 'access_denied' } });
   await assert.rejects(err, /access_denied/);
 });
+
+test('snapAlpha: specks clear, near-opaque solid, kept values kept or restored from the original', () => {
+  const rule = C.normAlpha({ clear: 15, solid: 245, keep: [250] }), px = (a) => ((a << 24) | 0x112233) >>> 0;
+  const img = new Uint32Array([px(3), px(15), px(16), px(244), px(248), px(251), px(250), px(255), px(128), 0]);
+  const base = new Uint32Array(img.length); base[5] = px(250);
+  assert.equal(C.snapAlpha(img, rule, base), 4);
+  assert.deepEqual([...img].map((v) => v >>> 24), [0, 0, 16, 244, 255, 250, 250, 255, 128, 0]);
+  assert.equal(img[0], 0, 'a cleared speck loses its colour too');
+  assert.equal(img[4] & 0xffffff, 0x112233, 'a snapped pixel keeps its colour');
+  assert.equal(C.snapAlpha(img, null), 0, 'no rule, no change');
+  assert.deepEqual(C.normAlpha({ clear: '9', solid: 999, keep: [0, 250, 255, 'x'] }), { clear: 9, solid: 255, keep: [250] });
+  assert.equal(C.normAlpha(null), null);
+});
+
+test('normGroups: arrays or { sprites, background }, order kept, junk dropped', () => {
+  const g = C.normGroups({ Crypt: { background: '#040308', sprites: ['a.png', 7, 'b.png'] }, Blades: ['c.png'], Empty: [], Bad: { background: 'red', sprites: ['d.png'] } });
+  assert.deepEqual(g, [
+    { name: 'Crypt', sprites: ['a.png', 'b.png'], background: '#040308' },
+    { name: 'Blades', sprites: ['c.png'], background: null },
+    { name: 'Bad', sprites: ['d.png'], background: null },
+  ]);
+  assert.deepEqual(C.normGroups(['x']), []);
+  assert.deepEqual(C.normGroups(undefined), []);
+});
+
+test('scan reads groups (inline or from a file) and the alpha rule into the manifest', () => {
+  const dir = tmp();
+  fs.mkdirSync(path.join(dir, 'art')); fs.writeFileSync(path.join(dir, 'art/a.png'), encodePng(2, 2, new Uint8Array(16).fill(255)));
+  fs.writeFileSync(path.join(dir, 'groups.json'), JSON.stringify({ Mobs: ['art/a.png'] }));
+  fs.writeFileSync(path.join(dir, 'spritewright.config.json'), JSON.stringify({ groups: 'groups.json', alpha: { clear: 15, solid: 245, keep: [250] } }));
+  const m = scan(dir);
+  assert.deepEqual(m.groups, { Mobs: ['art/a.png'] });
+  assert.deepEqual(m.alpha, { clear: 15, solid: 245, keep: [250] });
+  fs.writeFileSync(path.join(dir, 'spritewright.config.json'), JSON.stringify({ groups: { Inline: ['art/a.png'] } }));
+  assert.deepEqual(scan(dir).groups, { Inline: ['art/a.png'] });
+  assert.equal(scan(dir).alpha, null);
+});

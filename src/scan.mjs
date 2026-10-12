@@ -94,8 +94,10 @@ export function scan(root, userConfig) {
   if (cfg.palette) {
     try { palette = fs.readFileSync(path.resolve(root, cfg.palette), 'utf8').split(/[\s,;]+/).map((t) => /^#?[0-9a-f]{6}$/i.test(t) ? '#' + t.replace('#', '').toLowerCase() : null).filter(Boolean); } catch { /* missing palette file: ignore */ }
   }
+  let groups = cfg.groups && typeof cfg.groups === 'object' ? cfg.groups : null;
+  if (typeof cfg.groups === 'string') { try { groups = JSON.parse(fs.readFileSync(path.resolve(root, cfg.groups), 'utf8')); } catch { /* missing or broken groups file: ignore */ } }
   const git = gitInfo(root);
-  return { version: 1, generated: new Date().toISOString(), repo: { slug: cfg.repo?.slug || git.slug, base: cfg.repo?.base || null, prefix: cfg.repo?.prefix ?? git.prefix }, palette, background: typeof cfg.background === 'string' ? cfg.background : null, sprites, hidden };
+  return { version: 1, generated: new Date().toISOString(), repo: { slug: cfg.repo?.slug || git.slug, base: cfg.repo?.base || null, prefix: cfg.repo?.prefix ?? git.prefix }, palette, background: typeof cfg.background === 'string' ? cfg.background : null, groups, alpha: cfg.alpha && typeof cfg.alpha === 'object' ? cfg.alpha : null, sprites, hidden };
 }
 
 const NON_ART = /^(docs?|documentation|screenshots?|previews?|tests?|e2e|coverage|examples?|samples?|marketing|promo|store)$/i;
