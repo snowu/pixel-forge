@@ -657,6 +657,31 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.locator('.pf-q').fill('hero_'); ok((await fp.locator('.pf-item').count()) === 4 && (await fp.locator('.pf-dir').count()) === 0, 'typing a filter shows a flat list of matching files');
   ok(await fp.evaluate(() => [...document.querySelectorAll('.pf-list .pf-badge')].every((b) => { const i = b.closest('.pf-item').getBoundingClientRect(), r = b.getBoundingClientRect(); return r.top >= i.top - 1 && r.bottom <= i.bottom + 1 && r.right <= i.right + 1; })), 'family badges stay inside their row in the flat list');
   await fp.locator('.pf-q').fill('');
+  // animation tools: new frame, reorder, GIF
+  await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(200);
+  await fp.locator('.pf-fam-m', { hasText: '2' }).click(); await fp.waitForTimeout(200);
+  await fp.locator('.pf-fam-add').click(); await fp.waitForTimeout(400);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_3.png' && (await fp.locator('.pf-fam-m span').allInnerTexts()).join() === '0,1,2,3,atk', '+ frame adds hero_3.png, a copy of the frame you were on, and opens it');
+  ok((await fp.locator('.pf-cell', { hasText: 'hero' }).locator('.pf-badge').innerText()) === '▶5', 'the family tile now counts 5');
+  await fp.keyboard.press('Control+s'); await fp.waitForTimeout(400);
+  ok(fs.existsSync(path.join(r2, 'chars/hero_3.png')) && decodePng(fs.readFileSync(path.join(r2, 'chars/hero_3.png'))).rgba[(1 * 4 + 2) * 4] === 255, 'Save writes the new frame into the project folder');
+  const h0 = await fp.evaluate(async () => { const a = document.getElementById('app').__pf; await a.open('chars/hero_0.png'); return [...a.current.px]; });
+  await fp.evaluate(() => document.getElementById('app').__pf.open('chars/hero_1.png')); await fp.waitForTimeout(200);
+  const h1 = await fp.evaluate(() => [...document.getElementById('app').__pf.current.px]);
+  ok(await fp.locator('.pf-fam-left').isEnabled(), '◀ is available on a middle frame');
+  await fp.locator('.pf-fam-left').click(); await fp.waitForTimeout(300);
+  const after0 = await fp.evaluate(() => { const a = document.getElementById('app').__pf; return { path: a.current.path, px: [...a.current.px], other: [...a.docs.get('chars/hero_1.png').px] }; });
+  ok(after0.path === 'chars/hero_0.png' && JSON.stringify(after0.px) === JSON.stringify(h1) && JSON.stringify(after0.other) === JSON.stringify(h0), '◀ moves the frame earlier (swaps it with the one before) and follows it');
+  ok(await fp.locator('.pf-fam-left').isDisabled(), '◀ is disabled on the first frame');
+  await fp.locator('.pf-fam-right').click(); await fp.waitForTimeout(300);
+  ok(JSON.stringify(await fp.evaluate(() => [...document.getElementById('app').__pf.docs.get('chars/hero_0.png').px])) === JSON.stringify(h0), '▶ moves it back');
+  fp.once('dialog', (dlg) => dlg.accept('3'));
+  const [gifDl] = await Promise.all([fp.waitForEvent('download'), fp.locator('.pf-gif').click()]);
+  const gif = fs.readFileSync(await gifDl.path());
+  const gifFrames = (() => { let o = 13 + (gif[10] & 0x80 ? 3 << ((gif[10] & 7) + 1) : 0), n = 0; while (gif[o] !== 0x3b) { if (gif[o] === 0x21) { o += 2; while (gif[o]) o += gif[o] + 1; o++; continue; } n++; o += 10; if (gif[o - 1] & 0x80) o += 3 << ((gif[o - 1] & 7) + 1); o++; while (gif[o]) o += gif[o] + 1; o++; } return n; })();
+  ok(gifDl.suggestedFilename() === 'hero@3x.gif' && gif.toString('latin1', 0, 6) === 'GIF89a' && gif.readUInt16LE(6) === 12 && gifFrames === 5, `GIF… downloads the family as an animation: ${gifDl.suggestedFilename()}, ${gif.readUInt16LE(6)}×${gif.readUInt16LE(8)}, ${gifFrames} frames`);
+  const shown = await fp.evaluate(async (b64) => { const img = new Image(); img.src = 'data:image/gif;base64,' + b64; await img.decode(); const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; const g = c.getContext('2d'); g.drawImage(img, 0, 0); return { w: img.naturalWidth, red: [...g.getImageData(1, 4, 1, 1).data], clear: g.getImageData(10, 10, 1, 1).data[3] }; }, gif.toString('base64'));
+  ok(shown.w === 12 && shown.red[0] === 255 && shown.red[3] === 255 && shown.clear === 0, 'and the browser decodes it: red pixel where hero_0 has it, transparency kept');
   // context: the sprite at game scale next to its folder neighbours, live
   await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(200);
   await fp.keyboard.press('v'); await fp.waitForTimeout(300);

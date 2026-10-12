@@ -168,6 +168,48 @@
     }
     return out;
   }
+  /** An animated GIF (looping, 1-bit transparency) from frames [{ w, h, px: Uint32Array }]. Frames of different sizes share
+      the largest canvas, bottom-centred so feet line up. Up to 255 colours are exact; beyond that the rarest colours map to
+      the nearest kept one. delay is in hundredths of a second; scale blows pixels up (nearest neighbour). */
+  function encodeGif(frames, { delay = 12, scale = 1 } = {}) {
+    const W = Math.max(...frames.map((f) => f.w)) * scale, H = Math.max(...frames.map((f) => f.h)) * scale, count = new Map();
+    for (const f of frames) for (const c of f.px) if (c >>> 24 >= 128) { const k = c & 0xffffff; count.set(k, (count.get(k) || 0) + 1); }
+    const kept = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 255).map(([k]) => k), index = new Map(kept.map((k, i) => [k, i + 1]));
+    const lookup = (k) => { let i = index.get(k); if (i == null) { let best = 1, bd = Infinity; kept.forEach((q, j) => { const d = ((q & 255) - (k & 255)) ** 2 + (((q >> 8) & 255) - ((k >> 8) & 255)) ** 2 + (((q >> 16) & 255) - ((k >> 16) & 255)) ** 2; if (d < bd) { bd = d; best = j + 1; } }); index.set(k, (i = best)); } return i; };
+    let bits = 1; while ((1 << bits) < kept.length + 1) bits++;
+    const out = [], u16 = (v) => out.push(v & 255, (v >> 8) & 255), str = (t) => { for (const ch of t) out.push(ch.charCodeAt(0)); };
+    str('GIF89a'); u16(W); u16(H); out.push(0x80 | 0x70 | (bits - 1), 0, 0);
+    for (let i = 0; i < 1 << bits; i++) { const k = i ? kept[i - 1] || 0 : 0; out.push(k & 255, (k >> 8) & 255, (k >> 16) & 255); }
+    out.push(0x21, 0xff, 11); str('NETSCAPE2.0'); out.push(3, 1, 0, 0, 0); // loop forever
+    const min = Math.max(2, bits);
+    for (const f of frames) {
+      const ox = Math.floor((W / scale - f.w) / 2), oy = H / scale - f.h, idx = new Uint8Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const sx = Math.floor(x / scale) - ox, sy = Math.floor(y / scale) - oy; if (sx < 0 || sy < 0 || sx >= f.w || sy >= f.h) continue; const c = f.px[sy * f.w + sx]; if (c >>> 24 >= 128) idx[y * W + x] = lookup(c & 0xffffff); }
+      out.push(0x21, 0xf9, 4, (2 << 2) | 1); u16(delay); out.push(0, 0); // restore to background, index 0 is transparent
+      out.push(0x2c); u16(0); u16(0); u16(W); u16(H); out.push(0, min);
+      const data = gifLzw(idx, min); for (let i = 0; i < data.length; i += 255) { const n = Math.min(255, data.length - i); out.push(n); for (let j = 0; j < n; j++) out.push(data[i + j]); }
+      out.push(0);
+    }
+    out.push(0x3b);
+    return new Uint8Array(out);
+  }
+  function gifLzw(indices, min) {
+    const clear = 1 << min, eoi = clear + 1, out = [], dict = new Map();
+    let size = min + 1, next = eoi + 1, acc = 0, nbits = 0;
+    const emit = (code) => { acc |= code << nbits; nbits += size; while (nbits >= 8) { out.push(acc & 255); acc >>>= 8; nbits -= 8; } };
+    emit(clear);
+    let cur = indices[0];
+    for (let i = 1; i < indices.length; i++) {
+      const k = indices[i], key = (cur << 8) | k, hit = dict.get(key);
+      if (hit !== undefined) { cur = hit; continue; }
+      emit(cur);
+      if (next === 4096) { emit(clear); dict.clear(); next = eoi + 1; size = min + 1; }
+      else { if (next >= 1 << size) size++; dict.set(key, next++); }
+      cur = k;
+    }
+    emit(cur); emit(eoi); if (nbits) out.push(acc & 255);
+    return out;
+  }
   /** Copy a rectangle {x,y,w,h} out of an image; parts outside the image come back clear. */
   function copyRect(px, w, h, r) {
     const o = new Uint32Array(r.w * r.h);
@@ -200,7 +242,8 @@
     constructor(path, w, h, px, extra = {}) {
       this.path = path; this.w = w; this.h = h; this.px = px;
       this.base = { w, h, px: px.slice() }; this.saved = { w, h, px: px.slice() };
-      this.undo = []; this.redo = []; this.local = !!extra.local; this.frames = extra.frames || null;
+      this.undo = []; this.redo = []; this.local = !!extra.local; this.frames = extra.frames || null; this.isNew = !!extra.isNew;
+      if (this.isNew) this.base = { w, h, px: new Uint32Array(w * h) }; // a new file: every pixel counts as a change
     }
     snapshot() { this.undo.push({ w: this.w, h: this.h, px: this.px.slice() }); if (this.undo.length > 100) this.undo.shift(); this.redo.length = 0; }
     swap(from, to) { to.push({ w: this.w, h: this.h, px: this.px.slice() }); const s = from.pop(); this.w = s.w; this.h = s.h; this.px = s.px; }
@@ -649,6 +692,7 @@
 .pf-ctx{border-top:1px solid var(--pf-line);background:var(--pf-panel);display:flex;flex-direction:column;flex:none}
 .pf-ctx-bar{display:flex;gap:10px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--pf-line)}.pf .pf-ctx-bar .pf-seg button{min-height:24px;padding:1px 8px}
 .pf-ctx-cv{display:block;width:100%;height:150px;image-rendering:pixelated}
+.pf-fam-tools{margin-left:auto;display:inline-flex;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11px}
 .pf-badge{position:absolute;top:2px;right:2px;font-style:normal;font-size:9.5px;line-height:1;padding:2px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted)}
 .pf-badge.anim{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent);font-weight:700}
 .pf .pf-cell .dot{position:absolute;top:4px;left:4px}
@@ -834,10 +878,10 @@
         <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load a .hex (Lospec), or add colours with +.</div><div class="pf-note pf-off"></div></div>
           <div class="pf-row"><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><button class="pf-palload">Load…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div></div>
         <div class="pf-panel pf-prev"><h4>Preview</h4>
-          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note"><kbd>,</kbd> <kbd>.</kbd> previous / next · Play flips through them</div></div>
+          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note"><kbd>,</kbd> <kbd>.</kbd> previous / next · Play flips through them</div></div>
           <canvas class="pf-p1"></canvas>
           <div class="pf-row pf-sheet-row"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
-          <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
+          <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button></div>
           <canvas class="pf-p2"></canvas></div>
         <div class="pf-panel"><h4>Image</h4><div class="pf-row"><button class="pf-fliph" title="Flip the image, or the selection">Flip ↔</button><button class="pf-flipv">Flip ↕</button><button class="pf-rot" title="Rotate the image, or the selection">Rotate ↻</button></div>
           <div class="pf-row"><button class="pf-sh" data-d="-1,0">←</button><button class="pf-sh" data-d="0,-1">↑</button><button class="pf-sh" data-d="0,1">↓</button><button class="pf-sh" data-d="1,0">→</button><span class="pf-note">wrap shift</span></div>
@@ -993,21 +1037,25 @@
         if (O.blank) await addLocal(O.blank.name || 'sprite.png', O.blank.w || 16, O.blank.h || 16, new Uint32Array((O.blank.w || 16) * (O.blank.h || 16)), false); else if (O.connect !== false) openConnect();
       } catch (e) { note('Could not start: ' + e.message); }
     }
+    /** The document for a sprite, loading it if needed (without opening it). Null if it cannot be read. */
+    async function loadDoc(path) {
+      if (S.docs.has(path)) return S.docs.get(path);
+      const meta = S.sprites.find((s) => s.path === path);
+      try {
+        const img = await decodePng(new Blob([await S.src.read(path)], { type: 'image/png' }));
+        S.docs.set(path, new Doc(path, img.w, img.h, img.px, { frames: meta && meta.frames }));
+        return S.docs.get(path);
+      } catch (e) { note('Could not open ' + path + ': ' + e.message); return null; }
+    }
     async function openSprite(path) {
       if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; }
-      if (!S.docs.has(path)) {
-        const meta = S.sprites.find((s) => s.path === path);
-        try {
-          const img = await decodePng(new Blob([await S.src.read(path)], { type: 'image/png' }));
-          S.docs.set(path, new Doc(path, img.w, img.h, img.px, { frames: meta && meta.frames }));
-        } catch (e) { note('Could not open ' + path + ': ' + e.message); return; }
-      }
+      if (!(await loadDoc(path))) return;
       S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); renderList(); renderColors(); status(); render(); drawPreview(); renderFamily();
     }
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
-    function addLocal(name, w, h, px, inProject) {
+    function addLocal(name, w, h, px, inProject, isNew) {
       let path = name, n = 1; while (S.docs.has(path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
-      S.docs.set(path, new Doc(path, w, h, px, { local: !inProject })); S.sprites.push({ path, w, h, local: !inProject }); return openSprite(path);
+      S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); return openSprite(path);
     }
     const canWrite = () => !!(S.src && S.src.write);
 
@@ -1399,6 +1447,7 @@
     const memberLabel = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length).replace(/^[_-]/, ''); return r || 'base'; };
     function renderFamily() {
       const d = doc(), fam = famFor(d), box = $('.pf-fam'); box.hidden = !fam; if (!fam) return;
+      const at = fam.members.indexOf(d.path); $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
       $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`;
       const strip = $('.pf-fam-strip'); strip.innerHTML = '';
       for (const p of fam.members) {
@@ -1460,8 +1509,8 @@
         const files = [], previews = [];
         for (const d of changed) {
           const sc = previewScale(Math.max(d.w, d.base.w), Math.max(d.h, d.base.h)); // one scale for both sides so they compare 1:1
-          files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels(), scale: sc, baseW: d.base.w, isNew: !!d.local });
-          previews.push({ before: d.local ? null : await pngOf(new Doc(d.path, d.base.w, d.base.h, d.base.px), sc), after: await pngOf(d, sc) });
+          files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels(), scale: sc, baseW: d.base.w, isNew: !!(d.local || d.isNew) });
+          previews.push({ before: d.local || d.isNew ? null : await pngOf(new Doc(d.path, d.base.w, d.base.h, d.base.px), sc), after: await pngOf(d, sc) });
         }
         const prefix = (S.meta.repo && S.meta.repo.prefix) || '';
         const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
@@ -1532,6 +1581,36 @@
     $('.pf-tile').onclick = (e) => { S.tile = !S.tile; e.currentTarget.classList.toggle('on', S.tile); if (S.tile && !S.touched && doc()) { const d = doc(), r = stage.getBoundingClientRect(), dpr = window.devicePixelRatio || 1; S.zoom = Math.max(1, Math.min(64, Math.floor(Math.min((r.width * dpr - 40) / (d.w * 3), (r.height * dpr - 40) / (d.h * 3))))); S.ox = Math.round((view.width - d.w * S.zoom) / 2); S.oy = Math.round((view.height - d.h * S.zoom) / 2); } else if (!S.tile && !S.touched) fit(); render(); status(); };
     $('.pf-onion').onclick = (e) => { S.onion = !S.onion; e.currentTarget.classList.toggle('on', S.onion); const d = doc(), f = frameSize(d); if (S.onion && d && !(f.w < d.w || f.h < d.h) && !famFor(d)) note('Onion skin needs animation frames: a sprite sheet (set the frame size under Preview) or numbered files like walk_0, walk_1.'); render(); };
     $('.pf-help').onclick = () => $('.pf-dlg-keys').showModal();
+    /* animation: frames that are separate numbered files (flame_0, flame_1...) */
+    const frameNo = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length); const m = /^([_-])(\d+)$/.exec(r); return m ? { sep: m[1], n: +m[2], pad: m[2].length } : null; };
+    $('.pf-fam-add').onclick = async () => {
+      const d = doc(), fam = famFor(d); if (!d || !fam) return;
+      const nums = fam.members.map((p) => frameNo(fam, p)).filter(Boolean), sep = nums[0] ? nums[0].sep : '_', pad = nums[0] ? nums[0].pad : 1, n = nums.length ? Math.max(...nums.map((x) => x.n)) + 1 : 1;
+      const dir = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/') + 1) : '', path = `${dir}${fam.key}${sep}${String(n).padStart(pad, '0')}.png`;
+      if (S.sprites.some((x) => x.path === path)) return note(path + ' already exists');
+      await addLocal(path, d.w, d.h, d.px.slice(), canWrite(), true);
+      note(`new frame ${path.split('/').pop()}: a copy of ${d.path.split('/').pop()}${canWrite() ? '' : ' (Save downloads it; Propose PR adds it)'}`);
+    };
+    async function moveFrame(dir) {
+      const d = doc(), fam = famFor(d); if (!d || !fam) return;
+      const i = fam.members.indexOf(d.path), j = i + dir; if (j < 0 || j >= fam.members.length) return;
+      const o = await loadDoc(fam.members[j]); if (!o) return;
+      d.snapshot(); o.snapshot();
+      [d.px, o.px] = [o.px, d.px]; [d.w, o.w] = [o.w, d.w]; [d.h, o.h] = [o.h, d.h];
+      await openSprite(o.path); note(`moved ${dir < 0 ? 'earlier' : 'later'}: now ${o.path.split('/').pop()}`); changedUi(); renderList();
+    }
+    $('.pf-fam-left').onclick = () => moveFrame(-1); $('.pf-fam-right').onclick = () => moveFrame(1);
+    $('.pf-gif').onclick = async () => {
+      const d = doc(); if (!d) return; const fam = famFor(d), sheet = frameSize(d), frames = [];
+      if (sheet.w < d.w || sheet.h < d.h) { const cols = Math.floor(d.w / sheet.w), rows = Math.floor(d.h / sheet.h); for (let k = 0; k < cols * rows; k++) frames.push({ w: sheet.w, h: sheet.h, px: copyRect(d.px, d.w, d.h, { x: (k % cols) * sheet.w, y: Math.floor(k / cols) * sheet.h, w: sheet.w, h: sheet.h }) }); }
+      else if (fam) { for (const p of fam.members) { const x = await loadDoc(p); if (x) frames.push({ w: x.w, h: x.h, px: x.px }); } }
+      else frames.push({ w: d.w, h: d.h, px: d.px });
+      const s = +(prompt(`GIF of ${frames.length} frame${frames.length > 1 ? 's' : ''} at ${+$('.pf-fps').value || 8} fps. Scale (1 = original size):`, String(Math.max(1, Math.min(8, Math.floor(256 / Math.max(d.w, d.h)))))) || 0);
+      if (!s || s < 1 || s > 32) return;
+      const gif = encodeGif(frames, { delay: Math.max(2, Math.round(100 / Math.max(1, +$('.pf-fps').value || 8))), scale: Math.floor(s) });
+      download(new Blob([gif], { type: 'image/gif' }), (fam && !(sheet.w < d.w) ? fam.key : d.path.split('/').pop().replace(/\.png$/i, '')) + (s > 1 ? '@' + s + 'x' : '') + '.gif');
+      note(`GIF: ${frames.length} frame${frames.length > 1 ? 's' : ''}, ${(gif.length / 1024).toFixed(1)} KB`);
+    };
     $('.pf-context').onclick = (e) => { S.ctx = !S.ctx; e.currentTarget.classList.toggle('on', S.ctx); $('.pf-ctx').hidden = !S.ctx; try { localStorage.setItem('pf:ctx', S.ctx ? '1' : '0'); } catch { /* ignore */ } requestAnimationFrame(() => { resizeView(); if (!S.touched) fit(); render(); }); };
     $$('.pf-ctx-scale button').forEach((b) => (b.onclick = () => { S.ctxScale = +b.dataset.scale; segOn('.pf-ctx-scale', b); render(); }));
     try { if (localStorage.getItem('pf:ctx') === '1') { S.ctx = true; $('.pf-context').classList.add('on'); $('.pf-ctx').hidden = false; } } catch { /* off */ }
@@ -1660,5 +1739,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
 });
