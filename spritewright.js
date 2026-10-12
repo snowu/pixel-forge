@@ -713,6 +713,11 @@
 .pf-side{border-right:1px solid var(--pf-line)}.pf-right{border-left:1px solid var(--pf-line);gap:0;padding:0}
 .pf-panel{padding:12px 12px 14px;border-bottom:1px solid var(--pf-line);display:flex;flex-direction:column;gap:8px}
 .pf-list{display:flex;flex-direction:column;gap:2px;overflow:auto;flex:1;min-height:80px}
+/* Thin scrollbars in the line colour on a transparent track, everywhere in the app. */
+.pf,.pf *{scrollbar-width:thin;scrollbar-color:var(--pf-line2) transparent}
+.pf ::-webkit-scrollbar{width:8px;height:8px}
+.pf ::-webkit-scrollbar-thumb{background:var(--pf-line2)}
+.pf ::-webkit-scrollbar-track{background:transparent}
 .pf-item{position:relative;display:flex;gap:8px;align-items:center;padding:4px;border:1px solid transparent;cursor:pointer;background:none;text-align:left;width:100%;min-height:44px;justify-content:flex-start}
 .pf .pf-item{background:none;border-color:transparent}.pf .pf-item:hover:not(:disabled){box-shadow:none;background:var(--pf-panel2)}
 .pf .pf-item.on,.pf .pf-item.on:hover:not(:disabled){border-color:var(--pf-accent);background:var(--pf-panel2);color:var(--pf-ink);font-weight:400;box-shadow:inset 3px 0 0 var(--pf-accent)}
@@ -723,6 +728,8 @@
 .pf .pf-dir{display:flex;width:100%;justify-content:flex-start;gap:6px;background:none;border:0;border-bottom:1px solid var(--pf-line);padding:7px 2px 5px;min-height:0;margin-top:6px;color:var(--pf-muted);font-size:11.5px;letter-spacing:.04em;position:sticky;top:0;z-index:1;background:var(--pf-panel)}
 .pf .pf-dir:hover:not(:disabled){box-shadow:none;color:var(--pf-accent)}
 .pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}
+.pf-foldrow{display:flex;gap:6px;margin-top:6px}
+.pf-foldrow button{flex:1;min-height:24px;font-size:11.5px;color:var(--pf-muted);background:none;border-color:transparent}
 .pf-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(60px,1fr));gap:4px;padding:6px 0 4px}
 .pf .pf-cell{flex-direction:column;gap:3px;padding:5px 3px 4px;min-height:0;position:relative;justify-content:flex-start;border:1px solid transparent}
 .pf .pf-cell canvas{width:44px;height:44px;object-fit:contain}
@@ -968,7 +975,7 @@
     const O = Object.assign({ manifestUrl: null, baseUrl: '', save: null, github: null, palette: null, accent: null, pr: true }, options);
     const root = el(`<div class="pf" tabindex="-1">
       <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button>
-        <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
+        <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"><div class="pf-foldrow"><button type="button" class="pf-fold-all" title="Fold every folder">▸ Fold all</button><button type="button" class="pf-unfold-all" title="Unfold every folder">▾ Unfold all</button></div></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
         <div class="pf-row"><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
         <div class="pf-note pf-src"></div><input type="file" class="pf-file" accept="image/png,image/*" multiple hidden></aside>
@@ -1207,7 +1214,12 @@
     async function openSprite(path) {
       if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; }
       if (!(await loadDoc(path))) return;
-      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); renderList(); renderColors(); status(); render(); drawPreview(); renderFamily(); resetHistory();
+      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit();
+      // Opening a sprite reveals its folder, so navigating back to it never
+      // leaves you looking at a shut door. An explicit fold still hides it.
+      const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+      if (folded && folded.has(dir)) { folded.delete(dir); saveFolded(); }
+      renderList(); renderColors(); status(); render(); drawPreview(); renderFamily(); resetHistory();
     }
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
@@ -1330,7 +1342,8 @@
     const thumbs = new Map();
     const io = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); paintThumb(e.target, e.target.__s); } }), { root: $('.pf-list') }) : null;
     /* The sprite list: folders you can fold, one tile per family (archer_0 + archer_atk + archer_block), animations marked ▶.
-       Typing in the filter shows a flat list of matching files instead. */
+       Typing in the filter shows a flat list of matching files instead. Fold all / Unfold all fold the lot,
+       including the folder the open sprite is in; opening a sprite reveals its folder again. */
     const famOf = new Map(); // path -> { key, dir, members, animated }
     const collapsedKey = () => 'pf:folded:' + ((S.meta.repo && S.meta.repo.slug) || (S.src && S.src.name) || location.pathname);
     let folded = null;
@@ -1361,7 +1374,7 @@
         const note = hidNote = el(`<button class="pf-hidden-toggle" title="${shown ? 'Hide' : 'Show'} the images in folders like docs, screenshots and previews, which are usually not game art">${shown ? 'Hide' : 'Show'} ${hid.length} image${hid.length > 1 ? 's' : ''} from docs / screenshots / previews folders</button>`);
       }
       for (const g of groups) {
-        const n = g.families.reduce((k, f) => k + f.members.length, 0), shut = folded.has(g.dir) && !g.families.some((f) => f.members.includes(S.cur));
+        const n = g.families.reduce((k, f) => k + f.members.length, 0), shut = folded.has(g.dir);
         if (groups.length > 1 || g.dir) list.appendChild(el(`<button class="pf-dir${shut ? ' shut' : ''}" data-dir="${esc(g.dir)}" aria-expanded="${!shut}"><span class="pf-caret">${shut ? '▸' : '▾'}</span><span class="pf-dirname">${esc(g.dir || '.')}</span><span class="pf-dircount">${n}</span></button>`));
         if (shut) continue;
         const grid = el('<div class="pf-tiles"></div>'); list.appendChild(grid);
@@ -1374,6 +1387,7 @@
       if (hidNote) list.appendChild(hidNote); // after the folders
     }
     function toggleDir(dir) { if (!folded) loadFolded(); folded.has(dir) ? folded.delete(dir) : folded.add(dir); saveFolded(); renderList(); }
+    function setAllFolded(shut) { if (!folded) loadFolded(); if (shut) { for (const g of regroup()) folded.add(g.dir); } else folded.clear(); saveFolded(); renderList(); }
     /* Thumbnails load as their rows come into view, a few at a time, so a big project starts drawing at once without flooding the network. */
     let thumbBusy = 0; const thumbQueue = [];
     const thumbSlot = () => new Promise((res) => { if (thumbBusy < 6) { thumbBusy++; res(); } else thumbQueue.push(res); });
@@ -1837,6 +1851,8 @@
       if (t.dataset.t) return setTool(t.dataset.t);
       if (t.classList.contains('pf-item')) return openSprite(t.dataset.path);
       if (t.classList.contains('pf-dir')) return toggleDir(t.dataset.dir);
+      if (t.classList.contains('pf-fold-all')) return setAllFolded(true);
+      if (t.classList.contains('pf-unfold-all')) return setAllFolded(false);
       if (t.classList.contains('pf-hidden-toggle')) { const hid = S.src.hidden || []; if (S.sprites.some((x) => x.hiddenByDefault)) S.sprites = S.sprites.filter((x) => !x.hiddenByDefault); else S.sprites = S.sprites.concat(hid.map((x) => ({ ...x, hiddenByDefault: true }))); return renderList(); }
       if (t.classList.contains('pf-fam-m')) return openSprite(t.dataset.path);
       if (t.dataset.c !== undefined && t.closest('.pf-sw')) return e.shiftKey ? setColor2(+t.dataset.c) : setColor(+t.dataset.c);
