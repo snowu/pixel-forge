@@ -1017,7 +1017,36 @@
   .pf-grp-end,.pf-opt-end{margin-left:0}
   .pf button{min-height:38px}.pf input[type=text],.pf input[type=password],.pf input[type=number],.pf select,.pf textarea{font-size:16px;min-height:38px}
   .pf-key{grid-template-columns:1fr}
-}`;
+}
+/* Fullscreen (touch and narrow screens): the canvas and the tool rail fill the screen; the sprite list slides in from the
+   left and the colour panel (with the toolbar and tool options) from the right, on the › ‹ handles at the canvas edges. */
+.pf-fsbar,.pf-fs-h,.pf-fs-scrim,.pf-grp-fs{display:none}
+@media (pointer:coarse),(max-width:900px){.pf-grp-fs{display:inline-flex}}
+.pf.pf-fs{position:fixed;inset:0;z-index:2147483000;display:block;width:100vw;height:100vh;height:100dvh;max-height:none;overflow:hidden;background:var(--pf-bg)}
+.pf.pf-fs .pf-main{position:absolute;inset:0 env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px);display:flex;flex-direction:column}
+.pf.pf-fs .pf-status,.pf.pf-fs .pf-ctx,.pf.pf-fs .pf-grp-fs{display:none}
+.pf.pf-fs .pf-work{flex-direction:row;flex:1;min-height:0}
+.pf.pf-fs .pf-rail{flex-direction:column;flex-wrap:wrap;align-content:flex-start;align-items:center;border-right:1px solid var(--pf-line);border-bottom:0;overflow:hidden;padding:6px 4px;gap:4px;max-height:100%}
+.pf.pf-fs .pf-tools{display:contents}
+.pf.pf-fs .pf-swatch{margin:4px 0 0}
+.pf.pf-fs .pf-stage{min-height:0;flex:1}
+.pf.pf-fs .pf-fsbar{display:flex;position:absolute;top:8px;right:34px;gap:4px;z-index:3}
+.pf.pf-fs .pf-fsbar button{min-width:40px;min-height:40px;padding:0 8px;background:rgba(14,9,24,.82);border:1px solid var(--pf-line2);display:inline-flex;align-items:center;justify-content:center}
+.pf.pf-fs .pf-side,.pf.pf-fs .pf-right{display:flex;flex-direction:column;position:absolute;top:0;bottom:0;width:min(340px,86vw);z-index:6;overflow:auto;overscroll-behavior:contain;transition:transform .22s ease;background:var(--pf-panel);border:0;max-height:none;box-shadow:0 0 28px rgba(0,0,0,.55)}
+.pf.pf-fs .pf-side{left:0;transform:translateX(-102%);padding-left:env(safe-area-inset-left,0px)}
+.pf.pf-fs .pf-right{right:0;transform:translateX(102%);padding-right:env(safe-area-inset-right,0px)}
+.pf.pf-fs.pf-fs-lopen .pf-side,.pf.pf-fs.pf-fs-ropen .pf-right{transform:none}
+.pf.pf-fs .pf-list:not(.pf-flat){max-height:none;flex:1}
+.pf.pf-fs .pf-right .pf-bar,.pf.pf-fs .pf-right .pf-opts{flex-wrap:wrap;height:auto;overflow:visible;gap:6px;padding:8px;border-bottom:1px solid var(--pf-line)}
+.pf.pf-fs .pf-fs-scrim{display:block;position:absolute;inset:0;z-index:5;background:rgba(5,3,10,.5);opacity:0;pointer-events:none;transition:opacity .22s ease}
+.pf.pf-fs.pf-fs-lopen .pf-fs-scrim,.pf.pf-fs.pf-fs-ropen .pf-fs-scrim{opacity:1;pointer-events:auto}
+.pf.pf-fs .pf-fs-h{display:flex;align-items:center;justify-content:center;position:absolute;top:50%;width:28px;height:76px;margin-top:-38px;z-index:7;padding:0;min-height:0;font-size:24px;line-height:1;background:rgba(21,14,36,.88);border:1px solid var(--pf-line2);color:var(--pf-ink);transition:left .22s ease,right .22s ease,opacity .15s}
+.pf.pf-fs .pf-fs-hl{left:calc(var(--pf-rail-w,52px) + env(safe-area-inset-left,0px));border-left:0;border-radius:0 9px 9px 0}
+.pf.pf-fs .pf-fs-hr{right:env(safe-area-inset-right,0px);border-right:0;border-radius:9px 0 0 9px}
+.pf.pf-fs.pf-fs-lopen .pf-fs-hl{left:min(340px,86vw)}
+.pf.pf-fs.pf-fs-ropen .pf-fs-hr{right:min(340px,86vw)}
+.pf.pf-fs.pf-fs-lopen .pf-fs-hr,.pf.pf-fs.pf-fs-ropen .pf-fs-hl{opacity:0;pointer-events:none}
+.pf-ctx-cv.pf-ctx-hit{cursor:pointer}`;
 
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1032,6 +1061,8 @@
     ellipse: '<ellipse cx="12" cy="12" rx="8.2" ry="6.6"/>',
     select: '<path d="M4.5 8V4.5H8M11 4.5h2M16 4.5h3.5V8M19.5 11v2M19.5 16v3.5H16M13 19.5h-2M8 19.5H4.5V16M4.5 13v-2"/>',
     shade: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
+    fullscreen: '<path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/>',
+    exitfull: '<path d="M9 4.5V9H4.5M19.5 9H15V4.5M15 19.5V15h4.5M4.5 15H9v4.5"/>',
     undo: '<path d="M9 13.5L4.5 9 9 4.5"/><path d="M4.5 9H15a5 5 0 0 1 0 10h-3.5"/>',
     redo: '<path d="M15 13.5L19.5 9 15 4.5"/><path d="M19.5 9H9a5 5 0 0 0 0 10h3.5"/>',
     grid: '<rect x="4" y="4" width="16" height="16"/><path d="M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16"/>',
@@ -1143,6 +1174,7 @@
         <div class="pf-bar">
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
+          <span class="pf-grp pf-grp-fs"><button class="pf-fs-go" title="Fullscreen: canvas and tools only, menus slide in from the sides">${icon('fullscreen')}<span>Fullscreen</span></button></span>
           <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
           <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
@@ -1164,6 +1196,7 @@
           <div class="pf-stage"><canvas class="pf-view" aria-label="Sprite canvas"></canvas><span class="pf-vision-tag" hidden></span></div>
         </div>
         <div class="pf-ctx" hidden><div class="pf-ctx-bar"><span class="pf-ol">in context</span><select class="pf-ctx-group" title="What to compare against: a group from the project's config, or the sprites in the same folder"></select><span class="pf-seg pf-ctx-scale">${[1, 2, 3, 4].map((n) => `<button data-scale="${n}"${n === 2 ? ' class="on"' : ''}>${n}×</button>`).join('')}</span><span class="pf-note pf-ctx-note"></span></div><canvas class="pf-ctx-cv" aria-label="The sprite in context"></canvas></div>
+        <div class="pf-fsbar" aria-label="Fullscreen controls"><button class="pf-fs-undo" title="Undo">${icon('undo')}</button><button class="pf-fs-redo" title="Redo">${icon('redo')}</button><button class="pf-fs-fit" title="Fit to screen">Fit</button><button class="pf-fs-exit" title="Leave fullscreen">${icon('exitfull')}</button></div>
         <div class="pf-status"><span class="pf-s-name"></span><span class="pf-s-pos"></span><span class="pf-s-sel"></span><span class="pf-s-note"></span><span class="pf-s-info"></span></div>
       </section>
       <aside class="pf-right">
@@ -1189,6 +1222,7 @@
         <div class="pf-panel pf-imgpanel"><h4>Image</h4><div class="pf-imgtools">${IMAGE_TOOLS.map(([cls, ic, name, tip, extra]) => `<button class="${cls}" aria-label="${name}" data-tip="${esc(name + ': ' + tip)}" title="${esc(name)}"${extra || ''}>${icon(ic)}</button>`).join('')}</div>
           <div class="pf-note pf-imgtip" aria-live="polite">Point at a button to see what it does</div></div>
       </aside>
+      <div class="pf-fs-scrim"></div><button class="pf-fs-h pf-fs-hl" aria-label="Sprites" aria-expanded="false">›</button><button class="pf-fs-h pf-fs-hr" aria-label="Colours, options and actions" aria-expanded="false">‹</button>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
         <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
         <label>Base branch <input type="text" class="pf-pr-base" placeholder="default branch"></label>
@@ -1775,7 +1809,9 @@
       if (S.ctxGroup === '') return null; // "same folder", chosen on purpose
       return mine.find((g) => g.name === S.ctxGroup) || mine[0] || null;
     }
+    let ctxHits = []; // where each neighbour sits in the strip, in canvas pixels: a click opens it
     function drawContext(d) {
+      ctxHits = [];
       const cv = $('.pf-ctx-cv'), dpr = window.devicePixelRatio || 1, W = Math.max(1, Math.round(cv.clientWidth * dpr)), H = Math.max(1, Math.round(cv.clientHeight * dpr));
       if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
       const k = cv.getContext('2d'), px1 = Math.max(1, Math.round(dpr)), ground = H - Math.round(14 * dpr), gap = Math.round(12 * dpr);
@@ -1788,19 +1824,20 @@
       const fam = famOf.get(d.path), dir = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/')) : '';
       const sameDir = [...new Set(S.sprites.map((x) => x.path).filter((p) => p !== d.path && (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '') === dir && (!fam || !fam.members.includes(p))).map((p) => { const f = famOf.get(p); return f ? f.members[0] : p; }))];
       sameDir.sort((a, b) => a.localeCompare(b)); const at = sameDir.findIndex((p) => p.localeCompare(d.path) > 0);
-      const ordered = grp ? [...new Set(grp.sprites.filter((p) => p !== d.path && (!fam || !fam.members.includes(p))).map((p) => { const f = famOf.get(p); return f ? f.members[0] : p; }))]
+      // a group shows the sprites it names (the first it names of each family); the folder view shows each family's first member
+      const seenFam = new Set(), ordered = grp ? grp.sprites.filter((p) => { if (p === d.path || (fam && fam.members.includes(p))) return false; const k = famOf.get(p) || p; if (seenFam.has(k)) return false; seenFam.add(k); return true; })
         : at < 0 ? sameDir.slice().reverse() : [...sameDir.slice(at), ...sameDir.slice(0, at).reverse()];
       // Game scale, unless the tallest sprite in view would not fit the strip: then the largest scale that fits, said in the note.
       const room = ground - Math.round(6 * dpr), tallest = Math.max(d.h, ...ordered.slice(0, 8).map((p) => { const im = memberImage(p); return im ? im.height : 0; }));
       const fitScale = Math.max(1, Math.min(S.ctxScale, Math.floor(room / (tallest * px1)))), sc = fitScale * px1;
       const items = [{ img: cur, me: true }]; let used = d.w * sc + gap * 2, shown = 0;
-      for (const p of ordered) { const img = memberImage(p); if (!img) continue; if (used + img.width * sc + gap > W) break; used += img.width * sc + gap; items.push({ img }); shown++; if (shown >= 8) break; }
+      for (const p of ordered) { const img = memberImage(p); if (!img) continue; if (used + img.width * sc + gap > W) break; used += img.width * sc + gap; items.push({ img, path: p }); shown++; if (shown >= 8) break; }
       // the edited sprite in the middle, neighbours alternating left and right of it
       const row = [items[0]]; items.slice(1).forEach((it, i) => (i % 2 ? row.unshift(it) : row.push(it)));
       let x = Math.round((W - row.reduce((a, it) => a + it.img.width * sc, 0) - gap * (row.length - 1)) / 2);
       for (const it of row) {
         const w = it.img.width * sc, h = it.img.height * sc;
-        k.drawImage(it.img, x, ground - h, w, h);
+        k.drawImage(it.img, x, ground - h, w, h); if (it.path) ctxHits.push({ x, y: ground - h, w, h, path: it.path });
         if (it.me) { k.fillStyle = '#e08cff'; k.fillRect(x, ground + Math.round(4 * dpr), w, Math.max(1, Math.round(2 * dpr))); }
         x += w + gap;
       }
@@ -1822,7 +1859,7 @@
       setHtml($('.pf-s-info'), d ? `<button type="button" class="pf-s-size" title="Canvas size (Ctrl+Alt+C)">${d.w}×${d.h}</button> · zoom ${S.zoom}×` : '');
       const nt = $('.pf-s-note'); if (nt.textContent !== (S.notice || '')) { nt.textContent = S.notice || ''; nt.title = S.notice || ''; }
       $('.pf-zl').textContent = S.zoom + '×'; $('.pf-s-sel').textContent = S.sel ? `selection ${S.sel.w}×${S.sel.h}${S.float ? ' · floating' : ''}` : '';
-      $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed; $('.pf-delete').hidden = !deletable(d); $('.pf-revert').hidden = !!d && (d.local || d.isNew) && !d.changed;
+      $('.pf-undo').disabled = $('.pf-fs-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = $('.pf-fs-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed; $('.pf-delete').hidden = !deletable(d); $('.pf-revert').hidden = !!d && (d.local || d.isNew) && !d.changed;
       const out = d && savesOut(d), pend = d && !out && needsKeep(d) && !isKept(d);
       $('.pf-save').textContent = !d || out || pend || !keeping() ? 'Save' : 'Saved'; $('.pf-save').classList.toggle('primary', !d || !!out || !!pend || !keeping());
       $('.pf-save').title = out ? 'Save to the project (Ctrl+S). Until then your edits are kept in this browser.' : keeping() ? 'Your edits are kept in this browser as you draw and survive reloads (Ctrl+S keeps them right away). Download or Propose PR to take them out.' : 'This browser cannot keep edits: use Download.';
@@ -2444,6 +2481,9 @@
       catch (e) { note('Could not restore: ' + e.message); }
     };
     $('.pf-context').onclick = (e) => { S.ctx = !S.ctx; e.currentTarget.classList.toggle('on', S.ctx); $('.pf-ctx').hidden = !S.ctx; try { localStorage.setItem('pf:ctx', S.ctx ? '1' : '0'); } catch { /* ignore */ } requestAnimationFrame(() => { resizeView(); if (!S.touched) fit(); render(); }); };
+    const ctxHitAt = (e) => { const cv = $('.pf-ctx-cv'), r = cv.getBoundingClientRect(), x = (e.clientX - r.left) * (cv.width / r.width), y = (e.clientY - r.top) * (cv.height / r.height), pad = 4 * (window.devicePixelRatio || 1); return ctxHits.find((h) => x >= h.x - pad && x <= h.x + h.w + pad && y >= h.y - pad && y <= h.y + h.h + pad); };
+    $('.pf-ctx-cv').addEventListener('click', (e) => { const h = ctxHitAt(e); if (h) openSprite(h.path); });
+    $('.pf-ctx-cv').addEventListener('pointermove', (e) => { const h = ctxHitAt(e); e.currentTarget.classList.toggle('pf-ctx-hit', !!h); e.currentTarget.title = h ? 'Open ' + h.path : ''; });
     $('.pf-ctx-group').onchange = (e) => { S.ctxGroup = e.target.value; try { localStorage.setItem('pf:ctxgroup', S.ctxGroup); } catch { /* ignore */ } render(); };
     try { const v = localStorage.getItem('pf:ctxgroup'); if (v != null) S.ctxGroup = v; } catch { /* default */ }
     $$('.pf-ctx-scale button').forEach((b) => (b.onclick = () => { S.ctxScale = +b.dataset.scale; segOn('.pf-ctx-scale', b); render(); }));
@@ -2464,6 +2504,38 @@
     $('.pf-zin').onclick = () => { S.zoom = Math.min(64, S.zoom + 1); S.touched = true; fit2(); }; $('.pf-zout').onclick = () => { S.zoom = Math.max(1, S.zoom - 1); S.touched = true; fit2(); };
     function fit2() { const d = doc(); if (d) { S.ox = Math.round((view.width - d.w * S.zoom) / 2); S.oy = Math.round((view.height - d.h * S.zoom) / 2); } render(); status(); }
     $('.pf-fit').onclick = () => { fit(); render(); status(); };
+    /* Fullscreen: the editor covers the screen (the browser's own fullscreen and a landscape lock where the browser allows
+       them; a fixed overlay where it does not, as on iPhone). The toolbar and tool options move into the right drawer
+       while it lasts and go back when it ends. */
+    let fsReal = false;
+    const fsOn = () => root.classList.contains('pf-fs');
+    const fsRail = () => root.style.setProperty('--pf-rail-w', $('.pf-rail').offsetWidth + 'px');
+    function fsDrawer(side) {
+      root.classList.toggle('pf-fs-lopen', side === 'l'); root.classList.toggle('pf-fs-ropen', side === 'r');
+      $('.pf-fs-hl').textContent = side === 'l' ? '‹' : '›'; $('.pf-fs-hr').textContent = side === 'r' ? '›' : '‹';
+      $('.pf-fs-hl').setAttribute('aria-expanded', String(side === 'l')); $('.pf-fs-hr').setAttribute('aria-expanded', String(side === 'r'));
+    }
+    function fsSet(on) {
+      if (on === fsOn()) return;
+      root.classList.toggle('pf-fs', on); fsDrawer(null);
+      if (on) $('.pf-right').prepend($('.pf-bar'), $('.pf-opts')); else $('.pf-main').prepend($('.pf-bar'), $('.pf-opts'));
+      if (on) {
+        const req = root.requestFullscreen && root.requestFullscreen({ navigationUI: 'hide' });
+        if (req && req.then) req.then(() => { fsReal = true; const o = screen.orientation; if (o && o.lock) o.lock('landscape').catch(() => {}); }).catch(() => {});
+      } else {
+        if (fsReal && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        fsReal = false; try { screen.orientation.unlock(); } catch { /* not locked */ }
+      }
+      requestAnimationFrame(() => { fsRail(); resizeView(); fit(); render(); status(); });
+    }
+    $('.pf-fs-go').onclick = () => fsSet(true); $('.pf-fs-exit').onclick = () => fsSet(false);
+    $('.pf-fs-hl').onclick = () => fsDrawer(root.classList.contains('pf-fs-lopen') ? null : 'l');
+    $('.pf-fs-hr').onclick = () => fsDrawer(root.classList.contains('pf-fs-ropen') ? null : 'r');
+    $('.pf-fs-scrim').onclick = () => fsDrawer(null);
+    $('.pf-fs-undo').onclick = undo; $('.pf-fs-redo').onclick = redo; $('.pf-fs-fit').onclick = () => $('.pf-fit').click();
+    $('.pf-side').addEventListener('click', (e) => { if (fsOn() && e.target.closest('.pf-item,.pf-openrow')) setTimeout(() => fsDrawer(null), 150); });
+    document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fsReal && fsOn()) { fsReal = false; fsSet(false); } }); // left with the back gesture or Esc
+    window.addEventListener('resize', () => { if (fsOn()) fsRail(); });
     $('.pf-grid').onclick = (e) => { S.grid = !S.grid; e.currentTarget.classList.toggle('on', S.grid); render(); };
     $('.pf-mx').onclick = (e) => { S.mx = !S.mx; e.currentTarget.classList.toggle('on', S.mx); render(); };
     $('.pf-my').onclick = (e) => { S.my = !S.my; e.currentTarget.classList.toggle('on', S.my); render(); };

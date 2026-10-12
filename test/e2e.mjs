@@ -898,6 +898,13 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.keyboard.press('v'); await fp.waitForTimeout(300);
   ok((await fp.locator('.pf-ctx-group option').allInnerTexts()).join() === 'Floor-mates,Same folder' && await fp.locator('.pf-ctx-group').inputValue() === 'Floor-mates', 'Context opens on the config group that holds the sprite, and offers the folder too: ' + (await fp.locator('.pf-ctx-group option').allInnerTexts()).join(' | '));
   ok(/1 neighbour from Floor-mates/.test(await fp.locator('.pf-ctx-note').innerText()) && await has([0x20, 0x30, 0x40]) && await has([255, 0, 0]), 'its neighbours come from the group, drawn on the group background: ' + await fp.locator('.pf-ctx-note').innerText());
+  { // clicking a neighbour in the strip opens it
+    const at = await fp.evaluate(() => { const c = document.querySelector('.pf-ctx-cv'), r = c.getBoundingClientRect(), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      for (let i = 0; i < d.length; i += 4) if (d[i] === 255 && d[i + 1] === 0 && d[i + 2] === 0) { const x = (i / 4) % c.width, y = Math.floor(i / 4 / c.width); return { x: r.left + x * r.width / c.width, y: r.top + y * r.height / c.height }; } return null; });
+    await fp.mouse.click(at.x, at.y); await fp.waitForTimeout(300);
+    ok(await fp.evaluate(() => document.getElementById('app').__pf.current.path) === 'tiles/floor_moss.png', 'clicking a neighbour in the context strip opens it on the canvas');
+    await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(200);
+  }
   await fp.locator('.pf-ctx-group').selectOption(''); await fp.waitForTimeout(150);
   ok(/neighbour from chars/.test(await fp.locator('.pf-ctx-note').innerText()), 'Same folder goes back to the folder neighbours');
   await fp.reload(); await fp.waitForSelector('.pf-item'); await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(300);
@@ -912,6 +919,34 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
     ok(out[5 * 4 + 3] === 255 && out[5 * 4 + 1] === 255 && out[6 * 4 + 3] === 0, 'Save snaps stray alpha to the project rule: 252 → solid, 3 → clear'); }
   ok(/saved chars\/bat\.png · 2 stray-alpha pixels snapped/.test(await fp.evaluate(() => document.getElementById('app').__pf.state.notice)), 'and says so: ' + await fp.evaluate(() => document.getElementById('app').__pf.state.notice));
   await fp.keyboard.press('Control+z'); ok(await fp.evaluate(() => document.getElementById('app').__pf.current.px[5] >>> 24) === 252, 'undo brings the stray value back');
+  // fullscreen on a phone held sideways: canvas and tools fill the screen, menus slide in from the edges
+  ok(await fp.locator('.pf-fs-go').isHidden(), 'no fullscreen button on a desktop with a mouse');
+  { const mctx = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true }), mp = await mctx.newPage(), merr = []; mp.on('pageerror', (e) => merr.push(e.message));
+    await mp.goto(b2); await mp.waitForSelector('.pf-item'); await mp.locator('.pf-cell', { hasText: 'bat' }).tap(); await mp.waitForTimeout(300);
+    await mp.locator('.pf-fs-go').tap(); await mp.waitForTimeout(500);
+    const box = (sel) => mp.locator(sel).boundingBox();
+    const st = await box('.pf-stage'), rail = await box('.pf-rail'), side = await box('.pf-side'), right = await box('.pf-right');
+    ok(await mp.evaluate(() => document.querySelector('.pf').classList.contains('pf-fs')) && st.height >= 380 && st.x + st.width >= 840 && rail.height >= 380, `the canvas and tool rail fill the screen (stage ${Math.round(st.width)}×${Math.round(st.height)}, rail ${Math.round(rail.width)}px)`);
+    ok(side.x + side.width <= 0 && right.x >= 844 && await mp.evaluate(() => document.documentElement.scrollWidth) <= 844, 'menus are off screen, nothing scrolls sideways');
+    const bot = await mp.evaluate(() => { const r = document.querySelector('.pf-rail').getBoundingClientRect(); return Math.max(...[...document.querySelectorAll('.pf-rail button')].map((b) => b.getBoundingClientRect().bottom)) <= r.bottom + 1; });
+    ok(bot, 'every tool fits in the rail without scrolling');
+    const v = await mp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), r = c.getBoundingClientRect(); return { x: r.left + (S.ox + 2.5 * S.zoom) * r.width / c.width, y: r.top + (S.oy + 2.5 * S.zoom) * r.height / c.height }; });
+    await mp.touchscreen.tap(v.x, v.y); await mp.waitForTimeout(200);
+    ok(await mp.evaluate(() => document.getElementById('app').__pf.current.changed), 'tapping the canvas draws');
+    await mp.locator('.pf-fs-undo').tap(); await mp.waitForTimeout(200);
+    ok(!(await mp.evaluate(() => document.getElementById('app').__pf.current.changed)), 'the floating undo undoes it');
+    await mp.locator('.pf-fs-hl').tap(); await mp.waitForTimeout(400);
+    ok((await box('.pf-side')).x >= 0 && (await mp.locator('.pf-fs-hl').innerText()) === '‹', '› slides the sprite list in from the left (and turns into ‹)');
+    await mp.locator('.pf-cell', { hasText: 'hero' }).tap(); await mp.waitForTimeout(500);
+    ok(/hero/.test(await mp.evaluate(() => document.getElementById('app').__pf.current.path)) && (await box('.pf-side')).x + (await box('.pf-side')).width <= 0, 'picking a sprite opens it and closes the list');
+    await mp.locator('.pf-fs-hr').tap(); await mp.waitForTimeout(400);
+    ok((await box('.pf-right')).x + (await box('.pf-right')).width <= 845 && await mp.locator('.pf-right .pf-bar .pf-save').isVisible() && await mp.locator('.pf-right .pf-opts').count() === 1, '‹ slides in the colours with the toolbar and tool options on top (Save is there)');
+    await mp.locator('.pf-fs-scrim').tap({ position: { x: 150, y: 200 } }); await mp.waitForTimeout(400);
+    ok((await box('.pf-right')).x >= 844, 'tapping the dimmed canvas closes it');
+    await mp.locator('.pf-fs-exit').tap(); await mp.waitForTimeout(400);
+    ok(await mp.evaluate(() => { const m = document.querySelector('.pf-main'); return !document.querySelector('.pf').classList.contains('pf-fs') && m.firstElementChild.classList.contains('pf-bar') && m.children[1].classList.contains('pf-opts'); }), 'leaving fullscreen puts the toolbar and options back where they were');
+    ok(merr.length === 0, 'no page errors on the phone ' + merr.join('|'));
+    await mctx.close(); }
   ok(ferr2.length === 0, 'no page errors ' + ferr2.join('|'));
   await fp.close(); await s2.close();
 }

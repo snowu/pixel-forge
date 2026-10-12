@@ -83,6 +83,10 @@ const editor = Spritewright.mount(document.getElementById('editor')!, {
 
 Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `drafts: false` to not keep edits in the browser (or your own store; `draftsKey` names the project), `pr: false` to hide the pull-request button. `Spritewright.createPullRequest`, `Spritewright.png.decode/encode`, `Spritewright.sources.*` and `Spritewright.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
 
+## Fullscreen on phones and tablets
+
+**Fullscreen** (in the toolbar on touch screens and narrow windows) gives the whole screen to the canvas and the tool rail. Where the browser allows it, it uses the browser's own fullscreen and turns the screen sideways; on iPhone it fills the page instead, in either orientation. Undo, redo, fit and exit float over the canvas. The menus wait at the edges: **›** on the left slides in the sprite list (picking a sprite closes it again), **‹** on the right slides in the colours, palette and preview with the toolbar (Save, Download, Propose PR) and the tool options on top. Tap the dimmed canvas to close them. Pinch to zoom, two fingers to pan.
+
 ## Canvas size
 
 **Canvas size…** (Image panel, the `16×16` in the status bar, or `Ctrl+Alt+C`) changes a sprite's size after it was made, with a live preview:
@@ -107,7 +111,7 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
 
 ## Reviewing your work
 
-- **Context** (`V`): a strip under the canvas shows the sprite at game scale (1×–4×), standing next to up to 8 other sprites, redrawn live as you draw. Use it to check size, silhouette and contrast the way a player sees them. With `groups` in the project config, the neighbours are the sprites it is actually seen with (the enemies of the same floor, the other blades and the blade held in first person…), on the group's background; the picker in the strip switches between the groups that hold the sprite (or its family) and **Same folder**. Without groups, it shows sprites from the same folder, nearest by name.
+- **Context** (`V`): a strip under the canvas shows the sprite at game scale (1×–4×), standing next to up to 8 other sprites, redrawn live as you draw; click one of them to open it. Use it to check size, silhouette and contrast the way a player sees them. With `groups` in the project config, the neighbours are the sprites it is actually seen with (the enemies of the same floor, the other blades and the blade held in first person…), on the group's background; the picker in the strip switches between the groups that hold the sprite (or its family) and **Same folder**. Without groups, it shows sprites from the same folder, nearest by name.
 - **Changes** (`C`): dims every pixel you have not touched and outlines the ones that differ from the image as you opened it. Hold `\` (or press and hold the "px changed" note in the status bar) to see the original. The pull request dialog shows each sprite before → after.
 
 ## More checks while you draw
