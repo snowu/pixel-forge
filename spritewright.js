@@ -824,6 +824,8 @@
 .pf-c-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pf-c-tile{border:1px solid var(--pf-line);background:var(--pf-bg);padding:12px 14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .pf-c-tile .pf-note{min-height:2.6em}
+.pf-imgtools{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}.pf .pf-imgtools button{padding:0;min-height:0;height:34px;justify-content:center}.pf .pf-imgtools .pf-ic{width:18px;height:18px}.pf .pf-imgtools .pf-delete:hover{color:var(--pf-bad);border-color:var(--pf-bad)}
+.pf-imgtip{min-height:2.6em;margin-top:6px;line-height:1.3}
 .pf-c-locals{display:flex;flex-direction:column;gap:4px;width:100%;max-height:150px;overflow:auto}.pf-c-lp{display:flex;gap:4px}.pf .pf-c-lp .pf-c-lopen{flex:1;justify-content:flex-start;align-items:center;gap:8px;line-height:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pf .pf-c-lp.on .pf-c-lopen{border-color:var(--pf-accent)}.pf .pf-c-lp button{min-height:34px}.pf .pf-c-lopen .pf-note{line-height:1.2;min-height:0}.pf .pf-c-lren,.pf .pf-c-ldel{min-width:34px;padding:0;color:var(--pf-muted)}.pf .pf-c-ldel:hover,.pf .pf-delete:hover{color:var(--pf-bad)}
 .pf-c-foot{text-align:center}.pf-auth-help:empty,.pf-c-addrepo:empty{display:none}
 .pf-auth-row[hidden]{display:none}
@@ -881,8 +883,29 @@
     my: '<path d="M3 12h18" stroke-dasharray="1.5 2.5"/><path d="M7.5 9L12 4.5 16.5 9z"/><path d="M7.5 15l4.5 4.5 4.5-4.5z"/>',
     sq: '<rect x="6.5" y="6.5" width="11" height="11" fill="currentColor"/>',
     circ: '<circle cx="12" cy="12" r="6" fill="currentColor"/>',
+    fliph: '<path d="M12 3.5v17"/><path d="M9 7.5L4.5 12 9 16.5z" fill="currentColor"/><path d="M15 7.5l4.5 4.5-4.5 4.5z"/>',
+    flipv: '<path d="M3.5 12h17"/><path d="M7.5 9L12 4.5 16.5 9z" fill="currentColor"/><path d="M7.5 15l4.5 4.5 4.5-4.5z"/>',
+    rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19.5 4v4.5H15"/>',
+    outline4: '<rect x="8.5" y="8.5" width="7" height="7" fill="currentColor"/><path d="M8.5 5h7M8.5 19h7M5 8.5v7M19 8.5v7"/>',
+    outline8: '<rect x="8.5" y="8.5" width="7" height="7" fill="currentColor"/><rect x="5" y="5" width="14" height="14"/>',
+    variant: '<rect x="3.5" y="3.5" width="10" height="10"/><rect x="10.5" y="10.5" width="10" height="10" fill="currentColor"/>',
+    left: '<path d="M19.5 12h-15"/><path d="M9.5 7L4.5 12l5 5"/>', right: '<path d="M4.5 12h15"/><path d="M14.5 7l5 5-5 5"/>',
+    up: '<path d="M12 19.5v-15"/><path d="M7 9.5l5-5 5 5"/>', down: '<path d="M12 4.5v15"/><path d="M7 14.5l5 5 5-5"/>',
+    canvas: '<rect x="3.5" y="3.5" width="17" height="17" stroke-dasharray="2.2 2"/><rect x="7.5" y="7.5" width="9" height="9"/>',
+    trim: '<path d="M7 3v14h14"/><path d="M3 7h14v14"/>',
+    clear: '<rect x="4.5" y="4.5" width="15" height="15"/><path d="M9 9l6 6M15 9l-6 6"/>',
+    revert: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 3.5v4h4"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+    trash: '<path d="M4.5 7h15"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v5M14 11v5"/>',
     download: '<path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 17.5v2h15v-2"/>',
   };
+  /* The Image panel: one grid of icon buttons, named in a line below on hover. [class, icon, name, what it does, extra attributes] */
+  const IMAGE_TOOLS = [
+    ['pf-fliph', 'fliph', 'Flip left-right', 'the image, or the selection'], ['pf-flipv', 'flipv', 'Flip up-down', 'the image, or the selection'], ['pf-rot', 'rotate', 'Rotate 90°', 'clockwise; the image, or the selection'],
+    ['pf-outline', 'outline4', 'Outline', '1 pixel in the primary colour around everything opaque, sides only'], ['pf-outline8', 'outline8', 'Outline with corners', 'like Outline, diagonals included'], ['pf-variant', 'variant', 'Make variant…', 'a recoloured copy as new files, with its whole family (every pose and frame), e.g. king → king_dark'],
+    ['pf-sh', 'left', 'Shift left', 'by 1 pixel; what falls off comes back on the other side', ' data-d="-1,0"'], ['pf-sh', 'up', 'Shift up', 'by 1 pixel, wrapping around', ' data-d="0,-1"'], ['pf-sh', 'down', 'Shift down', 'by 1 pixel, wrapping around', ' data-d="0,1"'], ['pf-sh', 'right', 'Shift right', 'by 1 pixel, wrapping around', ' data-d="1,0"'],
+    ['pf-resize', 'canvas', 'Canvas size…', 'grow or cut the canvas, or scale the image (Ctrl+Alt+C, or click the size in the status bar)'], ['pf-trim', 'trim', 'Trim', 'cut away the empty border'],
+    ['pf-clear', 'clear', 'Clear', 'erase every pixel (undo brings them back)'], ['pf-revert', 'revert', 'Revert to original', 'throw away every change to this sprite (undo brings them back)'], ['pf-delete', 'trash', 'Delete sprite', 'it only exists in this browser, never saved into the project', ' hidden'],
+  ];
   const icon = (name) => `<svg class="pf-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   // [id, name, key, rail icon or the rail tool it belongs to]
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
@@ -996,12 +1019,8 @@
             <div class="pf-row"><span class="pf-seg pf-ref-place"><button data-place="under" class="on" title="Behind your pixels">under</button><button data-place="over" title="On top of your pixels">over</button></span><span class="pf-seg pf-ref-fit"><button data-fit="pixels" class="on" title="One image pixel per sprite pixel, from the top-left">1:1</button><button data-fit="fit" title="Scaled to fit the canvas">fit</button></span></div>
             <div class="pf-row"><button class="pf-ref-toggle" title="Show or hide the reference (H)">hide</button><button class="pf-ref-clear">remove</button></div></div></div>
         <details class="pf-panel pf-hist" hidden><summary><h4>History</h4></summary><div class="pf-hist-list"></div><div class="pf-row pf-hist-act" hidden><button class="primary pf-hist-restore">Restore this version</button><span class="pf-note pf-hist-sel"></span></div></details>
-        <div class="pf-panel"><h4>Image</h4><div class="pf-row"><button class="pf-fliph" title="Flip the image, or the selection">Flip ↔</button><button class="pf-flipv">Flip ↕</button><button class="pf-rot" title="Rotate the image, or the selection">Rotate ↻</button></div>
-          <div class="pf-row"><button class="pf-sh" data-d="-1,0">←</button><button class="pf-sh" data-d="0,-1">↑</button><button class="pf-sh" data-d="0,1">↓</button><button class="pf-sh" data-d="1,0">→</button><span class="pf-note">wrap shift</span></div>
-          <div class="pf-row"><button class="pf-variant" title="A recoloured copy of this sprite (and its whole family: every pose and frame) as new files, e.g. king → king_dark">Make variant…</button></div>
-          <div class="pf-row"><button class="pf-outline" title="Draw a 1-pixel outline in the primary colour around everything opaque">Outline</button><label class="pf-note"><input type="checkbox" class="pf-outline-c"> corners</label></div>
-          <div class="pf-row"><button class="pf-resize" title="Change the canvas size, or scale the image (also: click the size in the status bar)">Canvas size…</button><button class="pf-trim" title="Cut away the empty (transparent) border">Trim</button><button class="pf-clear">Clear</button></div>
-          <div class="pf-row"><button class="pf-revert" title="Throw away every change to this sprite and go back to the original (undo brings them back)">Revert to original</button><button class="pf-delete" title="Delete this sprite: it only exists in this browser (never saved into the project)" hidden>Delete sprite</button></div></div>
+        <div class="pf-panel pf-imgpanel"><h4>Image</h4><div class="pf-imgtools">${IMAGE_TOOLS.map(([cls, ic, name, tip, extra]) => `<button class="${cls}" aria-label="${name}" data-tip="${esc(name + ': ' + tip)}" title="${esc(name)}"${extra || ''}>${icon(ic)}</button>`).join('')}</div>
+          <div class="pf-note pf-imgtip" aria-live="polite">Point at a button to see what it does</div></div>
       </aside>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
         <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
@@ -2021,7 +2040,11 @@
     $('.pf-fliph').onclick = () => transformSel((px, w, h) => ({ px: flipH(px, w, h), w, h })) || edit((d) => { d.px = flipH(d.px, d.w, d.h); });
     $('.pf-flipv').onclick = () => transformSel((px, w, h) => ({ px: flipV(px, w, h), w, h })) || edit((d) => { d.px = flipV(d.px, d.w, d.h); });
     $('.pf-rot').onclick = () => transformSel((px, w, h) => ({ px: rotateCW(px, w, h), w: h, h: w })) || edit((d) => { d.px = rotateCW(d.px, d.w, d.h); [d.w, d.h] = [d.h, d.w]; fit(); });
-    $('.pf-outline').onclick = () => { if (isClear(S.color)) return note('Pick an opaque primary colour for the outline.'); commitFloat(); edit((d) => { d.px = outlinePx(d.px, d.w, d.h, S.color, $('.pf-outline-c').checked); }); };
+    const outline = (corners) => { if (isClear(S.color)) return note('Pick an opaque primary colour for the outline.'); commitFloat(); edit((d) => { d.px = outlinePx(d.px, d.w, d.h, S.color, corners); }); };
+    $('.pf-outline').onclick = () => outline(false); $('.pf-outline8').onclick = () => outline(true);
+    { const tips = $('.pf-imgtools'), line = $('.pf-imgtip'), idle = line.textContent; // name the button under the pointer (or keyboard focus)
+      const show = (e) => { const b = e.target.closest('[data-tip]'); line.textContent = b ? b.dataset.tip : idle; };
+      tips.addEventListener('pointerover', show); tips.addEventListener('focusin', show); tips.addEventListener('pointerleave', () => { line.textContent = idle; }); }
     $('.pf-clear').onclick = () => edit((d) => { d.px = new Uint32Array(d.w * d.h); });
     /* canvas size: grow or cut the canvas around an anchor, or scale the image; optionally every frame and pose of the family */
     const sz = { mode: 'canvas', anchor: 'c' };

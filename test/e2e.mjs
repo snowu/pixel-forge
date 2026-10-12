@@ -236,6 +236,8 @@ await page.locator('.pf-fliph').click(); s = await pf(); ok(s.px[1 * 16 + 15 - 5
 await page.locator('.pf-fliph').click();
 await page.locator('.pf-sh[data-d="1,0"]').click(); s = await pf(); ok(s.px[1 * 16 + 6] === orig.px[1 * 16 + 5], 'wrap shift moves the picture one pixel');
 await page.locator('.pf-sh[data-d="-1,0"]').click();
+await page.locator('.pf-rot').hover(); ok((await page.locator('.pf-imgtip').innerText()).startsWith('Rotate 90°'), 'Image panel: icon buttons, the one under the pointer is named below: ' + await page.locator('.pf-imgtip').innerText());
+ok(await page.locator('.pf-imgtools button:visible').evaluateAll((bs) => new Set(bs.map((b) => Math.round(b.getBoundingClientRect().width) + 'x' + Math.round(b.getBoundingClientRect().height))).size === 1), 'every button in the grid is the same size');
 await page.locator('.pf-resize').click(); await page.locator('.pf-sz-anchor [data-a="tl"]').click(); await page.locator('.pf-sz-w').fill('20'); await page.locator('.pf-sz-h').fill('12'); await page.locator('.pf-sz-ok').click();
 s = await pf(); ok(s.w === 20 && s.h === 12 && s.px.every((v, i) => (i % 20) >= 16 || ((i / 20) | 0) >= 12 ? v === 0 : v === orig.px[((i / 20) | 0) * 16 + (i % 20)]), 'canvas resize anchored top-left keeps every pixel where it was');
 await page.keyboard.press('Control+z'); s = await pf(); ok(s.w === 16 && s.h === 16, 'and can be undone');
