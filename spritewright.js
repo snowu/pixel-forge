@@ -467,13 +467,13 @@
   /** Sprites listed in a manifest and fetched over HTTP relative to baseUrl. Read-only (Save downloads). */
   function staticSource(mf, baseUrl) {
     const base = baseUrl == null ? '' : baseUrl && !baseUrl.endsWith('/') ? baseUrl + '/' : baseUrl;
-    return { kind: 'static', thumbs: true, note: 'Static mode: Save downloads the PNG. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'static', thumbs: true, note: 'Static mode: Save downloads the PNG. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(base + path.split('/').map(encodeURIComponent).join('/')); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); } };
   }
   /** The local `spritewright serve` server: reads and writes the project folder. */
   function serverSource(mf, token) {
     const url = (path) => 'project/' + path.split('/').map(encodeURIComponent).join('/');
-    return { kind: 'server', thumbs: true, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'server', thumbs: true, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
       async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
   }
@@ -511,7 +511,7 @@
     if (cfg.palette && entries.has(cfg.palette)) { try { palette = palFromText(new TextDecoder().decode(await blob(cfg.palette))); } catch { /* none */ } }
     const png = [...entries.values()].filter((e) => /\.png$/i.test(e.path) && e.size <= (cfg.maxBytes || maxBytes)).map((e) => ({ path: e.path, bytes: e.size }));
     const sprites = applyConfig(png, cfg), hidden = hiddenBy(png, cfg, sprites);
-    return { kind: 'github', thumbs: true, sprites, hidden, palette, branch,
+    return { kind: 'github', thumbs: true, sprites, hidden, palette, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Save downloads; Propose PR sends changes back.',
       repo: { slug: o.repo, base: branch, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
@@ -535,7 +535,7 @@
     let palette = null; if (cfg.palette) { const t = await readText(root, ...cfg.palette.split('/')); if (t) palette = palFromText(t); }
     const gitCfg = await readText(root, '.git', 'config'), m = gitCfg && /\[remote "origin"\][^[]*?url\s*=\s*(.+)/.exec(gitCfg), slug = (m && slugFromRemote(m[1])) || (cfg.repo && cfg.repo.slug) || null;
     const sprites = applyConfig(found, cfg);
-    return { kind: 'folder', thumbs: true, sprites, hidden: hiddenBy(found, cfg, sprites), palette, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
+    return { kind: 'folder', thumbs: true, sprites, hidden: hiddenBy(found, cfg, sprites), palette, background: cfg.background || null, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
       async read(path) { const h = files.get(path); if (!h) throw new Error('not found: ' + path); return new Uint8Array(await (await h.getFile()).arrayBuffer()); },
       async write(path, bytes) {
         const parts = path.split('/'); let dir = root; for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
@@ -592,8 +592,9 @@
      ===================================================================================================== */
   const CSS = `
 .pf{--pf-bg:#07040d;--pf-panel:#0e0918;--pf-panel2:#150e24;--pf-line:#2a1b45;--pf-line2:#443070;--pf-ink:#e6dcf7;--pf-muted:#9a86c4;--pf-faint:#6a5890;--pf-accent:#b98cff;--pf-accent2:#e08cff;--pf-on:#12081f;--pf-bad:#ff5470;--pf-good:#7dffb2;--pf-warn:#ffb000;
+  --pf-ck1:#1c1530;--pf-ck2:#130e22;--pf-ckbg:repeating-conic-gradient(var(--pf-ck1) 0 25%,var(--pf-ck2) 0 50%) 0 0/8px 8px;
   --pf-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  display:grid;grid-template-columns:220px minmax(0,1fr) 248px;grid-template-rows:minmax(0,1fr);height:100%;min-height:440px;background:var(--pf-bg);color:var(--pf-ink);font:12.5px/1.45 var(--pf-mono);border:1px solid var(--pf-line);box-sizing:border-box;font-variant-ligatures:none}
+  position:relative;display:grid;grid-template-columns:220px minmax(0,1fr) 248px;grid-template-rows:minmax(0,1fr);height:100%;min-height:440px;background:var(--pf-bg);color:var(--pf-ink);font:12.5px/1.45 var(--pf-mono);border:1px solid var(--pf-line);box-sizing:border-box;font-variant-ligatures:none}
 .pf *{box-sizing:border-box;border-radius:0}
 .pf [hidden]{display:none!important}
 .pf ::selection{background:var(--pf-accent);color:var(--pf-on)}
@@ -621,7 +622,7 @@
 .pf-item{position:relative;display:flex;gap:8px;align-items:center;padding:4px;border:1px solid transparent;cursor:pointer;background:none;text-align:left;width:100%;min-height:44px;justify-content:flex-start}
 .pf .pf-item{background:none;border-color:transparent}.pf .pf-item:hover:not(:disabled){box-shadow:none;background:var(--pf-panel2)}
 .pf .pf-item.on,.pf .pf-item.on:hover:not(:disabled){border-color:var(--pf-accent);background:var(--pf-panel2);color:var(--pf-ink);font-weight:400;box-shadow:inset 3px 0 0 var(--pf-accent)}
-.pf-item canvas{width:36px;height:36px;image-rendering:pixelated;background:repeating-conic-gradient(#1c1530 0 25%,#130e22 0 50%) 0 0/8px 8px;flex:none}
+.pf-item canvas{width:36px;height:36px;image-rendering:pixelated;background:var(--pf-ckbg);flex:none}
 .pf-item .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}.pf-item small{display:block;color:var(--pf-muted);overflow:hidden;text-overflow:ellipsis}
 .pf-item .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-item .dot.base{background:var(--pf-warn)}
 .pf-list:not(.pf-flat){display:block}
@@ -636,9 +637,14 @@
 .pf-fam{display:flex;flex-direction:column;gap:6px}.pf-fam-h{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.pf-fam-h b{color:var(--pf-ink)}
 .pf-fam-strip{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
 .pf .pf-fam-m{flex-direction:column;gap:2px;padding:3px;min-height:0;flex:none;font-size:9.5px;color:var(--pf-muted);background:var(--pf-bg)}
-.pf .pf-fam-m canvas{width:40px;height:40px;image-rendering:pixelated;object-fit:contain;background:repeating-conic-gradient(#1c1530 0 25%,#130e22 0 50%) 0 0/8px 8px}
+.pf .pf-fam-m canvas{width:40px;height:40px;image-rendering:pixelated;object-fit:contain;background:var(--pf-ckbg)}
 .pf .pf-fam-m.on{border-color:var(--pf-accent);color:var(--pf-accent);background:var(--pf-panel2);font-weight:400}.pf .pf-fam-m.playing{box-shadow:0 0 0 1px var(--pf-accent2)}
 .pf .pf-hidden-toggle{width:100%;justify-content:flex-start;text-align:left;white-space:normal;margin:8px 0 4px;font-size:11px;color:var(--pf-muted);border-style:dashed}
+.pf-bg-sw{width:14px;height:14px;border:1px solid var(--pf-line2);background:var(--pf-ckbg);flex:none}
+.pf-bgmenu{position:absolute;z-index:20;background:var(--pf-panel);border:1px solid var(--pf-line2);box-shadow:0 12px 40px rgba(0,0,0,.55);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:210px}
+.pf .pf-bgmenu button{justify-content:flex-start;background:none;border-color:transparent;min-height:30px;width:100%}
+.pf .pf-bgmenu button.on{background:var(--pf-panel2);color:var(--pf-accent);border-color:var(--pf-line2);font-weight:400}
+.pf-bgmenu .pf-bg-sw{width:16px;height:16px}.pf-bgmenu label{padding:4px 8px;font-size:11.5px}.pf-bgmenu input[type=color]{width:34px;height:24px;padding:0;border:1px solid var(--pf-line2);background:none}
 .pf-badge{position:absolute;top:2px;right:2px;font-style:normal;font-size:9.5px;line-height:1;padding:2px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted)}
 .pf-badge.anim{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent);font-weight:700}
 .pf .pf-cell .dot{position:absolute;top:4px;left:4px}
@@ -682,7 +688,7 @@
 .pf-cur{display:flex;gap:8px;align-items:center}.pf-cur input[type=color]{width:44px;height:32px;padding:0;border:1px solid var(--pf-line2);background:none;flex:none;cursor:pointer}
 .pf-ramp{display:flex;flex-direction:column;gap:6px}.pf-ramp[hidden]{display:none}.pf .pf-ramp .pf-sw button{width:34px;height:24px}
 .pf-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-.pf-prev canvas{image-rendering:pixelated;background:repeating-conic-gradient(#1c1530 0 25%,#130e22 0 50%) 0 0/8px 8px;max-width:100%;display:block;border:1px solid var(--pf-line)}
+.pf-prev canvas{image-rendering:pixelated;background:var(--pf-ckbg);max-width:100%;display:block;border:1px solid var(--pf-line)}
 .pf-note{color:var(--pf-muted);font-size:11.5px}.pf-bad{color:var(--pf-bad)}
 .pf-pal-empty[hidden]{display:none}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
@@ -698,7 +704,7 @@
 .pf dialog{background:var(--pf-panel);color:var(--pf-ink);border:1px solid var(--pf-line2);box-shadow:0 0 0 1px rgba(185,140,255,.15),0 20px 60px rgba(0,0,0,.6),0 0 40px rgba(185,140,255,.10);padding:18px;width:min(560px,94vw);max-height:92vh;overflow:auto}
 .pf dialog::backdrop{background:rgba(7,4,13,.78);backdrop-filter:blur(2px)}
 .pf-form{display:flex;flex-direction:column;gap:10px}.pf-log:empty{display:none}.pf-log{white-space:pre-wrap;color:var(--pf-muted);max-height:140px;overflow:auto;border:1px solid var(--pf-line);padding:6px;min-height:34px;background:#05030a}
-.pf-chg{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--pf-line)}.pf-chg canvas{width:40px;height:40px;image-rendering:pixelated;background:#130e22}
+.pf-chg{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--pf-line)}.pf-chg canvas{width:40px;height:40px;image-rendering:pixelated;background:var(--pf-ckbg)}
 .pf-keys{display:grid;grid-template-columns:1fr;gap:6px}.pf-key{display:grid;grid-template-columns:minmax(150px,auto) 1fr;gap:12px;align-items:baseline;padding:3px 0;border-bottom:1px dashed var(--pf-line)}.pf-key span{color:var(--pf-muted)}.pf-key kbd{justify-self:start}
 @media (max-width:1100px){.pf{grid-template-columns:200px minmax(0,1fr) 220px}.pf-bar button span,.pf-opt-end button span{display:none}}
 @media (max-width:900px){
@@ -743,8 +749,12 @@
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
   const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D', 'select & move · shade'], ['[ ]', 'brush size'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
-    ['M', 'mirror left-right'], ['T · N · #', 'tile preview · onion skin · grid'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
-  const CHECK = ['#1c1530', '#130e22']; // transparent-pixel checkerboard, violet-tinted
+    ['M', 'mirror left-right'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
+  /* What shows behind transparent pixels. No single background suits all art (dark details vanish on the dark checker, pale
+     ones on the light one), so like Aseprite, Pixelorama and Piskel the editor offers a few and remembers the choice.
+     "project" is the game's own background colour from spritewright.config.json ("background": "#1a1426"). */
+  const BACKGROUNDS = [['project', 'Project background'], ['dark', 'Dark checker'], ['light', 'Light checker'], ['black', 'Black'], ['white', 'White'], ['custom', 'Custom colour']];
+  const luma = (hex) => { const c = fromHex(hex); if (c == null) return 0; const [r, g, b] = unpack(c); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
   const toBlob = (canvas) => new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('Could not encode the PNG'))), 'image/png'));
   const drawPx = (canvas, doc, scale = 1) => { // blit a doc's pixels to a canvas at scale (nearest neighbour)
     const t = document.createElement('canvas'); t.width = doc.w; t.height = doc.h; t.getContext('2d').putImageData(doc.imageData(), 0, 0);
@@ -774,7 +784,7 @@
         <div class="pf-bar">
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
-          <span class="pf-grp"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
+          <span class="pf-grp"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
           <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-export" title="Download a PNG, optionally scaled up">Export</button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
         <div class="pf-opts">
@@ -865,7 +875,7 @@
 
     /* ---------- state ---------- */
     const S = { sprites: [], docs: new Map(), cur: null, tool: 'pen', color: pack(185, 140, 255), mx: false, my: false, pp: false, grid: true, zoom: 8, ox: 0, oy: 0,
-      color2: 0, size: 1, shape: 'square', pattern: 'solid', fillMode: 'area', tile: false, onion: false, sel: null, float: null, clip: null, hover: null, lastPt: null,
+      color2: 0, bg: 'auto', bgCustom: '#3a5a40', size: 1, shape: 'square', pattern: 'solid', fillMode: 'area', tile: false, onion: false, sel: null, float: null, clip: null, hover: null, lastPt: null,
       palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], src: null, meta: {}, auth: { token: '', login: '' }, anim: { timer: 0, t: 0 }, notice: '' };
     const doc = () => S.docs.get(S.cur);
     const view = $('.pf-view'), stage = $('.pf-stage'), g = view.getContext('2d');
@@ -945,7 +955,7 @@
       const label = src.kind === 'github' ? src.repo.slug : src.kind === 'folder' ? src.name : '';
       $('.pf-source').textContent = label ? label + ' ▾' : 'Open project…'; $('.pf-source').title = (label ? label + ': ' : '') + 'switch to another GitHub repository or a folder on this computer';
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
-      renderList(); renderPalette();
+      renderList(); renderPalette(); applyBg();
       if (S.sprites.length) await openSprite(S.sprites[0].path); else { status(); render(); }
       return true;
     }
@@ -1093,9 +1103,9 @@
         g.globalAlpha = 0.45; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (i || j) g.drawImage(offscreen, S.ox + i * W, S.oy + j * H, W, H); g.globalAlpha = 1;
       }
       /* checkerboard behind transparent pixels, one square per 2 art pixels at low zoom */
-      const cs = Math.max(8, z * 2 > 16 ? z : 16);
+      const cs = Math.max(8, z * 2 > 16 ? z : 16), ck = bgColors(), lightBg = luma(ck[0]) > 0.55;
       g.save(); g.beginPath(); g.rect(S.ox, S.oy, W, H); g.clip();
-      for (let y = 0; y * cs < H; y++) for (let x = 0; x * cs < W; x++) { g.fillStyle = (x + y) % 2 ? CHECK[0] : CHECK[1]; g.fillRect(S.ox + x * cs, S.oy + y * cs, cs, cs); }
+      for (let y = 0; y * cs < H; y++) for (let x = 0; x * cs < W; x++) { g.fillStyle = (x + y) % 2 ? ck[0] : ck[1]; g.fillRect(S.ox + x * cs, S.oy + y * cs, cs, cs); }
       const f = frameSize(d), multi = f && (f.w < d.w || f.h < d.h);
       if (S.onion && multi) { /* each frame shows the one before it, faintly, underneath */
         const cols = Math.floor(d.w / f.w), rows = Math.floor(d.h / f.h); g.globalAlpha = 0.28;
@@ -1110,7 +1120,7 @@
       if (fl) { const t = document.createElement('canvas'); t.width = fl.w; t.height = fl.h; t.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(fl.px.buffer.slice(0)), fl.w, fl.h), 0, 0); g.drawImage(t, S.ox + fl.x * z, S.oy + fl.y * z, fl.w * z, fl.h * z); }
       if (overlay) { g.globalAlpha = 0.9; for (const [x, y] of overlay.pts) { g.fillStyle = isClear(overlay.value) ? 'rgba(255,255,255,.35)' : toHex(overlay.value); g.fillRect(S.ox + x * z, S.oy + y * z, z, z); } g.globalAlpha = 1; }
       if (S.grid && z >= 6) {
-        g.strokeStyle = 'rgba(230,220,247,.09)'; g.lineWidth = 1; g.beginPath();
+        g.strokeStyle = lightBg ? 'rgba(20,10,40,.16)' : 'rgba(230,220,247,.09)'; g.lineWidth = 1; g.beginPath();
         for (let x = 0; x <= d.w; x++) { g.moveTo(S.ox + x * z + .5, S.oy); g.lineTo(S.ox + x * z + .5, S.oy + H); }
         for (let y = 0; y <= d.h; y++) { g.moveTo(S.ox, S.oy + y * z + .5); g.lineTo(S.ox + W, S.oy + y * z + .5); }
         g.stroke();
@@ -1418,6 +1428,42 @@
     });
     root.addEventListener('contextmenu', (e) => { const t = e.target.closest('.pf-sw button[data-c]'); if (t) { e.preventDefault(); setColor2(+t.dataset.c); } });
     $('.pf-q').oninput = renderList;
+    /* background behind transparent pixels: a menu on the Background button, K cycles, the choice is remembered */
+    const projectBg = () => { const b = O.background || (S.src && S.src.background); return typeof b === 'string' && fromHex(b) != null ? toHex(fromHex(b)) : null; };
+    const bgModes = () => BACKGROUNDS.filter(([m]) => m !== 'project' || projectBg());
+    const bgMode = () => (S.bg === 'auto' || (S.bg === 'project' && !projectBg()) ? (projectBg() ? 'project' : 'dark') : S.bg);
+    function bgColors() {
+      const m = bgMode();
+      if (m === 'light') return ['#d6d6de', '#f2f2f6'];
+      if (m === 'black') return ['#000000', '#000000'];
+      if (m === 'white') return ['#ffffff', '#ffffff'];
+      if (m === 'custom') return [S.bgCustom, S.bgCustom];
+      if (m === 'project') return [projectBg(), projectBg()];
+      return ['#1c1530', '#130e22'];
+    }
+    function applyBg() {
+      const [a, b] = bgColors(); root.style.setProperty('--pf-ck1', a); root.style.setProperty('--pf-ck2', b);
+      $('.pf-bg').title = 'Background: ' + BACKGROUNDS.find(([m]) => m === bgMode())[1].toLowerCase() + ' (K cycles)'; render();
+      const menu = root.querySelector('.pf-bgmenu'); if (menu) menu.querySelectorAll('[data-bg]').forEach((x) => x.classList.toggle('on', x.dataset.bg === bgMode()));
+    }
+    function setBg(mode, custom) { S.bg = mode; if (custom) S.bgCustom = custom; try { localStorage.setItem('pf:bg', JSON.stringify({ mode, custom: S.bgCustom })); } catch { /* not remembered */ } applyBg(); }
+    try { const saved = JSON.parse(localStorage.getItem('pf:bg') || 'null'); if (saved) { S.bg = saved.mode || 'auto'; if (fromHex(saved.custom || '') != null) S.bgCustom = saved.custom; } } catch { /* defaults */ }
+    const swatchCss = (m) => { const [a, b] = m === 'dark' ? ['#1c1530', '#130e22'] : m === 'light' ? ['#d6d6de', '#f2f2f6'] : m === 'black' ? ['#000', '#000'] : m === 'white' ? ['#fff', '#fff'] : m === 'custom' ? [S.bgCustom, S.bgCustom] : [projectBg(), projectBg()]; return `background:repeating-conic-gradient(${a} 0 25%,${b} 0 50%) 0 0/8px 8px`; };
+    function closeBgMenu() { const m = root.querySelector('.pf-bgmenu'); if (m) m.remove(); }
+    function openBgMenu() {
+      closeBgMenu();
+      const menu = el(`<div class="pf-bgmenu" role="menu">${bgModes().map(([m, n]) => `<button role="menuitemradio" data-bg="${m}"><span class="pf-bg-sw" style="${swatchCss(m)}"></span>${esc(n)}${m === 'project' ? ` <span class="pf-note">${esc(projectBg())}</span>` : ''}</button>`).join('')}<label>custom <input type="color" class="pf-bgcustom" value="${esc(S.bgCustom)}"></label></div>`);
+      root.appendChild(menu);
+      const b = $('.pf-bg').getBoundingClientRect(), r = root.getBoundingClientRect();
+      menu.style.left = Math.max(4, Math.min(b.left - r.left, r.width - menu.offsetWidth - 4)) + 'px'; menu.style.top = (b.bottom - r.top + 4) + 'px';
+      menu.onclick = (e) => { const t = e.target.closest('[data-bg]'); if (!t) return; setBg(t.dataset.bg); closeBgMenu(); };
+      menu.querySelector('.pf-bgcustom').oninput = (e) => { setBg('custom', e.target.value); menu.querySelector('[data-bg="custom"] .pf-bg-sw').setAttribute('style', swatchCss('custom')); };
+      applyBg();
+    }
+    $('.pf-bg').onclick = (e) => { e.stopPropagation(); root.querySelector('.pf-bgmenu') ? closeBgMenu() : openBgMenu(); };
+    const bgOutside = (e) => { const m = root.querySelector('.pf-bgmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-bg')) closeBgMenu(); };
+    document.addEventListener('pointerdown', bgOutside);
+    const cycleBg = () => { const list = bgModes().map(([m]) => m), i = list.indexOf(bgMode()); setBg(list[(i + 1) % list.length]); };
     /* tool options */
     const segOn = (box, b) => $$(box + ' button').forEach((x) => x.classList.toggle('on', x === b));
     const setSize = (n) => { S.size = Math.max(1, Math.min(8, n | 0)); $('.pf-size').value = S.size; $('.pf-sizev').textContent = S.size; render(); };
@@ -1513,6 +1559,7 @@
       else if (mod && k === 'c') { if (copySel(false)) e.preventDefault(); } else if (mod && k === 'x') { if (copySel(true)) e.preventDefault(); }
       else if (mod && k === 'a') { e.preventDefault(); selectAll(); }
       else if (mod && k === 'v') { pasteSoon = setTimeout(() => { if (S.clip) pastePx(S.clip.px, S.clip.w, S.clip.h); }, 60); } // the paste event below wins when the clipboard holds an image from another app
+      else if (k === 'escape' && root.querySelector('.pf-bgmenu')) { e.preventDefault(); closeBgMenu(); }
       else if (k === 'escape' && (S.sel || S.float)) { e.preventDefault(); dropSelection(); }
       else if (k === 'enter' && S.float) { e.preventDefault(); commitFloat(); render(); status(); }
       else if ((k === 'delete' || k === 'backspace') && (S.sel || S.float)) { e.preventDefault(); deleteSel(); }
@@ -1521,7 +1568,7 @@
         const t = TOOLS.find((x) => x[2].toLowerCase() === k); if (t) setTool(t[0]);
         else if (k === 'm') $('.pf-mx').click(); else if (k === '+' || k === '=') $('.pf-zin').click(); else if (k === '-') $('.pf-zout').click(); else if (k === '0') $('.pf-fit').click(); else if (k === '#') $('.pf-grid').click();
         else if (k === 'x') $('.pf-swap').click(); else if (k === '[') setSize(S.size - 1); else if (k === ']') setSize(S.size + 1);
-        else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
+        else if (k === 'k') cycleBg(); else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
         else if (k === 't') $('.pf-tile').click(); else if (k === 'n') $('.pf-onion').click(); else if (e.key === '?') $('.pf-help').click();
         else if (k === ' ') { space = true; e.preventDefault(); }
       }
@@ -1539,11 +1586,11 @@
     const leaveGuard = (e) => { if ([...S.docs.values()].some((d) => d.unsaved && d.changed)) { e.preventDefault(); e.returnValue = ''; } }; /* unsaved work would be lost: ask first */
     window.addEventListener('beforeunload', leaveGuard);
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const had = doc(); resizeView(); if (had && !S.touched) fit(); render(); }) : null; if (ro) ro.observe(stage);
-    resizeView(); renderAuth(); init();
+    resizeView(); renderAuth(); applyBg(); init();
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setColor2, setTool, undo, redo, selectAll, state: S,
-      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); window.removeEventListener('beforeunload', leaveGuard); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
+      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); window.removeEventListener('beforeunload', leaveGuard); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
     };
     host.__pf = ctrl;
     return ctrl;
