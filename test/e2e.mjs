@@ -657,6 +657,44 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.locator('.pf-q').fill('hero_'); ok((await fp.locator('.pf-item').count()) === 4 && (await fp.locator('.pf-dir').count()) === 0, 'typing a filter shows a flat list of matching files');
   ok(await fp.evaluate(() => [...document.querySelectorAll('.pf-list .pf-badge')].every((b) => { const i = b.closest('.pf-item').getBoundingClientRect(), r = b.getBoundingClientRect(); return r.top >= i.top - 1 && r.bottom <= i.bottom + 1 && r.right <= i.right + 1; })), 'family badges stay inside their row in the flat list');
   await fp.locator('.pf-q').fill('');
+  // animation tools: new frame, reorder, GIF
+  await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(200);
+  await fp.locator('.pf-fam-m', { hasText: '2' }).click(); await fp.waitForTimeout(200);
+  await fp.locator('.pf-fam-add').click(); await fp.waitForTimeout(400);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_3.png' && (await fp.locator('.pf-fam-m span').allInnerTexts()).join() === '0,1,2,3,atk', '+ frame adds hero_3.png, a copy of the frame you were on, and opens it');
+  ok((await fp.locator('.pf-cell', { hasText: 'hero' }).locator('.pf-badge').innerText()) === '▶5', 'the family tile now counts 5');
+  await fp.keyboard.press('Control+s'); await fp.waitForTimeout(400);
+  ok(fs.existsSync(path.join(r2, 'chars/hero_3.png')) && decodePng(fs.readFileSync(path.join(r2, 'chars/hero_3.png'))).rgba[(1 * 4 + 2) * 4] === 255, 'Save writes the new frame into the project folder');
+  const h0 = await fp.evaluate(async () => { const a = document.getElementById('app').__pf; await a.open('chars/hero_0.png'); return [...a.current.px]; });
+  await fp.evaluate(() => document.getElementById('app').__pf.open('chars/hero_1.png')); await fp.waitForTimeout(200);
+  const h1 = await fp.evaluate(() => [...document.getElementById('app').__pf.current.px]);
+  ok(await fp.locator('.pf-fam-left').isEnabled(), '◀ is available on a middle frame');
+  await fp.locator('.pf-fam-left').click(); await fp.waitForTimeout(300);
+  const after0 = await fp.evaluate(() => { const a = document.getElementById('app').__pf; return { path: a.current.path, px: [...a.current.px], other: [...a.docs.get('chars/hero_1.png').px] }; });
+  ok(after0.path === 'chars/hero_0.png' && JSON.stringify(after0.px) === JSON.stringify(h1) && JSON.stringify(after0.other) === JSON.stringify(h0), '◀ moves the frame earlier (swaps it with the one before) and follows it');
+  ok(await fp.locator('.pf-fam-left').isDisabled(), '◀ is disabled on the first frame');
+  await fp.locator('.pf-fam-right').click(); await fp.waitForTimeout(300);
+  ok(JSON.stringify(await fp.evaluate(() => [...document.getElementById('app').__pf.docs.get('chars/hero_0.png').px])) === JSON.stringify(h0), '▶ moves it back');
+  fp.once('dialog', (dlg) => dlg.accept('3'));
+  const [gifDl] = await Promise.all([fp.waitForEvent('download'), fp.locator('.pf-gif').click()]);
+  const gif = fs.readFileSync(await gifDl.path());
+  const gifFrames = (() => { let o = 13 + (gif[10] & 0x80 ? 3 << ((gif[10] & 7) + 1) : 0), n = 0; while (gif[o] !== 0x3b) { if (gif[o] === 0x21) { o += 2; while (gif[o]) o += gif[o] + 1; o++; continue; } n++; o += 10; if (gif[o - 1] & 0x80) o += 3 << ((gif[o - 1] & 7) + 1); o++; while (gif[o]) o += gif[o] + 1; o++; } return n; })();
+  ok(gifDl.suggestedFilename() === 'hero@3x.gif' && gif.toString('latin1', 0, 6) === 'GIF89a' && gif.readUInt16LE(6) === 12 && gifFrames === 5, `GIF… downloads the family as an animation: ${gifDl.suggestedFilename()}, ${gif.readUInt16LE(6)}×${gif.readUInt16LE(8)}, ${gifFrames} frames`);
+  const shown = await fp.evaluate(async (b64) => { const img = new Image(); img.src = 'data:image/gif;base64,' + b64; await img.decode(); const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; const g = c.getContext('2d'); g.drawImage(img, 0, 0); return { w: img.naturalWidth, red: [...g.getImageData(1, 4, 1, 1).data], clear: g.getImageData(10, 10, 1, 1).data[3] }; }, gif.toString('base64'));
+  ok(shown.w === 12 && shown.red[0] === 255 && shown.red[3] === 255 && shown.clear === 0, 'and the browser decodes it: red pixel where hero_0 has it, transparency kept');
+  // context: the sprite at game scale next to its folder neighbours, live
+  await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(200);
+  await fp.keyboard.press('v'); await fp.waitForTimeout(300);
+  const has = (rgb) => fp.evaluate((rgb) => { const c = document.querySelector('.pf-ctx-cv'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 0; i < d.length; i += 4) if (d[i] === rgb[0] && d[i + 1] === rgb[1] && d[i + 2] === rgb[2]) return true; return false; }, rgb);
+  ok(await fp.locator('.pf-ctx').isVisible() && /2× · 1 neighbour from chars/.test(await fp.locator('.pf-ctx-note').innerText()), 'V shows the sprite in context with its neighbour from the same folder: ' + await fp.locator('.pf-ctx-note').innerText());
+  ok(await has([0, 0, 255]) && await has([255, 0, 0]), 'the strip draws the sprite (blue bat) and its neighbour (red hero frame)');
+  await fp.locator('.pf-chex').fill('#12ab34'); await fp.locator('.pf-chex').press('Tab'); await fp.keyboard.press('b');
+  { const b = await fp.locator('.pf-view').boundingBox(), st = await fp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); await fp.mouse.click(b.x + (st.ox + 2.5 * st.z) / st.k, b.y + (st.oy + 2.5 * st.z) / st.k); }
+  ok(await has([0x12, 0xab, 0x34]), 'an edit shows up in the context strip straight away');
+  await fp.locator('.pf-ctx-scale button[data-scale="4"]').click(); ok(/^4×/.test(await fp.locator('.pf-ctx-note').innerText()), 'the scale buttons change the game scale');
+  await fp.keyboard.press('Control+z');
+  await fp.reload(); await fp.waitForSelector('.pf-item'); ok(await fp.locator('.pf-ctx').isVisible(), 'the context strip stays on after a reload');
+  await fp.keyboard.press('v'); ok(await fp.locator('.pf-ctx').isHidden(), 'V hides it');
   ok(ferr2.length === 0, 'no page errors ' + ferr2.join('|'));
   await fp.close(); await s2.close();
 }
@@ -694,6 +732,35 @@ section('background behind transparent pixels');
   await bp.evaluate(() => localStorage.removeItem('pf:bg'));
   ok(berr.length === 0, 'no page errors ' + berr.join('|'));
   await bp.close(); await s3.close();
+}
+
+section('changes view: what you changed since opening, and the original on demand');
+{
+  const cp = await ctx.newPage(); const cerr = []; cp.on('pageerror', (e) => cerr.push(e.message));
+  await cp.goto(base + '?auth=off'); await cp.waitForSelector('.pf-item'); await cp.locator('.pf-item', { hasText: 'slime.png' }).click(); await cp.waitForTimeout(250);
+  const at = (x, y, dx = 0.5) => cp.evaluate(([x, y, dx]) => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), d = c.getContext('2d').getImageData(Math.round(S.ox + (x + dx) * S.zoom), Math.round(S.oy + (y + 0.5) * S.zoom), 1, 1).data; return [...d.slice(0, 3)]; }, [x, y, dx]);
+  const pos = async (x, y) => { const b = await cp.locator('.pf-view').boundingBox(); const s = await cp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { zoom: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); return { x: b.x + (s.ox + (x + 0.5) * s.zoom) / s.k, y: b.y + (s.oy + (y + 0.5) * s.zoom) / s.k }; };
+  await cp.locator('.pf-chex').fill('#00ff00'); await cp.locator('.pf-chex').press('Tab'); await cp.keyboard.press('b');
+  const p0 = await pos(5, 5); await cp.mouse.click(p0.x, p0.y); await cp.waitForTimeout(100);
+  ok(/1 px changed · hold \\ for before/.test(await cp.locator('.pf-s-name').innerText()), 'the status bar counts the changed pixels and says how to see the original');
+  const plainBody = await at(4, 4), plainNew = await at(5, 5);
+  await cp.keyboard.press('c');
+  const dimBody = await at(4, 4), keptNew = await at(5, 5), edge = await at(5, 5, 0.02);
+  ok(await cp.locator('.pf-changes').evaluate((b) => b.classList.contains('on')), 'C turns the changes view on');
+  ok(dimBody.every((v, i) => v < plainBody[i] * 0.6 + 2), `untouched pixels are dimmed (${plainBody} → ${dimBody})`);
+  ok(JSON.stringify(keptNew) === JSON.stringify(plainNew), 'the changed pixel keeps its colour');
+  ok(edge[0] > 200 && edge[2] > 200 && edge[1] < 180, 'and is outlined in pink: ' + edge);
+  await cp.keyboard.down('\\'); const before = await at(5, 5); await cp.keyboard.up('\\'); const after = await at(5, 5);
+  ok(JSON.stringify(before) !== JSON.stringify(plainNew) && JSON.stringify(after) === JSON.stringify(keptNew), 'holding \\ shows the original pixel, letting go shows the edit again');
+  const hint = await cp.locator('.pf-s-peek').boundingBox(); await cp.mouse.move(hint.x + 5, hint.y + 5); await cp.mouse.down(); const held = await at(5, 5); await cp.mouse.up();
+  ok(JSON.stringify(held) === JSON.stringify(before) && JSON.stringify(await at(5, 5)) === JSON.stringify(after), 'pressing and holding the status-bar hint does the same (touch screens)');
+  await cp.keyboard.press('c');
+  ok(JSON.stringify(await at(4, 4)) === JSON.stringify(plainBody), 'C again turns it off');
+  await cp.locator('.pf-prbtn').click(); await cp.waitForSelector('.pf-dlg-pr[open]');
+  ok((await cp.locator('.pf-chg canvas[data-b]').count()) === 1 && (await cp.locator('.pf-chg canvas[data-p]').count()) === 1, 'the pull request dialog shows each changed sprite before → after');
+  await cp.locator('.pf-dlg-pr button[value=cancel]').click();
+  cp.on('dialog', (d) => d.accept()); ok(cerr.length === 0, 'no page errors ' + cerr.join('|'));
+  await cp.close();
 }
 
 section('mobile');

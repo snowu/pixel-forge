@@ -358,6 +358,45 @@ test('githubSource: public repositories read files from the raw CDN at the liste
   await gs.read('art/a b.png').catch(() => {}); assert.ok(!ghe.calls.some((c) => c.includes('raw')), 'a custom apiBase (GitHub Enterprise) does not guess a CDN');
 });
 
+// a small, independent GIF reader to check the encoder against
+function readGif(u8) {
+  const r16 = (o) => u8[o] | (u8[o + 1] << 8);
+  assert.equal(String.fromCharCode(...u8.slice(0, 6)), 'GIF89a');
+  const W = r16(6), H = r16(8), packed = u8[10], gct = 1 << ((packed & 7) + 1), pal = [];
+  for (let i = 0; i < gct; i++) pal.push([u8[13 + i * 3], u8[14 + i * 3], u8[15 + i * 3]]);
+  let o = 13 + gct * 3, loop = false; const frames = []; let gce = null;
+  while (u8[o] !== 0x3b) {
+    if (u8[o] === 0x21) { const label = u8[o + 1]; if (label === 0xff && String.fromCharCode(...u8.slice(o + 3, o + 14)) === 'NETSCAPE2.0') loop = true; if (label === 0xf9) gce = { transparent: u8[o + 3] & 1, delay: r16(o + 4), index: u8[o + 6] }; o += 2; while (u8[o]) o += u8[o] + 1; o++; continue; }
+    assert.equal(u8[o], 0x2c); const w = r16(o + 5), h = r16(o + 7), min = u8[o + 10]; o += 11; const data = []; while (u8[o]) { data.push(...u8.slice(o + 1, o + 1 + u8[o])); o += u8[o] + 1; } o++;
+    // LZW decode
+    const clear = 1 << min, eoi = clear + 1; let size = min + 1, dict = [], prev = null, bitpos = 0; const out = [];
+    const reset = () => { dict = []; for (let i = 0; i < clear; i++) dict[i] = [i]; dict[clear] = []; dict[eoi] = null; size = min + 1; prev = null; };
+    reset();
+    for (;;) { let code = 0; for (let b = 0; b < size; b++, bitpos++) code |= ((data[bitpos >> 3] >> (bitpos & 7)) & 1) << b;
+      if (code === clear) { reset(); continue; } if (code === eoi) break;
+      let entry = dict[code]; if (!entry) entry = prev.concat(prev[0]); out.push(...entry);
+      if (prev) dict.push(prev.concat(entry[0])); prev = entry; if (dict.length === 1 << size && size < 12) size++; }
+    frames.push({ w, h, idx: out, gce }); gce = null;
+  }
+  return { W, H, pal, loop, frames };
+}
+test('encodeGif: looping animation, exact colours, transparency, scale, and frames bottom-centred', () => {
+  const R = C.pack(255, 0, 0), B = C.pack(0, 0, 255), f1 = { w: 2, h: 2, px: new Uint32Array([R, 0, 0, B]) }, f2 = { w: 1, h: 1, px: new Uint32Array([B]) };
+  const g = readGif(C.encodeGif([f1, f2], { delay: 10, scale: 2 }));
+  assert.equal(g.W, 4); assert.equal(g.H, 4); assert.equal(g.loop, true); assert.equal(g.frames.length, 2);
+  for (const f of g.frames) { assert.equal(f.gce.transparent, 1); assert.equal(f.gce.index, 0); assert.equal(f.gce.delay, 10); assert.equal(f.idx.length, 16); }
+  const col = (fr, x, y) => { const i = g.frames[fr].idx[y * 4 + x]; return i === 0 ? 'clear' : g.pal[i].join(','); };
+  assert.deepEqual([col(0, 0, 0), col(0, 1, 1), col(0, 2, 0), col(0, 3, 3)], ['255,0,0', '255,0,0', 'clear', '0,0,255'], 'scaled 2x, red top-left, blue bottom-right');
+  assert.deepEqual([col(1, 1, 2), col(1, 1, 3), col(1, 2, 3), col(1, 0, 0)], ['0,0,255', '0,0,255', 'clear', 'clear'], 'a smaller frame sits at the bottom, centred (rounding left)');
+  // many colours and long runs: the LZW table fills and resets correctly
+  const big = { w: 64, h: 64, px: new Uint32Array(64 * 64).map((_, i) => C.pack((i * 7) & 255, (i * 13) & 255, (i >> 6) * 3)) };
+  const gb = readGif(C.encodeGif([big]));
+  const exact = gb.frames[0].idx.filter((v, i) => { const c = big.px[i]; return gb.pal[v].join() === [c & 255, (c >> 8) & 255, (c >> 16) & 255].join(); }).length;
+  assert.equal(gb.frames[0].idx.length, 4096); assert.equal(exact, 255, 'all 4096 colours are distinct: the 255 kept ones are exact'); assert.ok(gb.frames[0].idx.every((v) => v >= 1 && v <= 255), 'the rest map to a kept colour (none turn transparent)');
+  const flat = readGif(C.encodeGif([{ w: 100, h: 100, px: new Uint32Array(10000).fill(R) }]));
+  assert.ok(flat.frames[0].idx.every((v) => v === 1));
+});
+
 /* ---------- lossless PNG codec ---------- */
 const rgbaOf = (r) => [...new Uint8Array(r.px.buffer)];
 test('codec: RGBA round trip is exact, including semi-transparent pixels (a game may use an alpha value such as 250 as a marker)', async () => {
