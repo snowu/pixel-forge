@@ -820,10 +820,10 @@
 .pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}.pf-dirchg{color:var(--pf-accent);font-size:11.5px;flex:none}
 .pf-foldrow{display:flex;gap:6px;margin-top:6px}
 .pf-foldrow button{flex:1;min-height:24px;font-size:11.5px;color:var(--pf-muted);background:none;border-color:transparent}
-.pf .pf-cur{display:flex;width:100%;align-items:center;gap:8px;background:none;border:1px solid var(--pf-line2);border-top:0;padding:4px 6px;min-height:0;color:var(--pf-ink);font-size:11.5px}
-.pf-cur canvas{width:24px;height:24px;image-rendering:pixelated;background:var(--pf-ckbg);flex:none}
-.pf-cur .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
-.pf-cur .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-cur .dot.base{background:var(--pf-warn)}
+.pf .pf-openrow{display:flex;width:100%;align-items:center;gap:8px;background:none;border:1px solid var(--pf-line2);border-top:0;padding:4px 6px;min-height:0;color:var(--pf-ink);font-size:11.5px}
+.pf-openrow canvas{width:24px;height:24px;image-rendering:pixelated;background:var(--pf-ckbg);flex:none}
+.pf-openrow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.pf-openrow .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-openrow .dot.base{background:var(--pf-warn)}
 .pf-commit{border:1px solid var(--pf-line);background:var(--pf-panel2);padding:8px}
 .pf-commit summary{cursor:pointer;list-style:none}
 .pf-commit summary::-webkit-details-marker{display:none}
@@ -1515,7 +1515,7 @@
           if (open) {
             const dd = S.docs.get(S.cur), label = S.cur.split('/').pop();
             const dirty = dd && (savesOut(dd) ? dd.unsaved : atRisk(dd)), changed = dd && (dd.changed || dd.local || dd.isNew);
-            const b = el(`<button class="pf-cur" data-dir="${esc(g.dir)}" title="${esc(S.cur)} — unfold this folder"><canvas width="${open.w || 16}" height="${open.h || 16}"></canvas><span class="n">${esc(label)}</span>${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? '<i class="dot base" title="changed, not in a pull request yet"></i>' : ''}</button>`);
+            const b = el(`<button class="pf-openrow" data-dir="${esc(g.dir)}" title="${esc(S.cur)} — unfold this folder"><canvas width="${open.w || 16}" height="${open.h || 16}"></canvas><span class="n">${esc(label)}</span>${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? '<i class="dot base" title="changed, not in a pull request yet"></i>' : ''}</button>`);
             list.appendChild(b);
             const cv = b.querySelector('canvas'); cv.__s = open; if (io) io.observe(cv); else paintThumb(cv, open);
           }
@@ -2090,7 +2090,7 @@
       if (t.dataset.t) return setTool(t.dataset.t);
       if (t.classList.contains('pf-item')) return openSprite(t.dataset.path);
       if (t.classList.contains('pf-dir')) return toggleDir(t.dataset.dir);
-      if (t.classList.contains('pf-cur')) return toggleDir(t.dataset.dir);
+      if (t.classList.contains('pf-openrow')) return toggleDir(t.dataset.dir);
       if (t.classList.contains('pf-fold-all')) return setAllFolded(true);
       if (t.classList.contains('pf-unfold-all')) return setAllFolded(false);
       if (t.classList.contains('pf-commit-openpr')) return submitOpenPr();

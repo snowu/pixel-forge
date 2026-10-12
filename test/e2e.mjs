@@ -779,8 +779,8 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png' && (await fp.locator('.pf-cell').count()) === 2, 'opening a sprite reveals its folder and leaves the other folded');
   await fp.locator('.pf-unfold-all').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'and unfold all restores the rest');
   await fp.locator('.pf-dir', { hasText: 'chars' }).click();
-  ok((await fp.locator('.pf-cur .n').innerText()) === 'hero_0.png', 'a folded folder still shows the sprite being edited');
-  await fp.locator('.pf-cur').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'clicking it unfolds the folder');
+  ok((await fp.locator('.pf-openrow .n').innerText()) === 'hero_0.png', 'a folded folder still shows the sprite being edited');
+  await fp.locator('.pf-openrow').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'clicking it unfolds the folder');
   await fp.locator('.pf-cell', { hasText: 'bat.png' }).click(); await fp.waitForTimeout(250);
   ok((await fp.locator('.pf-fam-kind').innerText()) === 'single sprite', 'a lone sprite shows its one-member family');
   await fp.locator('.pf-fam-add').click(); await fp.waitForTimeout(400);
