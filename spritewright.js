@@ -159,6 +159,15 @@
     }
     return out;
   }
+  /** Shift a colour's hue (degrees), saturation and brightness (-1..1, relative). keepDark leaves near-black (outlines) alone. */
+  function shiftColor(c, dh, ds, dv, keepDark) {
+    if (isClear(c)) return c;
+    const [h, s, v] = toHsv(c);
+    if (keepDark && v < 0.16) return c;
+    return fromHsv(h + dh, ds >= 0 ? s + (1 - s) * ds : s * (1 + ds), dv >= 0 ? v + (1 - v) * dv : v * (1 + dv), c >>> 24);
+  }
+  /** The name of a family member's variant: king_atk.png + "dark" (family "king") → king_dark_atk.png. */
+  const variantPath = (path, key, suffix) => { const i = path.lastIndexOf('/') + 1, file = path.slice(i); return path.slice(0, i) + key + '_' + suffix + file.slice(key.length); };
   /** A ramp of n colours around c, darkest first, with hue shifting (cool shadows, warm highlights). */
   function hueRamp(c, n = 5) {
     const [h, s, v] = toHsv(c), mid = (n - 1) / 2, out = [];
@@ -516,7 +525,9 @@
   /** The local `spritewright serve` server: reads and writes the project folder. */
   function serverSource(mf, token) {
     const url = (path) => 'project/' + path.split('/').map(encodeURIComponent).join('/');
-    return { kind: 'server', thumbs: true, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, repo: mf.repo || null, palette: mf.palette || null,
+    const history = async (path) => { const r = await fetch('api/history?path=' + encodeURIComponent(path)); return r.ok ? r.json() : []; };
+    const readAt = async (path, sha) => { const r = await fetch(`api/file-at?path=${encodeURIComponent(path)}&sha=${sha}`); if (!r.ok) throw new Error('not in that commit'); return new Uint8Array(await r.arrayBuffer()); };
+    return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
       async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
   }
@@ -554,7 +565,12 @@
     if (cfg.palette && entries.has(cfg.palette)) { try { palette = palFromText(new TextDecoder().decode(await blob(cfg.palette))); } catch { /* none */ } }
     const png = [...entries.values()].filter((e) => /\.png$/i.test(e.path) && e.size <= (cfg.maxBytes || maxBytes)).map((e) => ({ path: e.path, bytes: e.size }));
     const sprites = applyConfig(png, cfg), hidden = hiddenBy(png, cfg, sprites);
-    return { kind: 'github', thumbs: true, sprites, hidden, palette, branch, background: cfg.background || null,
+    const history = async (path) => (await call(`/repos/${o.repo}/commits?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(branch)}&per_page=30`)).map((c) => ({ sha: c.sha, date: c.commit.author.date, author: (c.author && c.author.login) || c.commit.author.name, message: c.commit.message.split('\n')[0] }));
+    const readAt = async (path, sha) => {
+      if (rawUrl) { try { const r = await doFetch(`${rawBase.replace(/\/$/, '')}/${o.repo}/${sha}/${path.split('/').map(encodeURIComponent).join('/')}`); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* use the API */ } }
+      const f = await call(`/repos/${o.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`); return b64ToBytes(f.content.replace(/\n/g, ''));
+    };
+    return { kind: 'github', thumbs: true, history, readAt, sprites, hidden, palette, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Save downloads; Propose PR sends changes back.',
       repo: { slug: o.repo, base: branch, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
@@ -699,6 +715,15 @@
 .pf[data-vision="deutan"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:url(#pf-vision-deutan)}
 .pf[data-vision="tritan"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:url(#pf-vision-tritan)}
 .pf .pf-ref-sprite{width:auto;flex:1;min-width:0}.pf-ref-on{display:flex;flex-direction:column;gap:6px}.pf .pf-refpanel .pf-seg button{min-height:26px;padding:2px 8px}
+.pf-v-shift{display:flex;flex-direction:column;gap:4px}.pf-v-shift input[type=range]{flex:1;width:auto}.pf-v-shift b{min-width:3.2em;text-align:right;color:var(--pf-accent)}
+.pf-v-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.pf-v-col{display:flex;align-items:center;gap:4px;font-size:11px}.pf-v-col i{width:20px;height:20px;border:1px solid var(--pf-line2);flex:none}.pf-v-col input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--pf-line2);background:none}
+.pf-v-preview{display:flex;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-v-preview canvas{image-rendering:pixelated;height:72px}
+.pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}.pf-hist summary h4{display:inline}.pf-hist summary h4::after{content:" ▸";color:var(--pf-faint)}.pf-hist[open] summary h4::after{content:" ▾"}
+.pf-hist-list{display:flex;flex-direction:column;gap:3px;max-height:260px;overflow:auto;margin-top:6px}
+.pf .pf-hist-e{display:grid;grid-template-columns:36px 1fr;gap:2px 8px;text-align:left;justify-content:stretch;align-items:center;background:none;border-color:transparent;padding:4px;min-height:0}
+.pf .pf-hist-e canvas{grid-row:span 2;width:36px;height:36px;image-rendering:pixelated;object-fit:contain;background:var(--pf-ckbg)}
+.pf-hist-e b{font-weight:400;color:var(--pf-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}.pf-hist-e small{color:var(--pf-muted);font-size:10.5px}
+.pf .pf-hist-e.on{border-color:var(--pf-accent);background:var(--pf-panel2);font-weight:400}
 .pf-badge{position:absolute;top:2px;right:2px;font-style:normal;font-size:9.5px;line-height:1;padding:2px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted)}
 .pf-badge.anim{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent);font-weight:700}
 .pf .pf-cell .dot{position:absolute;top:4px;left:4px}
@@ -901,8 +926,10 @@
             <div class="pf-row"><label>opacity <input type="range" class="pf-ref-op" min="5" max="100" value="40"></label></div>
             <div class="pf-row"><span class="pf-seg pf-ref-place"><button data-place="under" class="on" title="Behind your pixels">under</button><button data-place="over" title="On top of your pixels">over</button></span><span class="pf-seg pf-ref-fit"><button data-fit="pixels" class="on" title="One image pixel per sprite pixel, from the top-left">1:1</button><button data-fit="fit" title="Scaled to fit the canvas">fit</button></span></div>
             <div class="pf-row"><button class="pf-ref-toggle" title="Show or hide the reference (H)">hide</button><button class="pf-ref-clear">remove</button></div></div></div>
+        <details class="pf-panel pf-hist" hidden><summary><h4>History</h4></summary><div class="pf-hist-list"></div><div class="pf-row pf-hist-act" hidden><button class="primary pf-hist-restore">Restore this version</button><span class="pf-note pf-hist-sel"></span></div></details>
         <div class="pf-panel"><h4>Image</h4><div class="pf-row"><button class="pf-fliph" title="Flip the image, or the selection">Flip ↔</button><button class="pf-flipv">Flip ↕</button><button class="pf-rot" title="Rotate the image, or the selection">Rotate ↻</button></div>
           <div class="pf-row"><button class="pf-sh" data-d="-1,0">←</button><button class="pf-sh" data-d="0,-1">↑</button><button class="pf-sh" data-d="0,1">↓</button><button class="pf-sh" data-d="1,0">→</button><span class="pf-note">wrap shift</span></div>
+          <div class="pf-row"><button class="pf-variant" title="A recoloured copy of this sprite (and its whole family: every pose and frame) as new files, e.g. king → king_dark">Make variant…</button></div>
           <div class="pf-row"><button class="pf-outline" title="Draw a 1-pixel outline in the primary colour around everything opaque">Outline</button><label class="pf-note"><input type="checkbox" class="pf-outline-c"> corners</label></div>
           <div class="pf-row"><button class="pf-resize">Canvas size…</button><button class="pf-clear">Clear</button></div></div>
       </aside>
@@ -940,6 +967,16 @@
         <div class="pf-row"><label>width <input type="number" class="pf-sz-w" min="1" max="1024"></label><label>height <input type="number" class="pf-sz-h" min="1" max="1024"></label></div>
         <label>keep <select class="pf-sz-a"><option value="tl">top-left</option><option value="c">centre</option></select></label>
         <div class="pf-row"><button type="button" class="primary pf-sz-ok">Apply</button><button value="cancel">Cancel</button></div></form></dialog>
+      <dialog class="pf-dlg-variant"><form method="dialog" class="pf-form">
+        <div class="pf-dlg-head"><h4>New variant</h4><button value="cancel" class="pf-x" aria-label="Close">✕</button></div>
+        <div class="pf-note pf-v-what"></div>
+        <label>name <input type="text" class="pf-v-suffix" value="variant" maxlength="32" aria-label="Variant name"></label>
+        <div class="pf-note pf-v-names"></div>
+        <span class="pf-seg pf-v-mode"><button type="button" data-mode="shift" class="on">shift colours</button><button type="button" data-mode="swap">swap colours</button></span>
+        <div class="pf-v-shift"><label>hue <input type="range" class="pf-v-h" min="-180" max="180" value="0"><b class="pf-v-hv">0°</b></label><label>saturation <input type="range" class="pf-v-s" min="-100" max="100" value="0"><b class="pf-v-sv">0</b></label><label>brightness <input type="range" class="pf-v-l" min="-100" max="100" value="0"><b class="pf-v-lv">0</b></label><label><input type="checkbox" class="pf-v-keep" checked> keep outlines (near-black) as they are</label></div>
+        <div class="pf-v-swap" hidden><div class="pf-v-cols"></div></div>
+        <div class="pf-v-preview"></div>
+        <div class="pf-row"><button type="button" class="primary pf-v-go">Create</button><button value="cancel">Cancel</button></div></form></dialog>
       <dialog class="pf-dlg-keys"><form method="dialog" class="pf-form"><h4>Keyboard shortcuts</h4><div class="pf-keys"></div><div class="pf-row"><button value="cancel" class="primary">Close</button></div></form></dialog>
       <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><h4>New sprite</h4>
         <div class="pf-row"><label>width <input type="number" class="pf-nw" min="1" max="1024" value="16"></label><label>height <input type="number" class="pf-nh" min="1" max="1024" value="16"></label></div>
@@ -1068,7 +1105,7 @@
     async function openSprite(path) {
       if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; }
       if (!(await loadDoc(path))) return;
-      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); renderList(); renderColors(); status(); render(); drawPreview(); renderFamily();
+      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); renderList(); renderColors(); status(); render(); drawPreview(); renderFamily(); resetHistory();
     }
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
@@ -1660,6 +1697,69 @@
     const toggleRef = () => { if (!S.ref) return; S.ref.visible = !S.ref.visible; $('.pf-ref-toggle').textContent = S.ref.visible ? 'hide' : 'show'; render(); };
     $('.pf-ref-toggle').onclick = toggleRef;
     $('.pf-ref-clear').onclick = () => { S.ref = null; $('.pf-ref-on').hidden = true; render(); };
+    /* variants: a recoloured copy of a whole family (or one sprite) as new files */
+    let variant = null;
+    async function openVariant() {
+      const d = doc(); if (!d) return;
+      const fam = famFor(d), key = fam ? fam.key : d.path.split('/').pop().replace(/\.png$/i, ''), members = fam ? fam.members : [d.path], docs = [];
+      for (const p of members) { const x = await loadDoc(p); if (x) docs.push(x); }
+      const counts = new Map(); for (const x of docs) for (const c of x.px) if (!isClear(c)) counts.set(c, (counts.get(c) || 0) + 1);
+      variant = { key, docs, cols: [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 48).map(([c]) => c), swap: new Map() };
+      $('.pf-v-what').textContent = `${docs.length > 1 ? `The whole "${key}" family: ${docs.length} images` : d.path.split('/').pop()}, recoloured into new files.`;
+      $('.pf-v-cols').innerHTML = variant.cols.map((c, i) => `<label class="pf-v-col"><i style="background:${toHex(c)}"></i>→<input type="color" data-i="${i}" value="${toHex(c)}"></label>`).join('');
+      for (const [sel, v] of [['.pf-v-h', 0], ['.pf-v-s', 0], ['.pf-v-l', 0]]) $(sel).value = v;
+      variantPreview(); $('.pf-dlg-variant').showModal();
+    }
+    const suffixOf = () => ($('.pf-v-suffix').value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'variant');
+    function variantFn() {
+      if ($('.pf-v-mode button.on').dataset.mode === 'swap') return (c) => (isClear(c) ? c : variant.swap.has(c) ? ((variant.swap.get(c) & 0xffffff) | (c & 0xff000000)) >>> 0 : c);
+      const dh = +$('.pf-v-h').value, ds = +$('.pf-v-s').value / 100, dl = +$('.pf-v-l').value / 100, keep = $('.pf-v-keep').checked, memo = new Map();
+      return (c) => { let r = memo.get(c); if (r === undefined) memo.set(c, (r = shiftColor(c, dh, ds, dl, keep))); return r; };
+    }
+    function variantPreview() {
+      if (!variant) return; const fn = variantFn(), sfx = suffixOf();
+      $('.pf-v-hv').textContent = $('.pf-v-h').value + '°'; $('.pf-v-sv').textContent = $('.pf-v-s').value; $('.pf-v-lv').textContent = $('.pf-v-l').value;
+      $('.pf-v-names').textContent = '→ ' + variant.docs.map((x) => variantPath(x.path, variant.key, sfx).split('/').pop()).join(', ');
+      const box = $('.pf-v-preview'); box.innerHTML = '';
+      for (const x of variant.docs) { const c = document.createElement('canvas'); box.appendChild(c); drawPx(c, { w: x.w, h: x.h, imageData: () => new ImageData(new Uint8ClampedArray(x.px.map(fn).buffer), x.w, x.h) }); c.style.width = Math.round(72 * x.w / x.h) + 'px'; }
+    }
+    $('.pf-variant').onclick = openVariant;
+    ['.pf-v-h', '.pf-v-s', '.pf-v-l', '.pf-v-keep', '.pf-v-suffix'].forEach((sel) => ($(sel).oninput = variantPreview));
+    $$('.pf-v-mode button').forEach((b) => (b.onclick = () => { segOn('.pf-v-mode', b); $('.pf-v-shift').hidden = b.dataset.mode !== 'shift'; $('.pf-v-swap').hidden = b.dataset.mode !== 'swap'; variantPreview(); }));
+    $('.pf-v-cols').oninput = (e) => { const i = e.target.dataset.i; if (i == null) return; variant.swap.set(variant.cols[+i], fromHex(e.target.value)); variantPreview(); };
+    $('.pf-v-go').onclick = async () => {
+      const fn = variantFn(), sfx = suffixOf(), made = [];
+      for (const x of variant.docs) {
+        const path = variantPath(x.path, variant.key, sfx);
+        if (S.sprites.some((s) => s.path === path)) { note(path.split('/').pop() + ' already exists: pick another name'); return; }
+      }
+      $('.pf-dlg-variant').close();
+      for (const x of variant.docs) { const path = variantPath(x.path, variant.key, sfx); await addLocal(path, x.w, x.h, x.px.map(fn), canWrite(), true); made.push(path); }
+      await openSprite(made[0]); note(`variant: ${made.length} new file${made.length > 1 ? 's' : ''} (${canWrite() ? 'Save writes each' : 'Save downloads; Propose PR adds them'})`);
+    };
+    /* history: earlier versions of the open sprite from git (GitHub repositories and the local server) */
+    let histFor = null, histPick = null;
+    async function loadHistory() {
+      const d = doc(), box = $('.pf-hist-list'); if (!d || !S.src || !S.src.history || !$('.pf-hist').open) return;
+      if (histFor === d.path) return; histFor = d.path; histPick = null; $('.pf-hist-act').hidden = true;
+      box.innerHTML = '<div class="pf-note">Loading…</div>';
+      let list = []; try { list = d.isNew || d.local ? [] : await S.src.history(d.path); } catch (e) { box.innerHTML = `<div class="pf-note">${esc(e.message)}</div>`; return; }
+      if (histFor !== d.path) return;
+      box.innerHTML = list.length ? '' : '<div class="pf-note">No earlier versions.</div>';
+      for (const c of list) {
+        const b = el(`<button class="pf-hist-e" data-sha="${esc(c.sha)}" title="${esc(c.message)}"><canvas></canvas><b>${esc(c.message)}</b><small>${esc(String(c.date).slice(0, 10))} · ${esc(c.author)} · ${esc(c.sha.slice(0, 7))}</small></button>`);
+        box.appendChild(b); const cv = b.querySelector('canvas'), path = d.path;
+        S.src.readAt(path, c.sha).then((bytes) => createImageBitmap(new Blob([bytes], { type: 'image/png' }))).then((bm) => { cv.width = bm.width; cv.height = bm.height; const k = cv.getContext('2d'); k.imageSmoothingEnabled = false; k.drawImage(bm, 0, 0); }).catch(() => { b.disabled = true; b.title = 'Not in that commit (renamed or added later)'; });
+      }
+    }
+    const resetHistory = () => { histFor = null; $('.pf-hist').hidden = !(S.src && S.src.history); if ($('.pf-hist').open) loadHistory(); };
+    $('.pf-hist').addEventListener('toggle', loadHistory);
+    $('.pf-hist-list').onclick = (e) => { const b = e.target.closest('.pf-hist-e'); if (!b || b.disabled) return; $$('.pf-hist-e').forEach((x) => x.classList.toggle('on', x === b)); histPick = b.dataset.sha; $('.pf-hist-act').hidden = false; $('.pf-hist-sel').textContent = histPick.slice(0, 7); };
+    $('.pf-hist-restore').onclick = async () => {
+      const d = doc(); if (!d || !histPick) return;
+      try { const img = await decodePng(new Blob([await S.src.readAt(d.path, histPick)], { type: 'image/png' })); d.snapshot(); d.px = img.px; d.w = img.w; d.h = img.h; fit(); changedUi(); note(`restored the version from ${histPick.slice(0, 7)} (Ctrl+Z undoes it)`); }
+      catch (e) { note('Could not restore: ' + e.message); }
+    };
     $('.pf-context').onclick = (e) => { S.ctx = !S.ctx; e.currentTarget.classList.toggle('on', S.ctx); $('.pf-ctx').hidden = !S.ctx; try { localStorage.setItem('pf:ctx', S.ctx ? '1' : '0'); } catch { /* ignore */ } requestAnimationFrame(() => { resizeView(); if (!S.touched) fit(); render(); }); };
     $$('.pf-ctx-scale button').forEach((b) => (b.onclick = () => { S.ctxScale = +b.dataset.scale; segOn('.pf-ctx-scale', b); render(); }));
     try { if (localStorage.getItem('pf:ctx') === '1') { S.ctx = true; $('.pf-context').classList.add('on'); $('.pf-ctx').hidden = false; } } catch { /* off */ }
@@ -1788,5 +1888,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
 });

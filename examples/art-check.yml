@@ -1,0 +1,19 @@
+# Art check for pull requests: copy to .github/workflows/art-check.yml in your game's repository.
+# On every pull request that touches a PNG it checks the changed sprites with spritewright and writes a table
+# to the run's summary page (open the check's "Details"). It fails on unreadable or oversized PNGs; add --strict
+# to also fail on warnings (colours outside the palette, a sprite that changed size, animation frames of
+# different sizes, empty images). Needs nothing but this file.
+name: art check
+on:
+  pull_request:
+    paths: ['**/*.png', '**/*.PNG', 'spritewright.config.json']
+permissions: { contents: read }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npx --yes --allow-git=root github:snowu/spritewright check . --since "origin/${{ github.base_ref }}" --summary "$GITHUB_STEP_SUMMARY"

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { scan, readPngSize, slugFromRemote, gitInfo, globToRegExp, suggestConfig } from '../src/scan.mjs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { createServer, safeResolve } from '../src/serve.mjs';
 import { encodePng, decodePng, fromRows, encodeRaw } from './png.mjs';
 await import('../spritewright.js');
@@ -396,6 +396,72 @@ test('encodeGif: looping animation, exact colours, transparency, scale, and fram
   const flat = readGif(C.encodeGif([{ w: 100, h: 100, px: new Uint32Array(10000).fill(R) }]));
   assert.ok(flat.frames[0].idx.every((v) => v === 1));
 });
+
+test('variants: shiftColor keeps clear and outlines, variantPath names the copies', () => {
+  const red = C.pack(200, 40, 40);
+  assert.equal(C.shiftColor(0, 90, 0, 0, true), 0);
+  assert.equal(C.shiftColor(C.pack(10, 10, 12), 120, 0, 0, true), C.pack(10, 10, 12), 'near-black outline kept');
+  const [h] = C.toHsv(C.shiftColor(red, 120, 0, 0, true)); assert.ok(Math.abs(h - 120) < 2, 'hue rotated: ' + h);
+  assert.equal(C.shiftColor(C.pack(10, 200, 250, 128), 0, 0, 0, false) >>> 24, 128, 'alpha kept');
+  assert.ok(C.toHsv(C.shiftColor(red, 0, 0, -0.5, false))[2] < C.toHsv(red)[2]);
+  assert.equal(C.variantPath('e/king_atk.png', 'king', 'dark'), 'e/king_dark_atk.png');
+  assert.equal(C.variantPath('king.png', 'king', 'dark'), 'king_dark.png');
+  assert.equal(C.variantPath('p/flame_2.png', 'flame', 'blue'), 'p/flame_blue_2.png');
+});
+
+const gitRepo = () => { const root = tmp(); const g = (...a) => execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { stdio: 'pipe' }); g('init', '-q'); return { root, g }; };
+test('local server: a sprite\'s git history and the file as it was', async () => {
+  const { root, g } = gitRepo(); fs.mkdirSync(path.join(root, 'art'));
+  const v1 = fromRows(['r'], { r: [255, 0, 0] }).png, v2 = fromRows(['b'], { b: [0, 0, 255] }).png;
+  fs.writeFileSync(path.join(root, 'art/x.png'), v1); g('add', '.'); g('commit', '-qm', 'first red');
+  fs.writeFileSync(path.join(root, 'art/x.png'), v2); g('commit', '-qam', 'now blue');
+  const s = createServer({ root, port: 0 }); const base = await s.listen();
+  try {
+    const list = await (await fetch(base + 'api/history?path=art/x.png')).json();
+    assert.deepEqual(list.map((c) => c.message), ['now blue', 'first red']); assert.equal(list[0].author, 't'); assert.match(list[0].sha, /^[0-9a-f]{40}$/);
+    const old = Buffer.from(await (await fetch(`${base}api/file-at?path=art/x.png&sha=${list[1].sha}`)).arrayBuffer());
+    assert.ok(old.equals(v1), 'the old version, byte for byte');
+    assert.equal((await fetch(`${base}api/file-at?path=art/x.png&sha=nothex`)).status, 400);
+    assert.equal((await fetch(`${base}api/history?path=../etc/passwd`)).status, 400);
+    assert.equal((await fetch(`${base}api/history?path=README.md`)).status, 400, 'PNGs only');
+  } finally { await s.close(); }
+  const plain = tmp(); fs.mkdirSync(path.join(plain, 'a')); fs.writeFileSync(path.join(plain, 'a/y.png'), v1);
+  const s2 = createServer({ root: plain, port: 0 }); const b2 = await s2.listen();
+  try { assert.deepEqual(await (await fetch(b2 + 'api/history?path=a/y.png')).json(), [], 'no git: no history, no error'); } finally { await s2.close(); }
+});
+
+test('spritewright check: errors, warnings and the PR summary', async () => {
+  const { check, markdown } = await import('../src/check.mjs');
+  const { root, g } = gitRepo(); fs.mkdirSync(path.join(root, 'art'));
+  const px = (rows, map) => fromRows(rows, map).png;
+  fs.writeFileSync(path.join(root, 'palette.hex'), 'ff0000\n0000ff\n');
+  fs.writeFileSync(path.join(root, 'spritewright.config.json'), JSON.stringify({ palette: 'palette.hex' }));
+  fs.writeFileSync(path.join(root, 'art/a.png'), px(['rr', 'rr'], { r: [255, 0, 0] }));
+  fs.writeFileSync(path.join(root, 'art/keep.png'), px(['b'], { b: [0, 0, 255] }));
+  g('add', '.'); g('commit', '-qm', 'base');
+  fs.writeFileSync(path.join(root, 'art/a.png'), px(['rrr', 'rrr'], { r: [255, 0, 0] }));             // size changed
+  fs.writeFileSync(path.join(root, 'art/off.png'), px(['g'], { g: [0, 255, 0] }));                      // off palette
+  fs.writeFileSync(path.join(root, 'art/walk_0.png'), px(['r'], { r: [255, 0, 0] }));
+  fs.writeFileSync(path.join(root, 'art/walk_1.png'), px(['rr'], { r: [255, 0, 0] }));                 // frames differ in size
+  fs.writeFileSync(path.join(root, 'art/empty.png'), px(['.'], {}));                                     // fully transparent
+  fs.writeFileSync(path.join(root, 'art/broken.png'), Buffer.concat([readFileSyncSafe(path.join(root, 'art/keep.png')).subarray(0, 40), Buffer.alloc(30)])); // corrupt
+  g('add', '.'); g('commit', '-qm', 'changes');
+  const res = await check(root, { since: 'HEAD~1' });
+  const row = (p) => res.rows.find((r) => r.path === p);
+  assert.deepEqual(res.rows.map((r) => r.path).sort(), ['art/a.png', 'art/broken.png', 'art/empty.png', 'art/off.png', 'art/walk_0.png', 'art/walk_1.png'], 'only changed sprites, keep.png untouched');
+  assert.match(row('art/a.png').warnings.join(), /size changed from 2×2/);
+  assert.match(row('art/off.png').warnings.join(), /1 colour outside the palette \(#00ff00\)/);
+  assert.match(row('art/walk_1.png').warnings.join(), /frames of "walk" differ in size/);
+  assert.match(row('art/empty.png').warnings.join(), /fully transparent/);
+  assert.equal(row('art/broken.png').errors.length, 1);
+  assert.equal(res.errors, 1); assert.ok(res.warnings >= 5);
+  const md = markdown(res); assert.match(md, /\| `art\/off\.png` \| 1×1 \| 1 \| new \| ⚠️ 1 colour outside the palette/); assert.match(md, /\*\*1 error, \d+ warnings\*\*/);
+  const cli = spawnSync(process.execPath, ['bin/spritewright.mjs', 'check', root, '--since', 'HEAD~1', '--summary', path.join(root, 'summary.md')], { encoding: 'utf8' });
+  assert.equal(cli.status, 1, 'errors fail the run'); assert.match(fs.readFileSync(path.join(root, 'summary.md'), 'utf8'), /## Art check/);
+  const clean = spawnSync(process.execPath, ['bin/spritewright.mjs', 'check', root, '--since', 'HEAD'], { encoding: 'utf8' });
+  assert.equal(clean.status, 0); assert.match(clean.stdout, /No sprites changed since `HEAD`/);
+});
+const readFileSyncSafe = (p) => fs.readFileSync(p);
 
 /* ---------- lossless PNG codec ---------- */
 const rgbaOf = (r) => [...new Uint8Array(r.px.buffer)];
