@@ -388,7 +388,7 @@ await page.locator('.pf-commit-msg').fill('chunk one');
 await page.locator('.pf-commit-branch').fill('art/chunks');
 const at = calls.length;
 await page.locator('.pf-commit-go').click();
-try { await page.waitForFunction(() => /Committed/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   commit note:', JSON.stringify(await page.locator('.pf-commit-note').innerText()), calls.slice(at).map((c) => c.m + ' ' + c.p).join(' | ')); }
+try { await page.waitForFunction(() => /Created|Committed/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   commit note:', JSON.stringify(await page.locator('.pf-commit-note').innerText()), calls.slice(at).map((c) => c.m + ' ' + c.p).join(' | ')); }
 const chunkTree = calls.slice(at).find((c) => c.p.endsWith('/git/trees') && c.body.base_tree);
 ok(chunkTree && chunkTree.body.tree.length === 1, 'only the ticked sprite is committed');
 ok(await page.locator('.pf-commit-openpr').count() === 1, 'with no open pull request for the branch, the panel offers to open one');
