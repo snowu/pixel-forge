@@ -763,6 +763,62 @@ section('changes view: what you changed since opening, and the original on deman
   await cp.close();
 }
 
+section('vision check, reference layer, variants and history');
+{
+  const { execFileSync } = await import('node:child_process');
+  const r4 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-more-')); const git = (...a) => execFileSync('git', ['-C', r4, '-c', 'user.name=artist', '-c', 'user.email=a@a', ...a], { stdio: 'pipe' });
+  fs.mkdirSync(path.join(r4, 'art'));
+  const dotPng = (rgb, x = 1) => fromRows(['....', '.'.repeat(x) + 'c' + '.'.repeat(3 - x), '....', '....'], { c: rgb }).png;
+  git('init', '-q');
+  fs.writeFileSync(path.join(r4, 'art/hero_0.png'), dotPng([255, 0, 0])); fs.writeFileSync(path.join(r4, 'art/hero_atk.png'), dotPng([0, 0, 255], 2));
+  git('add', '.'); git('commit', '-qm', 'red hero');
+  fs.writeFileSync(path.join(r4, 'art/hero_0.png'), dotPng([0, 200, 0])); git('commit', '-qam', 'green hero');
+  const s4 = createServer({ root: r4, port: 0 }), b4 = await s4.listen();
+  const mp2 = await ctx.newPage(); const merr = []; mp2.on('pageerror', (e) => merr.push(e.message)); mp2.on('dialog', (d) => d.accept());
+  await mp2.goto(b4 + '?auth=off'); await mp2.evaluate(() => { localStorage.removeItem('pf:ctx'); localStorage.removeItem('pf:bg'); }); await mp2.reload(); await mp2.waitForSelector('.pf-item');
+  await mp2.locator('.pf-cell', { hasText: 'hero' }).click(); await mp2.waitForTimeout(300);
+  const st = () => mp2.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
+  const at = async (x, y) => { const s = await st(); return mp2.evaluate(([x, y, s]) => [...document.querySelector('.pf-view').getContext('2d').getImageData(Math.round(s.ox + (x + 0.5) * s.z), Math.round(s.oy + (y + 0.5) * s.z), 1, 1).data.slice(0, 3)], [x, y, s]); };
+  const shotAt = async (x, y) => { const s = await st(), b = await mp2.locator('.pf-view').boundingBox(); const png = decodePng(await mp2.screenshot({ clip: { x: b.x + (s.ox + (x + 0.5) * s.z) / s.k, y: b.y + (s.oy + (y + 0.5) * s.z) / s.k, width: 1, height: 1 } })); return [...png.rgba.slice(0, 3)]; };
+  // vision
+  const green = await shotAt(1, 1);
+  await mp2.keyboard.press('y');
+  ok((await mp2.locator('.pf-vision-tag').innerText()).toLowerCase() === 'values (greyscale)' && /grayscale\(1\)/.test(await mp2.locator('.pf-view').evaluate((v) => getComputedStyle(v).filter)), 'Y shows the art by value (greyscale), labelled on the canvas');
+  const grey = await shotAt(1, 1); ok(grey[0] === grey[1] && grey[1] === grey[2] && green[1] > green[0] + 100, `the green pixel turns grey on screen (${green} → ${grey})`);
+  await mp2.keyboard.press('y'); ok(/protan/.test(await mp2.locator('.pf-view').evaluate((v) => getComputedStyle(v).filter)) && /protanopia/i.test(await mp2.locator('.pf-vision-tag').innerText()), 'then protanopia');
+  await mp2.keyboard.press('y'); const deut = await shotAt(1, 1); ok(/deutan/.test(await mp2.locator('.pf-view').evaluate((v) => getComputedStyle(v).filter)) && JSON.stringify(deut) !== JSON.stringify(green), `then deuteranopia, which changes the pixel on screen (${green} → ${deut})`);
+  await mp2.keyboard.press('y'); await mp2.keyboard.press('y');
+  ok(await mp2.locator('.pf-vision-tag').isHidden() && (await mp2.locator('.pf-view').evaluate((v) => getComputedStyle(v).filter)) === 'none', 'and back to normal');
+  // reference
+  await mp2.locator('.pf-ref-sprite').focus(); await mp2.locator('.pf-ref-sprite').selectOption('art/hero_atk.png'); await mp2.waitForTimeout(200);
+  const refPix = await at(2, 1);
+  ok(!(await mp2.locator('.pf-ref-on').isHidden()) && /hero_atk\.png · 4×4/.test(await mp2.locator('.pf-ref-name').innerText()) && refPix[2] > refPix[0] + 40, 'a sprite as reference shows through where the art is transparent: ' + refPix);
+  ok(JSON.stringify(await at(1, 1)) === JSON.stringify([0, 200, 0]), 'under the art by default (your pixels stay on top)');
+  await mp2.keyboard.press('h'); const hidden = await at(2, 1); ok(!(hidden[2] > hidden[0] + 40), 'H hides it');
+  await mp2.keyboard.press('h'); await mp2.locator('.pf-ref-clear').click(); ok(await mp2.locator('.pf-ref-on').isHidden(), 'remove clears it');
+  // variants
+  await mp2.locator('.pf-variant').click(); await mp2.waitForSelector('.pf-dlg-variant[open]');
+  await mp2.locator('.pf-v-suffix').fill('night'); await mp2.locator('.pf-v-h').evaluate((r) => { r.value = '180'; r.dispatchEvent(new Event('input', { bubbles: true })); });
+  ok(/hero_night_0\.png, hero_night_atk\.png/.test(await mp2.locator('.pf-v-names').innerText()) && (await mp2.locator('.pf-v-preview canvas').count()) === 2, 'Make variant names the whole family\'s copies and previews them');
+  await mp2.locator('.pf-v-go').click(); await mp2.waitForTimeout(400);
+  const vdoc = await mp2.evaluate(() => { const a = document.getElementById('app').__pf; return { path: a.current.path, px: a.current.px[1 * 4 + 1] }; });
+  const vr = vdoc.px & 255, vg = (vdoc.px >>> 8) & 255, vb = (vdoc.px >>> 16) & 255;
+  ok(vdoc.path === 'art/hero_night_0.png' && vr > vg && vb > vg, `the variant opens, hue rotated (green → ${vr},${vg},${vb})`);
+  await mp2.keyboard.press('Control+s'); await mp2.waitForTimeout(300);
+  ok(fs.existsSync(path.join(r4, 'art/hero_night_0.png')), 'Save writes the new variant file');
+  ok((await mp2.locator('.pf-cell', { hasText: 'hero_night' }).count()) === 1, 'and the list shows the new family');
+  // history
+  await mp2.evaluate(() => document.getElementById('app').__pf.open('art/hero_0.png')); await mp2.waitForTimeout(200);
+  await mp2.locator('.pf-hist summary').click(); await mp2.waitForSelector('.pf-hist-e');
+  const ents = await mp2.locator('.pf-hist-e b').allInnerTexts();
+  ok(ents.join() === 'green hero,red hero' && /artist/.test(await mp2.locator('.pf-hist-e small').first().innerText()), 'History lists the sprite\'s commits: ' + ents.join(' | '));
+  await mp2.locator('.pf-hist-e', { hasText: 'red hero' }).click(); await mp2.locator('.pf-hist-restore').click(); await mp2.waitForTimeout(300);
+  ok(JSON.stringify(await at(1, 1)) === JSON.stringify([255, 0, 0]), 'Restore brings back the old version');
+  await mp2.keyboard.press('Control+z'); ok(JSON.stringify(await at(1, 1)) === JSON.stringify([0, 200, 0]), 'and Ctrl+Z undoes the restore');
+  ok(merr.length === 0, 'no page errors ' + merr.join('|'));
+  await mp2.close(); await s4.close();
+}
+
 section('mobile');
 const phone = await browser.newContext({ viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 const mp = await phone.newPage(); const merrors = []; mp.on('pageerror', (e) => merrors.push(e.message));

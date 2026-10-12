@@ -89,6 +89,24 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
 - **Context** (`V`): a strip under the canvas shows the sprite at game scale (1×–4×) on the project background, standing next to up to 8 sprites from the same folder, redrawn live as you draw. Use it to check size, silhouette and contrast the way a player sees them.
 - **Changes** (`C`): dims every pixel you have not touched and outlines the ones that differ from the image as you opened it. Hold `\` (or press and hold the "px changed" note in the status bar) to see the original. The pull request dialog shows each sprite before → after.
 
+## More checks while you draw
+
+- **Vision** (`Y`): see the art by value alone (greyscale), or as players with protanopia, deuteranopia or tritanopia see it. Useful for colour-coded gameplay (enemies, pickups, hazards). A label on the canvas says which view is on.
+- **Reference** panel: an image (concept art, a screenshot) or another sprite from the project, under or over your pixels, 1:1 or fitted, with opacity; `H` shows and hides it. It is never saved.
+- **History** panel (GitHub repositories and the local server): earlier versions of the open sprite from git, with thumbnails; pick one and **Restore** it as an edit you can undo.
+- **Make variant…** (Image panel): a recoloured copy of the sprite and its whole family as new files, e.g. `king_0`, `king_atk` → `king_dark_0`, `king_dark_atk`. Shift hue, saturation and brightness (keeping near-black outlines), or swap colours one by one, with a live preview.
+
+## Art check for pull requests
+
+`spritewright check [dir] [--since <git ref>]` reads every sprite (or only the ones changed since the ref) and reports them in a table. Unreadable or oversized PNGs are errors (exit code 1). These are warnings, which fail the check only with `--strict`:
+
+- colours outside the project palette
+- a sprite whose size changed
+- animation frames of different sizes
+- fully transparent images
+
+`--summary <file>` appends the table to a file, such as GitHub's job summary, and `--json` prints machine-readable results. [`examples/art-check.yml`](examples/art-check.yml) is a ready-made GitHub Actions workflow: copy it into a game repository's `.github/workflows/` and every pull request that touches a PNG gets the table on its check's summary page.
+
 ## Animation tools
 
 For frames stored as numbered files (`walk_0.png`, `walk_1.png`…), the frame strip in the Preview panel has **+ frame** (a copy of the current frame, saved as the next number) and **◀ ▶** (move the current frame earlier or later). **GIF…** exports the animation (a frame family, a sprite sheet's frames, or a single image) as a looping GIF at the scale you choose and the fps set under Preview, to share in chat or a pull request.

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { scan, DEFAULTS, loadConfig } from './scan.mjs';
 
@@ -43,6 +44,21 @@ export function createServer({ root, port = 5173, host = '127.0.0.1', config } =
       }
       if (req.method === 'GET' && p === '/spritewright.js') return send(res, 200, fs.readFileSync(path.join(pkgDir, 'spritewright.js')), MIME['.js']);
       if (req.method === 'GET' && p === '/api/manifest') return send(res, 200, JSON.stringify(scan(root, config)), MIME['.json']);
+      // a sprite's git history (read-only): the last commits that touched it, and the file as it was in one of them
+      if (req.method === 'GET' && (p === '/api/history' || p === '/api/file-at')) {
+        const rel = url.searchParams.get('path') || '', abs = safeResolve(root, rel, ignore);
+        if (!abs || path.extname(abs).toLowerCase() !== '.png') return send(res, 400, 'Bad path');
+        const git = (args) => execFileSync('git', ['-C', root, ...args], { maxBuffer: 32 << 20, stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000 });
+        if (p === '/api/history') {
+          let out = '';
+          try { out = git(['log', '-n', '30', '--format=%H%x1f%aI%x1f%an%x1f%s', '--', rel]).toString(); } catch { return send(res, 200, '[]', MIME['.json']); } // not a git repository
+          const list = out.split('\n').filter(Boolean).map((l) => { const [sha, date, author, message] = l.split('\x1f'); return { sha, date, author, message }; });
+          return send(res, 200, JSON.stringify(list), MIME['.json']);
+        }
+        const sha = url.searchParams.get('sha') || '';
+        if (!/^[0-9a-f]{7,40}$/.test(sha)) return send(res, 400, 'Bad commit');
+        try { return send(res, 200, git(['show', `${sha}:./${rel}`]), MIME['.png']); } catch { return send(res, 404, 'Not in that commit'); }
+      }
       if (p.startsWith('/project/')) {
         const abs = safeResolve(root, p.slice('/project/'.length), ignore);
         if (!abs) return send(res, 400, 'Bad path');
