@@ -194,12 +194,22 @@ section('more tools: brush size, dither, ellipse, shading, selection, tile, outl
 }
 
 section('clean lines, palette and recolouring');
-await page.locator('.pf-pp').click(); await page.locator('.pf-pp').click(); // on
 await page.keyboard.press('b');
+const strokeThrough = async (pts) => { const p0 = await cellPos(...pts[0]); await page.mouse.move(p0.x, p0.y); await page.mouse.down(); for (const q of pts.slice(1)) { const pq = await cellPos(...q); await page.mouse.move(pq.x, pq.y, { steps: 6 }); } await page.mouse.up(); };
+ok(!(await page.locator('.pf-pp').evaluate((b) => b.classList.contains('on'))), 'clean lines starts off');
+{ await strokeThrough([[1, 12], [5, 12], [5, 13], [1, 13]]); s = await pf();
+  const holes = [1, 2, 3, 4, 5].flatMap((x) => [12, 13].filter((y) => s.px[y * 16 + x] !== RED).map((y) => x + ',' + y));
+  ok(holes.length === 0, 'with clean lines off, dragging back and forth fills an area with no gaps at the turns' + (holes.length ? ' (holes at ' + holes.join(' ') + ')' : ''));
+  await page.keyboard.press('Control+z'); }
+await page.locator('.pf-pp').click(); // on
+{ await strokeThrough([[1, 12], [5, 12], [2, 12], [2, 13]]); s = await pf();
+  ok([1, 2, 3, 4, 5].every((x) => s.px[12 * 16 + x] === RED), 'with clean lines on, going back over your own stroke never erases what it drew');
+  await page.keyboard.press('Control+z'); }
 const a = await cellPos(1, 12), b2 = await cellPos(2, 12), c2 = await cellPos(2, 13);
 await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b2.x, b2.y, { steps: 3 }); await page.mouse.move(c2.x, c2.y, { steps: 3 }); await page.mouse.up();
 s = await pf(); ok(s.px[12 * 16 + 1] === RED && s.px[13 * 16 + 2] === RED && s.px[12 * 16 + 2] === 0, 'pixel-perfect mode drops the corner pixel of an L-shaped stroke');
 await page.keyboard.press('Control+z');
+await page.locator('.pf-pp').click(); ok(await page.evaluate(() => localStorage.getItem('pf:cleanlines')) === '0', 'the clean-lines choice is remembered');
 await setHex('#abcdef'); const before = await pf(); const undoDepth = await page.evaluate(() => document.getElementById('app').__pf.current.undo.length);
 await page.locator('.pf-recolor-in').evaluate((el) => { el.value = '#0000ff'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
 s = await pf(); ok(JSON.stringify(s.px) === JSON.stringify(before.px) && (await page.evaluate(() => document.getElementById('app').__pf.current.undo.length)) === undoDepth, 'Recolour all with a colour that is not in the image changes nothing and adds no undo step');
@@ -607,6 +617,9 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.goto(b2 + '?auth=off'); await fp.waitForSelector('.pf-item');
   const dirs = await fp.locator('.pf-dir .pf-dirname').allInnerTexts();
   ok(dirs.join() === 'chars,tiles', 'the list is grouped by folder, and docs/previews is left out by default: ' + dirs.join(','));
+  { const t = fp.locator('.pf-hidden-toggle'); ok(/Show 1 image from docs/.test(await t.innerText()), 'the list says what the default left out: ' + await t.innerText());
+    await t.click(); ok((await fp.locator('.pf-dir .pf-dirname').allInnerTexts()).includes('docs/previews') && /Hide 1 image/.test(await fp.locator('.pf-hidden-toggle').innerText()), 'one click shows them as a normal folder');
+    await fp.locator('.pf-hidden-toggle').click(); ok(!(await fp.locator('.pf-dir .pf-dirname').allInnerTexts()).includes('docs/previews'), 'and one click hides them again'); }
   const cells = await fp.locator('.pf-cell .n').allInnerTexts();
   ok(cells.map((t) => t.split('\n')[0]).join() === 'bat.png,hero,floor', 'one tile per family (hero_0..2 + hero_atk → "hero", floor + floor_moss → "floor"): ' + cells.map((t) => t.split('\n')[0]).join(','));
   ok((await fp.locator('.pf-cell', { hasText: 'hero' }).locator('.pf-badge.anim').innerText()) === '▶4' && (await fp.locator('.pf-cell', { hasText: 'floor' }).locator('.pf-badge').innerText()) === '2', 'badges: ▶ for animations, a count for variant families');

@@ -66,7 +66,7 @@ export function scan(root, userConfig) {
   const ignore = new Set(cfg.ignore);
   const dirs = cfg.dirs && cfg.dirs.length ? cfg.dirs : ['.'];
   const exclude = (cfg.exclude || []).map(globToRegExp);
-  const sprites = [];
+  const sprites = [], hidden = [];
   const walk = (abs) => {
     if (sprites.length >= cfg.maxFiles) return;
     let entries;
@@ -79,10 +79,11 @@ export function scan(root, userConfig) {
       if (!e.isFile() || !/\.png$/i.test(e.name)) continue;
       const rel = path.relative(root, p).split(path.sep).join('/');
       if (exclude.some((r) => r.test(rel))) continue;
-      if (smart && rel.split('/').slice(0, -1).some((seg) => NON_ART.test(seg))) continue;
+      const off = smart && rel.split('/').slice(0, -1).some((seg) => NON_ART.test(seg));
       const size = readPngSize(p);
       if (!size || size.w > cfg.maxSize || size.h > cfg.maxSize || size.w < 1 || size.h < 1) continue;
       const s = { path: rel, w: size.w, h: size.h, bytes: fs.statSync(p).size };
+      if (off) { hidden.push(s); continue; } // listed separately, so the editor can offer to show them
       const fr = cfg.frames && (cfg.frames[rel] || Object.entries(cfg.frames).find(([k]) => k.includes('*') && globToRegExp(k).test(rel))?.[1]);
       if (fr) s.frames = fr;
       sprites.push(s);
@@ -94,7 +95,7 @@ export function scan(root, userConfig) {
     try { palette = fs.readFileSync(path.resolve(root, cfg.palette), 'utf8').split(/[\s,;]+/).map((t) => /^#?[0-9a-f]{6}$/i.test(t) ? '#' + t.replace('#', '').toLowerCase() : null).filter(Boolean); } catch { /* missing palette file: ignore */ }
   }
   const git = gitInfo(root);
-  return { version: 1, generated: new Date().toISOString(), repo: { slug: cfg.repo?.slug || git.slug, base: cfg.repo?.base || null, prefix: cfg.repo?.prefix ?? git.prefix }, palette, sprites };
+  return { version: 1, generated: new Date().toISOString(), repo: { slug: cfg.repo?.slug || git.slug, base: cfg.repo?.base || null, prefix: cfg.repo?.prefix ?? git.prefix }, palette, sprites, hidden };
 }
 
 const NON_ART = /^(docs?|documentation|screenshots?|previews?|tests?|e2e|coverage|examples?|samples?|marketing|promo|store)$/i;

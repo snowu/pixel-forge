@@ -335,6 +335,29 @@ test('PR: if previews fail altogether the PR still opens, with plain links', asy
   assert.deepEqual(gh.calls.filter((c) => c.method === 'POST' && c.p.endsWith('/commits')).map((c) => c.body.parents), [['base123']]);
 });
 
+test('githubSource: public repositories read files from the raw CDN at the listed commit; private ones and failures use the API; hidden files are reported', async () => {
+  const mk = (isPrivate, rawOk = true) => { const calls = []; const fetch = async (url) => { calls.push(String(url)); const u = new URL(url);
+      const json = (o) => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(o) });
+      if (u.host === 'raw.example') return rawOk ? { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([7, 7]).buffer } : { ok: false, status: 404 };
+      if (u.pathname === '/repos/me/g') return json({ default_branch: 'main', private: isPrivate });
+      if (u.pathname === '/repos/me/g/git/ref/heads/main') return json({ object: { sha: 'c9' } });
+      if (u.pathname === '/repos/me/g/git/commits/c9') return json({ tree: { sha: 't9' } });
+      if (u.pathname === '/repos/me/g/git/trees/t9') return json({ tree: [{ path: 'art/a b.png', type: 'blob', sha: 's1', size: 10 }, { path: 'docs/screenshots/x.png', type: 'blob', sha: 's2', size: 10 }] });
+      if (u.pathname === '/repos/me/g/git/blobs/s1') return json({ encoding: 'base64', content: Buffer.from([1, 2]).toString('base64') });
+      return { ok: false, status: 404, headers: { get: () => null }, text: async () => '{}' }; }; return { fetch, calls }; };
+  const pub = mk(false), src = await PF.sources.githubSource({ repo: 'me/g', fetch: pub.fetch, rawBase: 'https://raw.example' });
+  assert.equal(src.thumbs, true, 'thumbnails are on for GitHub repositories');
+  assert.deepEqual(src.sprites.map((x) => x.path), ['art/a b.png']); assert.deepEqual(src.hidden.map((x) => x.path), ['docs/screenshots/x.png'], 'screenshots are left out by default but reported');
+  assert.deepEqual([...await src.read('art/a b.png')], [7, 7]); assert.ok(pub.calls.includes('https://raw.example/me/g/c9/art/a%20b.png'), 'the raw URL is pinned to the commit and encoded');
+  assert.ok(!pub.calls.some((c) => c.includes('/git/blobs/')), 'no API call for the file');
+  const priv = mk(true), ps = await PF.sources.githubSource({ repo: 'me/g', fetch: priv.fetch, rawBase: 'https://raw.example' });
+  assert.deepEqual([...await ps.read('art/a b.png')], [1, 2]); assert.ok(!priv.calls.some((c) => c.includes('raw.example')), 'private repositories never use the CDN');
+  const down = mk(false, false), ds = await PF.sources.githubSource({ repo: 'me/g', fetch: down.fetch, rawBase: 'https://raw.example' });
+  assert.deepEqual([...await ds.read('art/a b.png')], [1, 2], 'a CDN failure falls back to the API');
+  const ghe = mk(false), gs = await PF.sources.githubSource({ repo: 'me/g', fetch: ghe.fetch, apiBase: 'https://api.example' });
+  await gs.read('art/a b.png').catch(() => {}); assert.ok(!ghe.calls.some((c) => c.includes('raw')), 'a custom apiBase (GitHub Enterprise) does not guess a CDN');
+});
+
 /* ---------- lossless PNG codec ---------- */
 const rgbaOf = (r) => [...new Uint8Array(r.px.buffer)];
 test('codec: RGBA round trip is exact, including semi-transparent pixels (a game may use an alpha value such as 250 as a marker)', async () => {
@@ -455,6 +478,7 @@ test('scan with no config leaves out docs, screenshots and previews folders; ini
   const root = tmp(); for (const d of ['art', 'docs/previews', 'game/screenshots']) fs.mkdirSync(path.join(root, d), { recursive: true });
   for (const f of ['art/a.png', 'docs/previews/p.png', 'game/screenshots/s.png']) fs.writeFileSync(path.join(root, f), SLIME.png);
   assert.deepEqual(scan(root).sprites.map((x) => x.path), ['art/a.png']);
+  assert.deepEqual(scan(root).hidden.map((x) => x.path), ['docs/previews/p.png', 'game/screenshots/s.png'], 'and reports what it left out, so the editor can offer to show it');
   assert.equal(scan(root, { dirs: [] }).sprites.length, 3, 'init scans with dirs: [] and sees all of them');
   fs.writeFileSync(path.join(root, 'spritewright.config.json'), JSON.stringify({ keepDocs: true }));
   assert.equal(scan(root).sprites.length, 3, 'keepDocs: true lists them');
