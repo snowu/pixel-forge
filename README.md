@@ -107,7 +107,7 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
 
 ## Reviewing your work
 
-- **Context** (`V`): a strip under the canvas shows the sprite at game scale (1×–4×) on the project background, standing next to up to 8 sprites from the same folder, redrawn live as you draw. Use it to check size, silhouette and contrast the way a player sees them.
+- **Context** (`V`): a strip under the canvas shows the sprite at game scale (1×–4×), standing next to up to 8 other sprites, redrawn live as you draw. Use it to check size, silhouette and contrast the way a player sees them. With `groups` in the project config, the neighbours are the sprites it is actually seen with (the enemies of the same floor, the other blades and the blade held in first person…), on the group's background; the picker in the strip switches between the groups that hold the sprite (or its family) and **Same folder**. Without groups, it shows sprites from the same folder, nearest by name.
 - **Changes** (`C`): dims every pixel you have not touched and outlines the ones that differ from the image as you opened it. Hold `\` (or press and hold the "px changed" note in the status bar) to see the original. The pull request dialog shows each sprite before → after.
 
 ## More checks while you draw
@@ -149,6 +149,8 @@ The **Background** button above the canvas (or `K`) chooses what shows behind tr
   "palette": "art/palette.hex",
   "background": "#1a1426",
   "frames": { "public/art/player_walk.png": { "w": 32, "h": 32, "fps": 10 }, "public/art/enemies/*.png": { "w": 32, "h": 32 } },
+  "groups": "art/groups.json",
+  "alpha": { "clear": 15, "solid": 245, "keep": [250] },
   "repo": { "slug": "me/my-game", "base": "main", "prefix": "" }
 }
 ```
@@ -156,6 +158,8 @@ The **Background** button above the canvas (or `K`) chooses what shows behind tr
 - `palette` is a `.hex` file (one `rrggbb` per line, the [Lospec](https://lospec.com/palette-list) format): the editor shows it, warns about off-palette colours and can snap an image to it.
 - `background` is the colour the game draws behind this art. The editor offers it as **Project background** (and uses it by default) so you judge readability against what players see.
 - `frames` gives the frame size of sprite sheets for the animation preview (a wide image whose width is a multiple of its height is otherwise treated as a strip of square frames).
+- `groups` names the sets of sprites seen together in the game, for **Context**: a JSON file (or the object inline) of `{ "Crypt enemies": { "background": "#040308", "sprites": ["public/art/enemies/rat_0.png", …] }, "Blades": ["…", …] }`. A sprite can be in several groups; Context opens on the first. Generate it from the game's data so it stays current (looting-simulator's `npm run art:sync` does).
+- `alpha` is the project's alpha rule. When a sprite is saved, downloaded or proposed in a pull request, stray values a soft brush or another program leaves behind are snapped: `1`–`clear` to fully clear, `solid`–`254` to fully solid, except the values in `keep` (say `250`, if the game reads it as "glows"); a near miss of a kept value stays kept where the original image had it. It is an ordinary edit, so undo brings the old values back.
 - `repo` is detected from `.git/config` and the folder's position in the repository, so you rarely need it. `maxSize` limits sprite dimensions (default 1024); GitHub mode also skips files over 256 KB (`maxBytes`).
 
 Static hosting with a manifest, if you prefer it to the GitHub mode: `spritewright scan . -o pixel-art.json`, publish it next to the page, and open `index.html?manifest=pixel-art.json&base=../&repo=owner/name`.
