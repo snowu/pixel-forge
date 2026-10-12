@@ -697,7 +697,7 @@
     };
     return { kind: 'github', thumbs: true, history, readAt, sprites, hidden, palette, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Edits are kept in this browser; Propose PR sends them back.',
-      repo: { slug: o.repo, base: branch, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
+      repo: { slug: o.repo, base: branch, defaultBranch: info.default_branch || null, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
 
   /** A folder on disk through the File System Access API (Chromium browsers): lists, reads and saves in place. */
@@ -836,6 +836,9 @@
 .pf-commit-list input{flex:none}
 .pf-commit-list .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-commit-list small{color:var(--pf-muted)}
+.pf-branchrow{display:flex;gap:6px}
+.pf-branchrow select{flex:1;min-width:0}
+.pf-branchrow input{flex:1;min-width:0}
 .pf-commit .pf-row{margin-top:8px}
 .pf-commit-note{margin-top:6px}
 .pf-commit-note:empty{display:none}
@@ -1090,10 +1093,10 @@
       <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button>
         <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><div class="pf-side-head"><h4>Sprites</h4><span class="pf-foldmini"><button type="button" class="pf-fold-all" title="Fold every folder">▸ all</button><button type="button" class="pf-unfold-all" title="Unfold every folder">▾ all</button></span></div><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
-        <details class="pf-commit" open hidden><summary><h4>Changes <span class="pf-commit-n"></span></h4></summary>
+        <details class="pf-commit" hidden><summary><h4>Changes <span class="pf-commit-n"></span></h4></summary>
           <div class="pf-commit-list"></div>
           <label>Message <input type="text" class="pf-commit-msg" placeholder="What changed" aria-label="Commit message"></label>
-          <label>Branch <input type="text" class="pf-commit-branch" list="pf-branchlist" placeholder="art/…" autocomplete="off" aria-label="Branch: an existing one, or a new name"><datalist id="pf-branchlist"></datalist></label>
+          <label>Branch <span class="pf-branchrow"><select class="pf-commit-branches" aria-label="Branch: pick one, or create a new one"></select><input type="text" class="pf-commit-branch" placeholder="new-branch-name" autocomplete="off" aria-label="New branch name" hidden></span></label>
           <div class="pf-row"><button type="button" class="pf-commit-go primary">Commit</button></div>
           <div class="pf-note pf-commit-note" aria-live="polite"></div></details>
         <div class="pf-row"><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
@@ -1366,6 +1369,12 @@
       if (!src || src.kind !== 'github' || branch === src.branch) return;
       try {
         await useSource(await githubSource({ repo: src.repo.slug, branch, token: await commitToken(), apiBase: O.apiBase }));
+        // The panel follows: it commits to the branch now open, and anything remembered
+        // about the old one (its pull request, its last push) stays behind with it.
+        S.work = { branch, base: S.meta.repo.defaultBranch || null, headRepo: null, headOwner: null, pr: null };
+        S.lastPush = null;
+        saveWork();
+        setCommitBranch(branch);
       } catch (e) { note(e.message); }
     }
     async function openBranchMenu() {
@@ -2054,13 +2063,30 @@
        an existing one, or a new name that is created on push. The pull request for the branch is
        opened separately, when the work is ready — the panel offers it whenever the branch has none
        open, so chunks accumulate first and one pull request carries them all. */
-    let commitSig = null, branchesFor = null; // what the panel last rendered; which project the branch lists are for
+    let commitSig = null, branchesFor = null, commitBranchWant = ''; // what the panel last rendered; which project the branch lists are for; the branch the panel should target
     const workKey = () => 'pf:work:' + ((S.meta.repo && S.meta.repo.slug) || '');
     function saveWork() { try { if (S.work && S.work.branch) localStorage.setItem(workKey(), JSON.stringify(S.work)); else localStorage.removeItem(workKey()); } catch { /* the work still pushes, only the shortcut is not remembered */ } }
     function loadWork() {
       S.work = null; S.lastPush = null; S.commitSel = null; commitSig = null; branchesFor = null;
       try { const w = JSON.parse(localStorage.getItem(workKey()) || 'null'); if (w && w.branch) S.work = w; } catch { /* start without a remembered branch */ }
-      if (S.work && S.work.branch) $('.pf-commit-branch').value = S.work.branch;
+      commitBranchWant = (S.work && S.work.branch) || '';
+      setCommitBranch(commitBranchWant);
+    }
+    /** The branch the next commit goes to: the picked one, or the typed new name. */
+    function commitBranch() {
+      const sel = $('.pf-commit-branches');
+      if (sel && sel.value) return sel.value;
+      const typed = $('.pf-commit-branch').value.trim();
+      return typed || commitBranchWant || '';
+    }
+    /** Point the panel at a branch: pick it when listed, otherwise offer it as the new name. */
+    function setCommitBranch(name) {
+      const sel = $('.pf-commit-branches'), input = $('.pf-commit-branch');
+      commitBranchWant = name || '';
+      if (!sel || !input) return;
+      const has = !!name && [...sel.options].some((o) => o.value === name);
+      if (has) { sel.value = name; input.hidden = true; }
+      else { sel.value = ''; input.hidden = false; if (name) input.value = name; }
     }
     const commitToken = async () => (S.auth.token ? authToken().catch(() => '') : storedToken());
     function renderCommit() {
@@ -2077,11 +2103,17 @@
       $('.pf-commit-list').innerHTML = changed.length ? changed.map((d) => `<label title="${esc(d.path)}"><input type="checkbox" data-path="${esc(d.path)}"${!S.commitSel || S.commitSel.has(d.path) ? ' checked' : ''}><span class="n">${esc(d.path)}<br><small>${d.w}×${d.h} · ${d.changedPixels()} px changed</small></span></label>`).join('')
         : '<div class="pf-note">No changes. Draw something first.</div>';
     }
-    /** Branch names for the panel and connect datalists, fetched once per project. Quiet when signed out or offline. */
+    /** Branch names for the panel picker and the connect datalist, fetched once per project. Quiet when signed out or offline. */
     async function fillBranches() {
       if (branchesFor === S.src) return; branchesFor = S.src;
       const gh = S.meta.repo || {}, token = await commitToken();
-      for (const id of ['#pf-branchlist', '#pf-c-branchlist']) { const dl = $(id); if (dl && gh.slug && token) { try { dl.innerHTML = (await listBranches({ token, repo: gh.slug, apiBase: O.apiBase })).map((b) => `<option value="${esc(b)}">`).join(''); } catch { branchesFor = null; } } }
+      let names = [];
+      if (gh.slug && token) { try { names = await listBranches({ token, repo: gh.slug, apiBase: O.apiBase }); } catch { branchesFor = null; } }
+      const sel = $('.pf-commit-branches');
+      if (sel) sel.innerHTML = names.map((b) => `<option value="${esc(b)}">⎇ ${esc(b)}</option>`).join('') + '<option value="">＋ New branch…</option>';
+      const dl = $('#pf-c-branchlist');
+      if (dl && gh.slug && token && names.length) dl.innerHTML = names.map((b) => `<option value="${esc(b)}">`).join('');
+      if (commitBranchWant) setCommitBranch(commitBranchWant);
     }
     async function submitCommit() {
       commitFloat();
@@ -2093,13 +2125,15 @@
       if (!token) { note.textContent = 'Sign in at the top of this panel, or open Propose PR once to add a token, then Commit again.'; return; }
       const gh = S.meta.repo || {};
       const message = $('.pf-commit-msg').value.trim() || (sel.length === 1 ? 'Update ' + sel[0].path.split('/').pop() : 'Update ' + sel.length + ' sprites');
-      const branch = $('.pf-commit-branch').value.trim() || (S.work && S.work.branch) || ('art/' + slug(message) + '-' + Date.now().toString(36));
+      const branch = commitBranch() || (S.work && S.work.branch) || ('art/' + slug(message) + '-' + Date.now().toString(36));
       go.disabled = true; note.textContent = '';
       try {
         const { files } = await filesAndPreviews(sel);
         const res = await pushSprites({ token, repo: gh.slug, base: gh.base || undefined, branch, prefix: gh.prefix || '', files: files.map((f) => ({ path: f.path, blob: f.blob })), message, apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
         markPushed(sel);
-        S.commitSel = null; commitSig = null; $('.pf-commit-msg').value = ''; $('.pf-commit-branch').value = res.branch;
+        S.commitSel = null; commitSig = null; $('.pf-commit-msg').value = '';
+        if (![...$('.pf-commit-branches').options].some((o) => o.value === res.branch)) $('.pf-commit-branches').insertAdjacentHTML('afterbegin', `<option value="${esc(res.branch)}">⎇ ${esc(res.branch)}</option>`);
+        setCommitBranch(res.branch);
         const meta = files.map((f) => ({ path: f.path, w: f.w, h: f.h, pixels: f.pixels, scale: f.scale, baseW: f.baseW, isNew: f.isNew }));
         const prev = S.lastPush && S.lastPush.branch === res.branch ? S.lastPush : null;
         S.lastPush = { branch: res.branch, message, files: (prev ? prev.files : []).filter((m) => !meta.some((x) => x.path === m.path)).concat(meta), baseSha: res.baseSha || (prev && prev.baseSha) || null, commit: res.commit };
@@ -2119,7 +2153,7 @@
     async function submitOpenPr() {
       const btn = $('.pf-commit-openpr'), note = $('.pf-commit-note');
       const work = S.work || {}, lp = S.lastPush || {};
-      const branch = work.branch || lp.branch || $('.pf-commit-branch').value.trim();
+      const branch = work.branch || lp.branch || commitBranch();
       if (!branch) { note.textContent = 'Commit something first.'; return; }
       const token = await commitToken();
       if (!token) { note.textContent = 'Sign in at the top of this panel, or open Propose PR once to add a token, then try again.'; return; }
@@ -2152,7 +2186,13 @@
     root.addEventListener('contextmenu', (e) => { const t = e.target.closest('.pf-sw button[data-c]'); if (t) { e.preventDefault(); setColor2(+t.dataset.c); } });
     $('.pf-q').oninput = renderList;
     $('.pf-commit-go').onclick = submitCommit;
-    $('.pf-commit-branch').addEventListener('focus', fillBranches);
+    $('.pf-commit').addEventListener('toggle', () => { if ($('.pf-commit').open) fillBranches(); });
+    $('.pf-commit-branches').addEventListener('focus', fillBranches);
+    $('.pf-commit-branches').addEventListener('change', () => {
+      const sel = $('.pf-commit-branches'), input = $('.pf-commit-branch');
+      input.hidden = sel.value !== '';
+      if (sel.value) commitBranchWant = sel.value;
+    });
     root.addEventListener('change', (e) => {
       const c = e.target.closest('.pf-commit-list input[type=checkbox]'); if (!c) return;
       if (!S.commitSel) S.commitSel = new Set([...S.docs.values()].filter((d) => d.changed).map((d) => d.path));

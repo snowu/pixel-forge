@@ -381,10 +381,14 @@ await setHex('#00ff00'); await click(3, 3);
 await page.locator('.pf-item', { hasText: 'gem.png' }).click();
 await page.waitForFunction(() => document.getElementById('app').__pf.current.path.endsWith('gem.png'));
 await click(4, 4);
+await page.locator('.pf-commit > summary').click(); // the panel rests collapsed
 await page.waitForFunction(() => document.querySelectorAll('.pf-commit-list input[type=checkbox]').length === 2);
 ok((await page.locator('.pf-commit-list input[type=checkbox]').count()) === 2, 'the commit panel lists both changed sprites');
 await page.locator('.pf-commit-list input[type=checkbox]').first().uncheck();
 await page.locator('.pf-commit-msg').fill('chunk one');
+await page.waitForFunction(() => document.querySelectorAll('.pf-commit-branches option').length >= 2);
+ok((await page.locator('.pf-commit-branches option').allInnerTexts()).join().includes('art/wip'), 'the branch picker lists the repository branches');
+await page.locator('.pf-commit-branches').selectOption('');
 await page.locator('.pf-commit-branch').fill('art/chunks');
 const at = calls.length;
 await page.locator('.pf-commit-go').click();
@@ -407,8 +411,7 @@ const noteHtml = await page.locator('.pf-commit-note').innerHTML();
 ok(afterCount === pullsBefore, 'the second chunk opens no new pull request');
 ok(/pull\/4/.test(noteHtml), 'it joins pull request #4');
 ok(calls.some((c) => c.m === 'PATCH' && /art\/chunks$/.test(c.p)), 'appending to the branch updates its ref');
-await page.locator('.pf-commit-branch').click();
-ok(await until(async () => (await page.locator('#pf-branchlist option').count()) >= 2), 'the branch picker lists the repository branches');
+ok((await page.locator('.pf-commit-branches').inputValue()) === 'art/chunks', 'the picker stays on the branch the chunks go to');
 
 section('standalone: hosted page + GitHub repository (no server, no manifest)');
 {
