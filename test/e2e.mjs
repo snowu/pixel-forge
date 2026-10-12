@@ -401,6 +401,7 @@ await page.locator('.pf-commit-msg').fill('chunk two');
 const pullsBefore = calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length;
 await page.locator('.pf-commit-go').click();
 try { await page.waitForFunction(() => /added to|pull request/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   chunk-two note:', JSON.stringify(await page.locator('.pf-commit-note').innerText())); }
+console.log('   chunk-two state:', JSON.stringify(await page.locator('.pf-commit-note').innerText()), 'pulls POSTs:', calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length, 'api:', calls.filter((c) => /pulls|git\/ref/.test(c.p)).map((c) => c.m + ' ' + c.p).join(' | '));
 ok(calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length === pullsBefore && /pull\/4/.test(await page.locator('.pf-commit-note').innerHTML), 'the second chunk joins pull request #4 instead of opening a new one');
 ok(calls.some((c) => c.m === 'PATCH' && /art\/chunks$/.test(c.p)), 'appending to the branch updates its ref');
 await page.locator('.pf-commit-branch').click();
