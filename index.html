@@ -28,12 +28,14 @@
   // Query options:  ?repo=owner/name[&branch=main]       open that GitHub repository straight away
   //                 ?manifest=pixel-art.json&base=../      a generated manifest (see `spritewright scan`); add &repo=owner/name for pull requests
   //                 &accent=%23b98cff                      theme colour
+  //                 &bg=1a1426                             the game's background colour (offered as "Project background")
   const q = new URLSearchParams(location.search);
   const opts = {};
   if (q.get('manifest')) opts.manifestUrl = q.get('manifest');
   if (q.get('base') != null) opts.baseUrl = q.get('base');
   if (q.get('repo')) { opts.github = { slug: q.get('repo') }; if (q.get('branch')) opts.github.base = q.get('branch'); if (q.get('prefix')) opts.github.prefix = q.get('prefix'); if (!q.get('manifest')) opts.connect = 'github'; }
   if (q.get('accent')) opts.accent = q.get('accent');
+  if (/^#?[0-9a-f]{6}$/i.test(q.get('bg') || '')) opts.background = '#' + q.get('bg').replace('#', ''); // ?bg=1a1426: the game's background, offered as "Project background"
   // Sign in with GitHub needs the small auth service in worker/. Point at yours with ?auth=https://your-worker.example or set the default below.
   const DEFAULT_AUTH_BASE = 'https://spritewright-auth.zancato-t.workers.dev';
   const authQ = q.get('auth'), auth = authQ === 'off' ? '' : authQ || DEFAULT_AUTH_BASE; if (auth) opts.authBase = auth; // ?auth=off: token-only mode

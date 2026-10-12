@@ -661,6 +661,41 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.close(); await s2.close();
 }
 
+section('background behind transparent pixels');
+{
+  const r3 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-bg-'));
+  fs.mkdirSync(path.join(r3, 'art'));
+  fs.writeFileSync(path.join(r3, 'art/dot.png'), fromRows(['....', '.r..', '....', '....'], { r: [255, 0, 0] }).png);
+  fs.writeFileSync(path.join(r3, 'spritewright.config.json'), JSON.stringify({ background: '#20304a' }));
+  const s3 = createServer({ root: r3, port: 0 }), b3 = await s3.listen();
+  const bp = await ctx.newPage(); const berr = []; bp.on('pageerror', (e) => berr.push(e.message));
+  await bp.goto(b3 + '?auth=off'); await bp.evaluate(() => localStorage.removeItem('pf:bg')); await bp.reload(); await bp.waitForSelector('.pf-item'); await bp.waitForTimeout(300);
+  const cellRGB = (x, y) => bp.evaluate(([x, y]) => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), d = c.getContext('2d').getImageData(Math.round(S.ox + (x + 0.5) * S.zoom), Math.round(S.oy + (y + 0.5) * S.zoom), 1, 1).data; return '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join(''); }, [x, y]);
+  ok((await cellRGB(3, 3)) === '#20304a', 'a project background from spritewright.config.json is used by default: ' + await cellRGB(3, 3));
+  ok((await cellRGB(1, 1)) === '#ff0000', 'the art draws on top of it');
+  await bp.locator('.pf-bg').click();
+  const items = await bp.locator('.pf-bgmenu [data-bg]').allInnerTexts();
+  ok(items.length === 6 && /Project background\s+#20304a/.test(items[0]) && (await bp.locator('.pf-bgmenu [data-bg].on').getAttribute('data-bg')) === 'project', 'the Background menu lists project, dark/light checker, black, white, custom, and marks the current one');
+  await bp.locator('.pf-bgmenu [data-bg=light]').click();
+  ok(!(await bp.locator('.pf-bgmenu').count()) && ['#d6d6de', '#f2f2f6'].includes(await cellRGB(3, 3)), 'picking Light checker closes the menu and lightens the transparent area: ' + await cellRGB(3, 3));
+  ok((await bp.evaluate(() => getComputedStyle(document.querySelector('.pf')).getPropertyValue('--pf-ck1').trim())) === '#d6d6de', 'list thumbnails, frame strip and previews follow (shared CSS variables)');
+  await bp.keyboard.press('k'); ok((await cellRGB(3, 3)) === '#000000', 'K cycles to the next background (black)');
+  await bp.locator('.pf-bg').click(); await bp.locator('.pf-bgcustom').evaluate((i) => { i.value = '#336699'; i.dispatchEvent(new Event('input', { bubbles: true })); });
+  ok((await cellRGB(3, 3)) === '#336699', 'a custom colour applies as you pick it');
+  await bp.keyboard.press('Escape'); ok(!(await bp.locator('.pf-bgmenu').count()), 'Escape closes the menu');
+  await bp.reload(); await bp.waitForSelector('.pf-item'); await bp.waitForTimeout(300);
+  ok((await cellRGB(3, 3)) === '#336699', 'the choice is remembered after a reload');
+  await bp.locator('.pf-bg').click(); await bp.mouse.click(5, 300); ok(!(await bp.locator('.pf-bgmenu').count()), 'clicking elsewhere closes the menu');
+  await bp.evaluate(() => localStorage.setItem('pf:bg', JSON.stringify({ mode: 'project' })));
+  await bp.goto(base + '?auth=off'); await bp.waitForSelector('.pf-item'); await bp.waitForTimeout(300);
+  await bp.locator('.pf-bg').click();
+  ok((await bp.locator('.pf-bgmenu [data-bg]').count()) === 5 && (await bp.locator('.pf-bgmenu [data-bg].on').getAttribute('data-bg')) === 'dark', 'a project without a background has no Project entry and falls back to the dark checker');
+  await bp.keyboard.press('Escape');
+  await bp.evaluate(() => localStorage.removeItem('pf:bg'));
+  ok(berr.length === 0, 'no page errors ' + berr.join('|'));
+  await bp.close(); await s3.close();
+}
+
 section('mobile');
 const phone = await browser.newContext({ viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 const mp = await phone.newPage(); const merrors = []; mp.on('pageerror', (e) => merrors.push(e.message));

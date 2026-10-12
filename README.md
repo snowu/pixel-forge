@@ -84,6 +84,10 @@ When the open sprite belongs to a family, the Preview panel shows a strip of all
 
 Typing in the filter switches to a flat list of matching files. Without a `spritewright.config.json`, folders named `docs`, `screenshots`, `previews`, `tests` and similar are left out, because they are rarely game art; set `"keepDocs": true` to list them.
 
+## Background
+
+The **Background** button above the canvas (or `K`) chooses what shows behind transparent pixels: the project's background, a dark or light checkerboard, black, white or a custom colour. Dark details disappear on a dark background and pale ones on a light one, so switch when something is hard to read. The choice is remembered, and the list thumbnails, frame strip and previews follow it.
+
 ## Project config (optional)
 
 `spritewright.config.json` in the project root. The local server, the folder mode and the GitHub mode all read it.
@@ -95,12 +99,14 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
   "exclude": ["public/screenshots/**"],
   "maxSize": 512,
   "palette": "art/palette.hex",
+  "background": "#1a1426",
   "frames": { "public/art/player_walk.png": { "w": 32, "h": 32, "fps": 10 }, "public/art/enemies/*.png": { "w": 32, "h": 32 } },
   "repo": { "slug": "me/my-game", "base": "main", "prefix": "" }
 }
 ```
 
 - `palette` is a `.hex` file (one `rrggbb` per line, the [Lospec](https://lospec.com/palette-list) format): the editor shows it, warns about off-palette colours and can snap an image to it.
+- `background` is the colour the game draws behind this art. The editor offers it as **Project background** (and uses it by default) so you judge readability against what players see.
 - `frames` gives the frame size of sprite sheets for the animation preview (a wide image whose width is a multiple of its height is otherwise treated as a strip of square frames).
 - `repo` is detected from `.git/config` and the folder's position in the repository, so you rarely need it. `maxSize` limits sprite dimensions (default 1024); GitHub mode also skips files over 256 KB (`maxBytes`).
 

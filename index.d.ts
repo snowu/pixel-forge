@@ -11,6 +11,8 @@ export interface Source {
   thumbs: boolean;
   repo?: RepoInfo | null;
   palette?: string[] | null;
+  /** The project's background colour from its config, if any. */
+  background?: string | null;
   read(path: string): Promise<Uint8Array>;
   write?(path: string, bytes: Uint8Array): Promise<void>;
 }
@@ -42,6 +44,8 @@ export interface MountOptions {
   authBase?: string;
   /** Slug of the GitHub App used for sign-in; when set, the repository list links to installing it on more repositories. */
   githubApp?: string;
+  /** The game's background colour (#rrggbb): offered as "Project background" behind transparent pixels. Overrides the project config's "background". */
+  background?: string;
   /** Where to show "Signed in as … / Sign out" (an element or a selector in the host page, e.g. its header). Default: the sidebar. */
   accountEl?: Element | string;
   /** Alternative GitHub API base (GitHub Enterprise, tests). */
