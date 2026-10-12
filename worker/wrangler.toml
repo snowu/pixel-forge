@@ -6,4 +6,4 @@ compatibility_date = "2025-01-01"
 # the pages allowed to sign in (comma separated origins, no trailing slash)
 ALLOWED_ORIGINS = "https://snowu.github.io"
 # the public id of your GitHub App (a secret is NOT stored here, see worker/README.md)
-GITHUB_CLIENT_ID = ""
+GITHUB_CLIENT_ID = "Iv23li3jrG7gfBenEFC2"

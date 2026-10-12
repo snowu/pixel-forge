@@ -337,8 +337,11 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
     return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ message: 'Not Found' }) });
   });
   const ap = await actx.newPage(); const aerr = []; ap.on('pageerror', (e) => aerr.push(e.message)); ap.on('dialog', (d) => d.dismiss());
-  // 1. without an auth service the page explains how to get a token instead
+  // 0. the hosted page ships with the real sign-in service on by default
   await ap.goto(hbase); await ap.waitForSelector('.pf-dlg-connect[open]');
+  ok(await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'the hosted page shows "Sign in with GitHub" by default');
+  // 1. without an auth service (?auth=off) the page explains how to get a token instead
+  await ap.goto(hbase + '?auth=off'); await ap.waitForSelector('.pf-dlg-connect[open]');
   ok(await ap.locator('.pf-dlg-connect .pf-signin').isHidden() && /not set up/.test(await ap.locator('.pf-dlg-connect .pf-auth-help').innerText()), 'with no sign-in service configured the button is hidden and the page says so');
   const link = await ap.locator('.pf-dlg-connect .pf-auth-help a').getAttribute('href'); ok(/personal-access-tokens\/new/.test(link) && /contents=write/.test(link) && /pull_requests=write/.test(link), 'and links to a pre-filled fine-grained token with the two permissions needed');
   // 2. with a service configured
