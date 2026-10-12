@@ -101,6 +101,14 @@ section('more tools: brush size, dither, ellipse, shading, selection, tile, outl
   ok(at(s, 8, 12) === RED && at(s, 7, 13) === RED && at(s, 7, 12) !== RED && at(s, 9, 14) !== RED, 'the round tip leaves the corners out');
   await page.keyboard.press('Control+z'); await page.locator('.pf-shape button[data-shape=square]').click(); await page.keyboard.press('['); await page.keyboard.press('[');
   ok((await page.locator('.pf-sizev').innerText()) === '1', '[ shrinks it again');
+  // brush size on shapes
+  await page.keyboard.press('l'); await page.keyboard.press(']');
+  ok(await page.locator('.pf-size').isVisible(), 'the line tool has a size too');
+  const pre0 = await pf(); await drag(2, 10, 6, 10); s = await pf();
+  ok([2, 4, 6, 7].every((x) => at(s, x, 10) === RED && at(s, x, 11) === RED) && [1, 2, 4, 6, 7].every((x) => at(s, x, 9) === at(pre0, x, 9) && at(s, x, 12) === at(pre0, x, 12)) && at(s, 1, 10) === at(pre0, 1, 10), 'a size-2 line is two pixels thick (the tip leans down-right of the cursor)');
+  await page.keyboard.press('Control+z'); await page.keyboard.press('f');
+  ok(!(await page.locator('.pf-size').isVisible()), 'filled shapes have no stroke size');
+  await page.keyboard.press('b'); await page.keyboard.press('[');
   // dither pencil
   await page.locator('.pf-pattern button[data-pattern=dither]').click(); await drag(0, 15, 5, 15); s = await pf();
   ok([0, 1, 2, 3, 4, 5].every((x) => (at(s, x, 15) === RED) === ((x + 15) % 2 === 0)), 'the dither pattern paints every other pixel of a stroke');

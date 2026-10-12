@@ -49,6 +49,14 @@ test('brush tips: sizes, round vs square, centred on the cursor', () => {
   assert.deepEqual(grid(C.brushOffsets(5, 'round'), 5, 5, 2, 2), ['.###.', '#####', '#####', '#####', '.###.']);
   assert.equal(C.brushOffsets(4, 'square').length, 16); assert.equal(C.brushOffsets(99, 'square').length, 32 * 32, 'capped at 32');
 });
+test('thicken: a 1-pixel path stamped with a bigger brush, every pixel once', () => {
+  const line = C.linePoints(1, 2, 5, 2);
+  assert.equal(C.thicken(line, 1, 'square'), line, 'size 1 leaves the path alone');
+  assert.deepEqual(grid(C.thicken(line, 3, 'square'), 7, 5), ['.......', '#######', '#######', '#######', '.......']);
+  const ring = C.thicken(C.rectPoints(0, 0, 5, 5, false), 2, 'square');
+  assert.equal(new Set(ring.map(String)).size, ring.length, 'no duplicates');
+  assert.equal(C.thicken([[0, 0]], 3, 'round').length, 5, 'a single point becomes the brush tip');
+});
 test('dither pattern is a checkerboard and the phase flips it', () => {
   assert.equal(C.ditherOn(0, 0), true); assert.equal(C.ditherOn(1, 0), false); assert.equal(C.ditherOn(1, 1), true); assert.equal(C.ditherOn(0, 0, 1), false);
 });
