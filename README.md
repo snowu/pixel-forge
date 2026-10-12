@@ -130,7 +130,7 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
 
 ## Animation tools
 
-For frames stored as numbered files (`walk_0.png`, `walk_1.png`…), the frame strip in the Preview panel has **+ frame** (a copy of the current frame, saved as the next number) and **◀ ▶** (move the current frame earlier or later). **GIF…** exports the animation (a frame family, a sprite sheet's frames, or a single image) as a looping GIF at the scale you choose and the fps set under Preview, to share in chat or a pull request.
+For frames stored as numbered files (`walk_0.png`, `walk_1.png`…), the frame strip in the Preview panel has **+ frame** (a copy of the current frame, saved as the next number) and **◀ ▶** (move the current frame earlier or later). A lone sprite shows the same strip with just itself, so **+ frame** starts its numbering (`torch.png` → `torch_1.png`). **GIF…** exports the animation (a frame family, a sprite sheet's frames, or a single image) as a looping GIF at the scale you choose and the fps set under Preview, to share in chat or a pull request.
 
 ## Background
 

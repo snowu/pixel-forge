@@ -1337,7 +1337,7 @@
     }
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
-      let path = name, n = 1; while (S.docs.has(path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
+      let path = name, n = 1; while (S.docs.has(path) || S.sprites.some((x) => x.path === path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
       S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); keepSoon(); sourceButton(); return openSprite(path);
     }
     const canWrite = () => !!(S.src && S.src.write);
@@ -1477,11 +1477,29 @@
       return `<button class="pf-item${flat ? '' : ' pf-cell'}${on ? ' on' : ''}" role="option" data-path="${esc(s.path)}" title="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(label)}<small>${flat ? esc(dir) + ' · ' : ''}${size}</small></span>${badge}${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? `<i class="dot base" title="${keeping() && !(d && savesOut(d)) ? 'changed: kept in this browser, not in a pull request yet' : 'saved, not yet proposed'}"></i>` : ''}</button>`;
     }
     function renderList() {
-      const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'), groups = regroup(); list.innerHTML = '';
+      const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'), groups = regroup();
+      // Rows whose markup is unchanged keep their DOM nodes — and with them their painted thumbnails —
+      // so drawing does not flash the whole explorer. Only the open sprite rebuilds (a live thumbnail).
+      const old = new Map();
+      for (const b of list.querySelectorAll('.pf-item,.pf-dir')) {
+        const k = b.classList.contains('pf-dir') ? 'd:' + b.dataset.dir : 'i:' + b.dataset.path;
+        if (!old.has(k)) old.set(k, b);
+      }
+      list.innerHTML = '';
       if (!folded) loadFolded();
-      const add = (html, s) => { const b = el(html); list.appendChild(b); const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s); return b; };
+      // Same markup as an existing row: move that row over instead of repainting. Anything else is built fresh.
+      const place = (parent, html, key, s) => {
+        const b = el(html), live = !!s && s.path === S.cur, o = !live && old.get(key);
+        if (o) old.delete(key);
+        if (o && o.outerHTML === b.outerHTML) { parent.appendChild(o); return o; }
+        parent.appendChild(b);
+        const cv = b.querySelector('canvas');
+        if (cv && s) { cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s); }
+        return b;
+      };
+      const add = (html, s) => place(list, html, 'i:' + s.path, s);
       list.classList.toggle('pf-flat', !!q);
-      if (q) { for (const s of S.sprites.filter((x) => x.path.toLowerCase().includes(q))) add(tileHtml(s, s.path.split('/').pop(), famOf.get(s.path), true), s); return; }
+      if (q) { for (const s of S.sprites.filter((x) => x.path.toLowerCase().includes(q))) add(tileHtml(s, s.path.split('/').pop(), famOf.get(s.path), true), s); renderCommit(); return; }
       const hid = (S.src && S.src.hidden) || []; let hidNote = null;
       if (hid.length) { // the default skip of docs/screenshots/... folders, made visible and reversible
         const shown = S.sprites.some((x) => x.hiddenByDefault);
@@ -1490,7 +1508,7 @@
       for (const g of groups) {
         const n = g.families.reduce((k, f) => k + f.members.length, 0), shut = folded.has(g.dir);
         const chg = g.families.reduce((k, f) => k + f.members.filter((m) => { const x = S.docs.get(m); return x && x.changed; }).length, 0);
-        if (groups.length > 1 || g.dir) list.appendChild(el(`<button class="pf-dir${shut ? ' shut' : ''}" data-dir="${esc(g.dir)}" aria-expanded="${!shut}"><span class="pf-caret">${shut ? '▸' : '▾'}</span><span class="pf-dirname">${esc(g.dir || '.')}</span>${chg ? `<span class="pf-dirchg" title="${chg} changed sprite${chg > 1 ? 's' : ''} in this folder, not in a pull request yet">${chg} changed</span>` : ''}<span class="pf-dircount">${n}</span></button>`));
+        if (groups.length > 1 || g.dir) place(list, `<button class="pf-dir${shut ? ' shut' : ''}" data-dir="${esc(g.dir)}" aria-expanded="${!shut}"><span class="pf-caret">${shut ? '▸' : '▾'}</span><span class="pf-dirname">${esc(g.dir || '.')}</span>${chg ? `<span class="pf-dirchg" title="${chg} changed sprite${chg > 1 ? 's' : ''} in this folder, not in a pull request yet">${chg} changed</span>` : ''}<span class="pf-dircount">${n}</span></button>`, 'd:' + g.dir, null);
         if (shut) {
           // A shut folder still shows the sprite being edited, so the list never loses your place. Clicking it unfolds.
           const open = S.cur && g.families.some((f) => f.members.includes(S.cur)) ? spriteOf(S.cur) : null;
@@ -1506,8 +1524,7 @@
         const grid = el('<div class="pf-tiles"></div>'); list.appendChild(grid);
         for (const f of g.families) {
           const shown = f.members.includes(S.cur) ? S.cur : f.members[0], s = spriteOf(shown);
-          const b = el(tileHtml(s, f.members.length > 1 ? f.key : shown.split('/').pop(), famOf.get(shown), false)); grid.appendChild(b);
-          const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s);
+          place(grid, tileHtml(s, f.members.length > 1 ? f.key : shown.split('/').pop(), famOf.get(shown), false), 'i:' + s.path, s);
         }
       }
       if (hidNote) list.appendChild(hidNote); // after the folders
@@ -1884,6 +1901,9 @@
     /* Families (poses, variants, numbered animation frames in separate files): any member as something drawable.
        An open document wins, so edits show up in the strip, the flipbook and the onion skin straight away. */
     const famFor = (d) => { const f = d && famOf.get(d.path); return f && f.members.length > 1 ? f : null; };
+    /** A lone sprite as a one-member family. Only the family panel and its + frame button use this —
+        everything that plays families (flipbook, stepping, GIF) keeps famFor, so single sprites behave exactly as before. */
+    const famOrSingle = (d) => famFor(d) || (d && famOf.get(d.path) && { key: stem(d.path), members: [d.path], animated: false });
     const pending = new Set();
     function memberImage(path) {
       const d = S.docs.get(path);
@@ -1897,9 +1917,9 @@
     }
     const memberLabel = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length).replace(/^[_-]/, ''); return r || 'base'; };
     function renderFamily() {
-      const d = doc(), fam = famFor(d), box = $('.pf-fam'); box.hidden = !fam; if (!fam) return;
+      const d = doc(), fam = famOrSingle(d), box = $('.pf-fam'); box.hidden = !fam; if (!fam) return;
       const at = fam.members.indexOf(d.path); $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
-      $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`;
+      $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.members.length > 1 ? (fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`) : 'single sprite';
       const strip = $('.pf-fam-strip'); strip.innerHTML = '';
       for (const p of fam.members) {
         const b = el(`<button class="pf-fam-m${p === S.cur ? ' on' : ''}" data-path="${esc(p)}" role="option" title="${esc(p)}"><canvas></canvas><span>${esc(memberLabel(fam, p))}</span></button>`);
@@ -2146,7 +2166,8 @@
     /* animation: frames that are separate numbered files (flame_0, flame_1...) */
     const frameNo = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length); const m = /^([_-])(\d+)$/.exec(r); return m ? { sep: m[1], n: +m[2], pad: m[2].length } : null; };
     $('.pf-fam-add').onclick = async () => {
-      const d = doc(), fam = famFor(d); if (!d || !fam) return;
+      const d = doc(); if (!d) return;
+      const fam = famOrSingle(d); if (!fam) return;
       const nums = fam.members.map((p) => frameNo(fam, p)).filter(Boolean), sep = nums[0] ? nums[0].sep : '_', pad = nums[0] ? nums[0].pad : 1, n = nums.length ? Math.max(...nums.map((x) => x.n)) + 1 : 1;
       const dir = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/') + 1) : '', path = `${dir}${fam.key}${sep}${String(n).padStart(pad, '0')}.png`;
       if (S.sprites.some((x) => x.path === path)) return note(path + ' already exists');
@@ -2346,11 +2367,13 @@
       return top.sort((a, b) => a.w * a.h - b.w * b.h);
     }
     const markQuick = () => $$('.pf-n-quick button').forEach((b) => b.classList.toggle('on', b.dataset.w === $('.pf-nw').value && b.dataset.h === $('.pf-nh').value));
+    /** The name sidebar New suggests: the next free `new_sprite[N].png`, so creating never silently numbers a duplicate. */
+    function nextSpriteName() { const taken = new Set(S.sprites.map((s) => s.path)); if (!taken.has('new_sprite.png')) return 'new_sprite.png'; let n = 1; while (taken.has(`new_sprite${n}.png`)) n++; return `new_sprite${n}.png`; }
     function openNew() {
       const sizes = commonSizes(), d = doc();
       $('.pf-n-quick').innerHTML = sizes.map((x) => `<button type="button" data-w="${x.w}" data-h="${x.h}" title="${x.c ? x.c + ' sprite' + (x.c > 1 ? 's' : '') + ' in this project are this size' : 'a common size'}">${x.w}×${x.h}</button>`).join('');
       const pick = sizes.find((x) => d && x.w === d.w && x.h === d.h) || sizes.reduce((a, b) => (b.c > a.c ? b : a), sizes[0]); // the open sprite's size, else the project's most used
-      $('.pf-nw').value = pick.w; $('.pf-nh').value = pick.h; markQuick(); $('.pf-dlg-new').showModal();
+      $('.pf-nw').value = pick.w; $('.pf-nh').value = pick.h; markQuick(); $('.pf-nn').value = nextSpriteName(); $('.pf-dlg-new').showModal();
     }
     $('.pf-n-quick').onclick = (e) => { const b = e.target.closest('[data-w]'); if (!b) return; $('.pf-nw').value = b.dataset.w; $('.pf-nh').value = b.dataset.h; markQuick(); };
     $('.pf-nw').oninput = markQuick; $('.pf-nh').oninput = markQuick;

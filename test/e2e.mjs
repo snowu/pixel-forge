@@ -770,6 +770,17 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.locator('.pf-q').fill('hero_0'); await fp.locator('.pf-item').first().click(); await fp.waitForTimeout(250); await fp.locator('.pf-q').fill('');
   ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png' && (await fp.locator('.pf-cell').count()) === 2, 'opening a sprite reveals its folder and leaves the other folded');
   await fp.locator('.pf-unfold-all').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'and unfold all restores the rest');
+  await fp.locator('.pf-cell', { hasText: 'bat.png' }).click(); await fp.waitForTimeout(250);
+  ok((await fp.locator('.pf-fam-kind').innerText()) === 'single sprite', 'a lone sprite shows its one-member family');
+  await fp.locator('.pf-fam-add').click(); await fp.waitForTimeout(400);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/bat_1.png', '+ frame on a lone sprite starts its numbering');
+  await fp.locator('.pf-new').click(); await fp.waitForSelector('.pf-dlg-new[open]');
+  ok((await fp.locator('.pf-nn').inputValue()) === 'new_sprite.png', 'New suggests a name that does not collide');
+  await fp.locator('.pf-new-ok').click(); await fp.waitForTimeout(400);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'new_sprite.png', 'and creates it');
+  await fp.locator('.pf-new').click(); await fp.waitForSelector('.pf-dlg-new[open]');
+  ok((await fp.locator('.pf-nn').inputValue()) === 'new_sprite1.png', 'then the next one after that');
+  await fp.locator('.pf-dlg-new button[value=cancel]').click();
   await fp.locator('.pf-dir', { hasText: 'chars' }).click();
   ok((await fp.locator('.pf-cur .n').innerText()) === 'hero_0.png', 'a folded folder still shows the sprite being edited');
   await fp.locator('.pf-cur').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'clicking it unfolds the folder');
