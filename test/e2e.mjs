@@ -655,6 +655,7 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.keyboard.press('n');
   // filtering flattens the list
   await fp.locator('.pf-q').fill('hero_'); ok((await fp.locator('.pf-item').count()) === 4 && (await fp.locator('.pf-dir').count()) === 0, 'typing a filter shows a flat list of matching files');
+  ok(await fp.evaluate(() => [...document.querySelectorAll('.pf-list .pf-badge')].every((b) => { const i = b.closest('.pf-item').getBoundingClientRect(), r = b.getBoundingClientRect(); return r.top >= i.top - 1 && r.bottom <= i.bottom + 1 && r.right <= i.right + 1; })), 'family badges stay inside their row in the flat list');
   await fp.locator('.pf-q').fill('');
   ok(ferr2.length === 0, 'no page errors ' + ferr2.join('|'));
   await fp.close(); await s2.close();

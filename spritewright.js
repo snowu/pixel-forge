@@ -618,7 +618,7 @@
 .pf-side{border-right:1px solid var(--pf-line)}.pf-right{border-left:1px solid var(--pf-line);gap:0;padding:0}
 .pf-panel{padding:12px 12px 14px;border-bottom:1px solid var(--pf-line);display:flex;flex-direction:column;gap:8px}
 .pf-list{display:flex;flex-direction:column;gap:2px;overflow:auto;flex:1;min-height:80px}
-.pf-item{display:flex;gap:8px;align-items:center;padding:4px;border:1px solid transparent;cursor:pointer;background:none;text-align:left;width:100%;min-height:44px;justify-content:flex-start}
+.pf-item{position:relative;display:flex;gap:8px;align-items:center;padding:4px;border:1px solid transparent;cursor:pointer;background:none;text-align:left;width:100%;min-height:44px;justify-content:flex-start}
 .pf .pf-item{background:none;border-color:transparent}.pf .pf-item:hover:not(:disabled){box-shadow:none;background:var(--pf-panel2)}
 .pf .pf-item.on,.pf .pf-item.on:hover:not(:disabled){border-color:var(--pf-accent);background:var(--pf-panel2);color:var(--pf-ink);font-weight:400;box-shadow:inset 3px 0 0 var(--pf-accent)}
 .pf-item canvas{width:36px;height:36px;image-rendering:pixelated;background:repeating-conic-gradient(#1c1530 0 25%,#130e22 0 50%) 0 0/8px 8px;flex:none}
