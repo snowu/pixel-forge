@@ -1,5 +1,7 @@
 # Spritewright icon proposals
 
+**Current round: [three refinements of direction C, the little sprite](round-2/README.md).** The four directions below are retained as the first-round exploration.
+
 Four alternatives for PR #20, ready for choosing a direction and iterating.
 
 ![Four icon directions with favicon and app-crop studies](comparison.png)
