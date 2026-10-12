@@ -8,13 +8,13 @@
 <style>
   html,body{margin:0;height:100%;background:#040608;color:#d6e4dc;font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   body{display:flex;flex-direction:column}
-  header{padding:8px 12px;border-bottom:1px solid #232d34;display:flex;gap:12px;align-items:baseline}
+  header{padding:8px 12px;border-bottom:1px solid #232d34;display:flex;gap:12px;align-items:center;flex-wrap:wrap}#account:empty{display:none}
   header b{color:#39ff7a}header span{color:#7f948a;font-size:12px}header a:hover{color:#39ff7a}
   #app{flex:1;min-height:0}
 </style>
 </head>
 <body>
-<header><b>spritewright</b><span>a pixel art editor in your browser: upload a PNG, edit, download. Nothing leaves this tab.</span><a href="https://github.com/snowu/spritewright" target="_blank" rel="noopener" style="margin-left:auto;color:#7f948a;font-size:12px">source</a></header>
+<header><b>spritewright</b><span id="account"></span><span>a pixel art editor in your browser: upload a PNG, a folder or a GitHub repository, edit, download or propose a pull request.</span><a href="https://github.com/snowu/spritewright" target="_blank" rel="noopener" style="margin-left:auto;color:#7f948a;font-size:12px">source</a></header>
 <div id="app"></div>
 <script src="spritewright.js"></script>
 <script>
@@ -31,6 +31,7 @@
   // Sign in with GitHub needs the small auth service in worker/. Point at yours with ?auth=https://your-worker.example or set the default below.
   const DEFAULT_AUTH_BASE = 'https://spritewright-auth.zancato-t.workers.dev';
   const authQ = q.get('auth'), auth = authQ === 'off' ? '' : authQ || DEFAULT_AUTH_BASE; if (auth) opts.authBase = auth; // ?auth=off: token-only mode
+  opts.accountEl = '#account'; // "Signed in as … / Sign out" next to the title
   opts.githubApp = q.get('app') || 'spritewright'; // the GitHub App people install on their repositories (link shown under the repo list)
   Spritewright.mount(document.getElementById('app'), opts);
 </script>

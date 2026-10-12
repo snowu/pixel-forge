@@ -355,7 +355,7 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   ok(await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'the hosted page shows "Sign in with GitHub" by default');
   // 1. without an auth service (?auth=off) the page explains how to get a token instead
   await ap.goto(hbase + '?auth=off'); await ap.waitForSelector('.pf-dlg-connect[open]');
-  ok(await ap.locator('.pf-side-auth').isHidden(), 'without a sign-in service the sidebar has no sign-in row');
+  ok(await ap.locator('.pf-acct').isHidden(), 'without a sign-in service the header has no sign-in row');
   ok(await ap.locator('.pf-dlg-connect .pf-signin').isHidden() && /not set up/.test(await ap.locator('.pf-dlg-connect .pf-auth-help').innerText()), 'with no sign-in service configured the button is hidden and the page says so');
   const link = await ap.locator('.pf-dlg-connect .pf-auth-help a').getAttribute('href'); ok(/personal-access-tokens\/new/.test(link) && /contents=write/.test(link) && /pull_requests=write/.test(link), 'and links to a pre-filled fine-grained token with the two permissions needed');
   // 2. with a service configured
@@ -408,11 +408,12 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   ap.removeAllListeners('dialog'); ap.on('dialog', (d) => d.accept()); await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-dlg-connect[open]');
   // 6. sign out, from the sidebar (always visible) and from the dialog
   await ap.locator('.pf-dlg-connect button[value=cancel]').click();
-  ok(/Signed in as artist/.test(await ap.locator('.pf-side-auth .pf-who').innerText()) && await ap.locator('.pf-side-auth .pf-signout').isVisible(), 'the sidebar shows who is signed in, with a Sign out button');
-  await ap.locator('.pf-side-auth .pf-signout').click();
-  ok(await ap.evaluate(() => localStorage.getItem('pf:gh')) === null && await ap.locator('.pf-side-auth .pf-signin').isVisible() && /Signed out/.test(await ap.locator('.pf-status').innerText()), 'Sign out in the sidebar signs out and offers Sign in again');
-  await ap.locator('.pf-side-auth .pf-signin').click(); await ap.waitForFunction(() => /Signed in as artist/.test(document.querySelector('.pf-side-auth .pf-who').textContent));
-  ok(await ap.locator('.pf-side-auth .pf-signout').isVisible(), 'Sign in works from the sidebar too');
+  ok(/Signed in as artist/.test(await ap.locator('.pf-acct .pf-who').innerText()) && await ap.locator('.pf-acct .pf-signout').isVisible(), 'the header shows who is signed in, with a Sign out button, next to the title');
+  await ap.locator('.pf-acct .pf-signout').click();
+  ok(await ap.evaluate(() => localStorage.getItem('pf:gh')) === null && await ap.locator('.pf-acct .pf-signin').isVisible() && /Signed out/.test(await ap.locator('.pf-status').innerText()), 'Sign out in the header signs out and offers Sign in again');
+  await ap.locator('.pf-acct .pf-signin').click(); await ap.waitForFunction(() => /Signed in as artist/.test(document.querySelector('.pf-acct .pf-who').textContent));
+  ok(await ap.locator('.pf-acct .pf-signout').isVisible(), 'Sign in works from the header too');
+  ok(await ap.evaluate(() => { const a = document.querySelector('.pf-acct'), t = document.querySelector('header b'); return a.closest('header') && a.getBoundingClientRect().left > t.getBoundingClientRect().right && a.getBoundingClientRect().left < 400 && !document.querySelector('.pf-side .pf-auth-row'); }), 'the account sits in the page header right after the title, not in the sidebar');
   await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-dlg-connect[open]');
   await ap.locator('.pf-dlg-connect .pf-signout').click();
   ok(await ap.evaluate(() => localStorage.getItem('pf:gh')) === null && await ap.locator('.pf-dlg-connect .pf-signin').isVisible() && await ap.locator('.pf-c-mine').isHidden() && await ap.locator('.pf-dlg-connect .pf-tokenbox').isVisible(), 'sign out forgets the sign-in on this device and hides the list');

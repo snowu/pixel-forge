@@ -452,7 +452,9 @@
 .pf-note{color:var(--pf-muted);font-size:12px}.pf-bad{color:var(--pf-bad)}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px}
 .pf-signed-in .pf-gh-box{order:-1}.pf-dlg-connect h4{order:-2}.pf-c-pick.on{border-color:var(--pf-accent)}
-.pf-auth-row[hidden]{display:none}.pf-side-auth{justify-content:space-between;flex-wrap:nowrap}.pf-side-auth .pf-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pf-side-auth .pf-who:empty{display:none}.pf-side-auth .pf-signin{width:100%}
+.pf-auth-row[hidden]{display:none}
+.pf-acct{display:inline-flex;gap:8px;align-items:center;font-size:12px;color:#7f948a}.pf-acct .pf-who{color:#7f948a;font-size:12px}
+.pf-acct button{font:inherit;font-size:12px;background:#141a1f;color:#d6e4dc;border:1px solid #232d34;padding:2px 8px;cursor:pointer}.pf-acct button:hover{border-color:var(--pf-accent,#39ff7a);color:var(--pf-accent,#39ff7a)}.pf-side-auth{justify-content:space-between;flex-wrap:nowrap}.pf-side-auth .pf-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pf-side-auth .pf-who:empty{display:none}.pf-side-auth .pf-signin{width:100%}
 .pf-source{width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
 .pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -566,6 +568,10 @@
     if (O.accent) root.style.setProperty('--pf-accent', O.accent);
     host.innerHTML = ''; host.appendChild(root);
     const $ = (s) => root.querySelector(s), $$ = (s) => [...root.querySelectorAll(s)];
+    // accountEl: put "Signed in as … / Sign out" in the host page (e.g. its header) instead of the sidebar
+    const account = root.querySelector('.pf-side-auth'), accountEl = typeof O.accountEl === 'string' ? document.querySelector(O.accountEl) : O.accountEl;
+    if (accountEl) { account.classList.replace('pf-side-auth', 'pf-acct'); accountEl.appendChild(account); }
+    const authRows = (sel) => [...$$('.pf-auth-row'), ...(accountEl ? [account] : [])].map((r) => (sel ? r.querySelector(sel) : r));
 
     /* ---------- state ---------- */
     const S = { sprites: [], docs: new Map(), cur: null, tool: 'pen', color: pack(57, 255, 122), mx: false, my: false, pp: true, grid: true, zoom: 8, ox: 0, oy: 0,
@@ -602,7 +608,7 @@
     }
     function renderAuth() {
       const on = !!S.auth.token;
-      $$('.pf-auth-row').forEach((r) => { r.hidden = !on && !authBase; r.querySelector('.pf-signin').hidden = on || !authBase; r.querySelector('.pf-signout').hidden = !on; r.querySelector('.pf-who').textContent = on ? 'Signed in as ' + (S.auth.login || 'GitHub user') : ''; });
+      authRows().forEach((r) => { r.hidden = !on && !authBase; r.querySelector('.pf-signin').hidden = on || !authBase; r.querySelector('.pf-signout').hidden = !on; r.querySelector('.pf-who').textContent = on ? 'Signed in as ' + (S.auth.login || 'GitHub user') : ''; });
       $$('.pf-auth-help').forEach((h) => { h.innerHTML = authBase ? (on ? '' : 'Sign in once and pick a repository you own or collaborate on. Edits go back as a pull request, no tokens to paste.') : `Sign-in is not set up on this page. Paste a token instead: <a href="${PAT_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">create one with the right permissions</a> (Contents and Pull requests: read and write, only for your repository).`; });
       $$('.pf-tokenbox').forEach((d) => { d.open = !authBase; d.hidden = on; });
       $('.pf-c-mine').hidden = !on; $('.pf-dlg-connect .pf-form').classList.toggle('pf-signed-in', on);
@@ -953,8 +959,8 @@
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
     }
     $('.pf-source').onclick = () => openConnect();
-    $$('.pf-signin').forEach((b) => (b.onclick = () => { const d = b.closest('dialog'); doSignIn(d && d.querySelector('.pf-c-msg, .pf-log')); }));
-    $$('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
+    authRows('.pf-signin').forEach((b) => (b.onclick = () => { const d = b.closest('dialog'); doSignIn(d && d.querySelector('.pf-c-msg, .pf-log')); }));
+    authRows('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
     $('.pf-c-repolist').onclick = (e) => { const b = e.target.closest('.pf-c-pick'); if (!b) return; $('.pf-c-repo').value = b.dataset.repo; $('.pf-c-branch').value = b.dataset.branch; $('.pf-c-gh').click(); };
     $('.pf-c-upload').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-file').click(); };
     $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-dlg-new').showModal(); };
