@@ -24,9 +24,9 @@ Click **Upload PNG** (or **Blank sprite**) and draw. Everything happens in your 
 | --- | --- | --- |
 | Folder on your computer, or `npx spritewright` | writes the PNG into the project | kept in this browser, restored after a reload, marked *unsaved* |
 | GitHub repository | nothing to write: the button says **Saved** | kept in this browser until you **Propose PR** (then dropped: the work is in the pull request) |
-| Just drawing (upload / blank) | nothing to write: the button says **Saved** | kept in this browser until you revert them; **Download** takes them out |
+| A project in this browser (**New blank project** / **Upload PNG** in the Open dialog) | nothing to write: the button says **Saved** | kept in this browser until you delete them; **Download** takes them out |
 
-Browser copies live in IndexedDB on that device, one per project and file. **Revert to original** (Image panel) throws a sprite's changes away (undo brings them back). The page only asks before closing in the instant before an edit is kept, or when the browser blocks storage.
+**Projects in this browser** need nothing linked or signed in: start one with **New blank project** (or **Upload PNG**), and switch between them, rename or delete them from the Open dialog. A sprite that only exists in the browser (made, uploaded or copied there, never saved into a project) can be removed with **Delete sprite** (Image panel). Browser copies live in IndexedDB on that device, one per project and file. **Revert to original** (Image panel) throws a sprite's changes away (undo brings them back). The page only asks before closing in the instant before an edit is kept, or when the browser blocks storage.
 
 ## Three ways to use it
 

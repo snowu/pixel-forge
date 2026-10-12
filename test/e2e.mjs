@@ -33,7 +33,7 @@ const browser = await launch();
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
 const page = await ctx.newPage();
 const errors = []; page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
-page.on('dialog', (d) => (d.type() === 'prompt' ? d.accept(globalThis.__promptAnswer || '1') : d.dismiss()));
+page.on('dialog', (d) => (d.type() === 'prompt' ? d.accept(globalThis.__promptAnswer || '1') : globalThis.__confirmYes && d.type() === 'confirm' ? d.accept() : d.dismiss()));
 const pf = () => page.evaluate(() => { const d = document.getElementById('app').__pf.current; return { path: d.path, w: d.w, h: d.h, px: [...d.px] }; });
 const px = async (x, y) => { const s = await pf(); return s.px[y * s.w + x]; };
 const RED = 0xff0000ff >>> 0; // pack(255,0,0,255) little-endian: 0xAABBGGRR
@@ -236,6 +236,8 @@ await page.locator('.pf-fliph').click(); s = await pf(); ok(s.px[1 * 16 + 15 - 5
 await page.locator('.pf-fliph').click();
 await page.locator('.pf-sh[data-d="1,0"]').click(); s = await pf(); ok(s.px[1 * 16 + 6] === orig.px[1 * 16 + 5], 'wrap shift moves the picture one pixel');
 await page.locator('.pf-sh[data-d="-1,0"]').click();
+await page.locator('.pf-rot').hover(); ok((await page.locator('.pf-imgtip').innerText()).startsWith('Rotate 90°'), 'Image panel: icon buttons, the one under the pointer is named below: ' + await page.locator('.pf-imgtip').innerText());
+ok(await page.locator('.pf-imgtools button:visible').evaluateAll((bs) => new Set(bs.map((b) => Math.round(b.getBoundingClientRect().width) + 'x' + Math.round(b.getBoundingClientRect().height))).size === 1), 'every button in the grid is the same size');
 await page.locator('.pf-resize').click(); await page.locator('.pf-sz-anchor [data-a="tl"]').click(); await page.locator('.pf-sz-w').fill('20'); await page.locator('.pf-sz-h').fill('12'); await page.locator('.pf-sz-ok').click();
 s = await pf(); ok(s.w === 20 && s.h === 12 && s.px.every((v, i) => (i % 20) >= 16 || ((i / 20) | 0) >= 12 ? v === 0 : v === orig.px[((i / 20) | 0) * 16 + (i % 20)]), 'canvas resize anchored top-left keeps every pixel where it was');
 await page.keyboard.press('Control+z'); s = await pf(); ok(s.w === 16 && s.h === 16, 'and can be undone');
@@ -264,6 +266,12 @@ await page.locator('.pf-rot').click(); s = await pf(); ok(s.w === 16 && s.h === 
 await page.keyboard.press('Control+z');
 
 section('saving into the project');
+{ await page.mouse.move(5, 5); await page.waitForTimeout(100); const before = await page.locator('.pf-view').boundingBox(), hb = (await page.locator('.pf-status').boundingBox()).height;
+  const p = await cellPos(3, 3); await page.mouse.move(p.x, p.y); await page.evaluate(() => { document.getElementById('app').__pf.state.notice = 'a long message '.repeat(20); });
+  await page.locator('.pf-zin').click(); await page.locator('.pf-zout').click(); await page.mouse.move(p.x, p.y + 2); await page.waitForTimeout(100);
+  const after = await page.locator('.pf-view').boundingBox(), ha = (await page.locator('.pf-status').boundingBox()).height;
+  ok(/x 3\s+y 3/.test(await page.locator('.pf-s-pos').innerText()) && ha === hb && after.y === before.y && after.height === before.height, `the status bar stays one line (${hb}px → ${ha}px) when the cursor readout and a long message appear, so the canvas never moves`);
+  await page.evaluate(() => { document.getElementById('app').__pf.state.notice = ''; }); }
 while (!(await page.locator('.pf-undo').isDisabled())) await page.keyboard.press('Control+z');
 ok((await page.locator('.pf-s-name').innerText()).includes('unsaved') === false, 'no "unsaved" marker after undoing everything');
 await setHex('#ff0000'); await page.keyboard.press('b'); await click(0, 0); await click(1, 0);
@@ -276,7 +284,14 @@ ok(fs.readdirSync(path.join(root, 'art')).every((n) => !n.includes('pf-tmp')), '
 const mf = await (await fetch(base + 'api/manifest')).json(); ok(mf.repo.slug === 'me/game', 'the manifest knows the GitHub repo from .git/config');
 
 section('new sprites, import and export');
-await page.locator('.pf-new').click(); await page.locator('.pf-nw').fill('8'); await page.locator('.pf-nh').fill('8'); await page.locator('.pf-nn').fill('art/items/gem.png'); await page.locator('.pf-new-ok').click(); await page.waitForTimeout(200);
+await page.locator('.pf-new').click();
+{ const q = await page.locator('.pf-n-quick button').allInnerTexts(), cur = await pf(), on = await page.locator('.pf-n-quick button.on').allInnerTexts();
+  ok(q.length === 4 && q.includes('16×16') && q.includes('32×32'), 'New offers four common sizes as one click: ' + q.join(' '));
+  ok(on.join() === cur.w + '×' + cur.h && (await page.locator('.pf-nw').inputValue()) === String(cur.w), 'it starts at the open sprite\'s size, marked: ' + on);
+  await page.locator('.pf-n-quick button', { hasText: '32×32' }).click();
+  ok((await page.locator('.pf-nw').inputValue()) === '32' && (await page.locator('.pf-nh').inputValue()) === '32' && (await page.locator('.pf-n-quick button.on').innerText()) === '32×32', 'clicking a size fills width and height');
+  await page.locator('.pf-nw').fill('24'); ok(await page.locator('.pf-n-quick button.on').count() === 0, 'any other size (24×32) can still be typed, and no preset stays marked'); }
+await page.locator('.pf-nw').fill('8'); await page.locator('.pf-nh').fill('8'); await page.locator('.pf-nn').fill('art/items/gem.png'); await page.locator('.pf-new-ok').click(); await page.waitForTimeout(200);
 s = await pf(); ok(s.path === 'art/items/gem.png' && s.w === 8, 'New creates a blank sprite at a path inside the project');
 await setHex('#00ff00'); await page.keyboard.press('b'); await click(3, 3); await page.keyboard.press('Control+s'); await until(() => fs.existsSync(path.join(root, 'art/items/gem.png')));
 ok(fs.existsSync(path.join(root, 'art/items/gem.png')) && decodePng(fs.readFileSync(path.join(root, 'art/items/gem.png'))).w === 8, 'saving it creates the file and its folder');
@@ -292,6 +307,13 @@ s = await pf(); ok(s.path === 'imported.png' && s.w === 2, 'Open PNG imports a f
   ok(dls === 0 && !fs.existsSync(path.join(root, 'imported.png')), 'Save on an import neither downloads it nor writes it into the project by surprise');
   ok(/kept in this browser/.test(await page.locator('.pf-s-name').innerText()), 'it says the import is kept in this browser'); }
 { const dl3 = page.waitForEvent('download'); await page.keyboard.press('Control+Shift+s'); const d3 = await dl3; ok(d3.suggestedFilename() === 'imported.png', 'Ctrl+Shift+S downloads the PNG'); }
+ok(await page.locator('.pf-delete').isVisible(), 'an import can be deleted (it is not in the project)');
+globalThis.__confirmYes = true; await page.locator('.pf-delete').click(); await page.waitForTimeout(300); globalThis.__confirmYes = false;
+ok(!(await page.locator('.pf-item .n').allInnerTexts()).some((n) => n.startsWith('imported.png')) && !fs.existsSync(path.join(root, 'imported.png')), 'Delete sprite removes it from the list (after asking, since it has pixels)');
+await page.evaluate(() => document.getElementById('app').__pf.open('art/items/gem.png')); await page.waitForTimeout(200);
+ok(await page.locator('.pf-delete').isHidden(), 'a new sprite already saved into the project is a real file now: no Delete here');
+await page.evaluate(() => document.getElementById('app').__pf.open('art/slime.png')); await page.waitForTimeout(200);
+ok(await page.locator('.pf-delete').isHidden(), 'nor for the project\'s own sprites');
 
 section('sprite sheet preview');
 await page.locator('.pf-item', { hasText: 'walk.png' }).click(); await page.waitForTimeout(250);
@@ -401,7 +423,7 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
     ok((await gp.locator('.pf-save').innerText()) === 'Saved', 'the Save button says Saved'); }
   await gp.reload(); await gp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current && a.current.path === 'art/hero.png'; });
   ok(!(await gp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'after a reload the last repository reopens by itself');
-  ok(await gp.evaluate(() => document.getElementById('app').__pf.current.px[0]) === RED && /restored from this browser/.test(await gp.locator('.pf-s-info').innerText()), 'and the edited sprite comes back with the edit, opened first');
+  ok(await gp.evaluate(() => document.getElementById('app').__pf.current.px[0]) === RED && /restored from this browser/.test(await gp.locator('.pf-s-note').innerText()), 'and the edited sprite comes back with the edit, opened first');
   ok(await gp.locator('.pf-item .dot.base').count() === 1, 'the list marks it as changed (not in a PR yet)');
   await gp.locator('.pf-prbtn').click(); await gp.waitForSelector('.pf-dlg-pr[open]');
   ok((await gp.locator('.pf-pr-repo').inputValue()) === 'me/game' && (await gp.locator('.pf-pr-base').inputValue()) === 'main' && (await gp.locator('.pf-pr-token').inputValue()) === 'ghp_standalone', 'the PR dialog is prefilled from the connection (repo, branch, token)');
@@ -468,7 +490,7 @@ section('hosted page, fully in the session: upload, edit, download');
   { const px = await app(sp, () => [...document.getElementById('app').__pf.current.px]); ok(px[0] === (0xff00ff00 >>> 0) && px[1 * 4 + 1] >>> 24 === 250, 'with the edit, and every pixel exact (alpha 250 too)'); }
   { const dz = sp.waitForEvent('download'); await sp.locator('.pf-download').click(); await sp.locator('.pf-dlmenu [data-dl="all"]').click(); const z = await dz; const zf = path.join(os.tmpdir(), 'pf-all.zip'); await z.saveAs(zf);
     const r = spawnSync('python3', ['-I', '-c', 'import zipfile,sys; print(",".join(zipfile.ZipFile(sys.argv[1]).namelist()))', zf], { encoding: 'utf8' });
-    ok(z.suggestedFilename() === 'sprites-changed.zip' && r.stdout.trim() === 'my-heart.png', 'Download → all changed sprites gives a .zip: ' + z.suggestedFilename() + ' [' + r.stdout.trim() + ']'); }
+    ok(z.suggestedFilename() === 'Sketches-changed.zip' && r.stdout.trim() === 'my-heart.png', 'Download → all changed sprites gives a .zip: ' + z.suggestedFilename() + ' [' + r.stdout.trim() + ']'); }
   // leaving: only asks while an edit is not kept yet
   { const v2 = await sp.locator('.pf-view').boundingBox(), S1 = await sp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; });
     await sp.mouse.click(v2.x + (S1.ox + 1.5 * S1.z) / S1.k, v2.y + (S1.oy + 1.5 * S1.z) / S1.k); }
@@ -483,12 +505,34 @@ section('hosted page, fully in the session: upload, edit, download');
   // blank sprite path, next to the kept one
   const bp = await sctx.newPage(); await bp.goto(hbase); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; });
   ok((await bp.evaluate(() => document.getElementById('app').__pf.current.px[1 * 4 + 1])) === lastPx && lastPx !== (0xfa0000ff >>> 0), 'a new tab shows the latest edit too');
-  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-dlg-connect[open]');
-  ok(await bp.locator('.pf-c-resume').isHidden(), 'no "resume" offer while already drawing in this browser');
-  await bp.locator('.pf-c-blank').click(); await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
+  ok((await bp.locator('.pf-source').innerText()) === 'Sketches ▾', 'what was drawn without a project shows as "Sketches", a project in this browser');
+  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-dlg-connect[open]'); await bp.waitForSelector('.pf-c-lp');
+  ok((await bp.locator('.pf-c-lp').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()).join('|').startsWith('Sketches 1 sprite · open'), 'the dialog lists the projects in this browser: ' + (await bp.locator('.pf-c-lp').allInnerTexts()).join('|').replace(/\s+/g, ' '));
+  await bp.locator('.pf-c-blank').click(); await bp.waitForSelector('.pf-dlg-new[open]');
+  ok((await bp.locator('.pf-source').innerText()) === 'Untitled 1 ▾' && await bp.locator('.pf-item').count() === 0, 'New blank project starts an empty project in this browser, nothing linked, and asks for the first sprite');
+  await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
   ok((await bp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.path + ' ' + d.w + 'x' + d.h; })) === 'gem.png 8x8', 'a blank sprite starts a new document of the chosen size');
+  await bp.locator('.pf-new').click(); await bp.locator('.pf-nn').fill('scrap.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
   await bp.reload(); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; }); await bp.waitForTimeout(300);
-  { const names = (await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).sort(); ok(names.join() === 'gem.png,my-heart.png', 'both sprites survive a reload: ' + names); }
+  { const names = (await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).sort(); ok(names.join() === 'gem.png,scrap.png' && (await bp.locator('.pf-source').innerText()) === 'Untitled 1 ▾', 'after a reload the same project reopens with its sprites: ' + names); }
+  // delete a sprite that only exists here
+  await bp.evaluate(() => document.getElementById('app').__pf.open('scrap.png')); await bp.waitForTimeout(200);
+  ok(await bp.locator('.pf-delete').isVisible(), 'Delete sprite is offered for a sprite that only exists in this browser');
+  await bp.locator('.pf-delete').click(); await bp.waitForTimeout(500);
+  ok((await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).join() === 'gem.png' && (await bp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'gem.png', 'it disappears (an empty one without asking) and the next sprite opens');
+  await bp.reload(); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; }); await bp.waitForTimeout(300);
+  ok(await bp.locator('.pf-item').count() === 1, 'and it stays deleted after a reload');
+  // switch between projects in this browser, rename, delete
+  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-c-lp');
+  await bp.locator('.pf-c-lp', { hasText: 'Sketches' }).locator('.pf-c-lopen').click(); await bp.waitForFunction(() => document.querySelector('.pf-source').textContent === 'Sketches ▾');
+  ok((await bp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'my-heart.png', 'one click switches to another project in this browser, with its own sprites');
+  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-c-lp');
+  bp.once('dialog', (d) => d.accept('Dungeon tiles')); await bp.locator('.pf-c-lp', { hasText: 'Untitled 1' }).locator('.pf-c-lren').click(); await bp.waitForTimeout(300);
+  ok((await bp.locator('.pf-c-lp').allInnerTexts()).some((t) => t.startsWith('Dungeon tiles')), 'projects can be renamed');
+  bp.once('dialog', (d) => d.accept()); await bp.locator('.pf-c-lp', { hasText: 'Dungeon tiles' }).locator('.pf-c-ldel').click(); await bp.waitForTimeout(500);
+  ok(!(await bp.locator('.pf-c-lp').allInnerTexts()).some((t) => t.startsWith('Dungeon')) && await bp.evaluate(async () => (await window.Spritewright.core.browserDrafts().list('browser:/#' + JSON.parse(localStorage.getItem('pf:local-projects') || '[]').map((x) => x.id)[0])).length) === 0, 'and deleted, with their sprites');
+  await bp.keyboard.press('Escape');
+  ok(!(await bp.locator('.pf-delete').isVisible()) || (await bp.evaluate(() => document.getElementById('app').__pf.current.local)), 'Delete sprite only shows for sprites that exist only here');
   await bp.close();
   ok(net.length === 0, 'the whole session made no network requests beyond the page itself (' + net.length + ')');
   ok(serr.length === 0, 'no page errors ' + serr.join('|'));
@@ -825,7 +869,7 @@ section('changes view: what you changed since opening, and the original on deman
   const at = (x, y, dx = 0.5) => cp.evaluate(([x, y, dx]) => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), d = c.getContext('2d').getImageData(Math.round(S.ox + (x + dx) * S.zoom), Math.round(S.oy + (y + 0.5) * S.zoom), 1, 1).data; return [...d.slice(0, 3)]; }, [x, y, dx]);
   const pos = async (x, y) => { const b = await cp.locator('.pf-view').boundingBox(); const s = await cp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { zoom: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); return { x: b.x + (s.ox + (x + 0.5) * s.zoom) / s.k, y: b.y + (s.oy + (y + 0.5) * s.zoom) / s.k }; };
   await cp.locator('.pf-chex').fill('#00ff00'); await cp.locator('.pf-chex').press('Tab'); await cp.keyboard.press('b');
-  const p0 = await pos(5, 5); await cp.mouse.click(p0.x, p0.y); await cp.waitForTimeout(100);
+  const p0 = await pos(5, 5); await cp.mouse.click(p0.x, p0.y); await cp.waitForFunction(() => /kept in this browser/.test(document.querySelector('.pf-s-name').textContent)); // settled: the status line is rewritten once the edit is kept
   ok(/1 px changed · hold \\ for before/.test(await cp.locator('.pf-s-name').innerText()), 'the status bar counts the changed pixels and says how to see the original');
   const plainBody = await at(4, 4), plainNew = await at(5, 5);
   await cp.keyboard.press('c');

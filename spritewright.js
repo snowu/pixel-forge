@@ -697,7 +697,7 @@
 .pf button:hover:not(:disabled){border-color:var(--pf-accent);color:var(--pf-accent);box-shadow:0 0 0 1px rgba(185,140,255,.12),0 0 14px rgba(185,140,255,.12)}
 .pf button:focus-visible{outline:1px solid var(--pf-accent);outline-offset:1px}
 .pf button:disabled{opacity:.35;cursor:default}
-.pf button.on,.pf button.primary{background:var(--pf-accent);border-color:var(--pf-accent);color:var(--pf-on);font-weight:700}
+.pf button.on,.pf button.primary{background:var(--pf-accent);border-color:var(--pf-accent);color:var(--pf-on)}.pf button.primary{font-weight:700}
 .pf button.on:hover:not(:disabled),.pf button.primary:hover:not(:disabled){color:var(--pf-on);background:#cba8ff}
 .pf input[type=text],.pf input[type=number],.pf input[type=password],.pf select,.pf textarea{background:#05030a;border:1px solid var(--pf-line);padding:5px 7px;min-height:30px;width:100%;color:var(--pf-ink)}
 .pf input:focus,.pf textarea:focus{outline:none;border-color:var(--pf-accent)}
@@ -705,7 +705,7 @@
 .pf input[type=range]{accent-color:var(--pf-accent);width:92px}
 .pf input[type=checkbox]{accent-color:var(--pf-accent)}
 .pf label{display:flex;gap:6px;align-items:center;color:var(--pf-muted)}
-.pf kbd{font:inherit;font-size:11px;background:var(--pf-panel2);border:1px solid var(--pf-line2);padding:1px 6px;color:var(--pf-accent);white-space:nowrap}
+.pf kbd{font:inherit;font-size:11.5px;background:var(--pf-panel2);border:1px solid var(--pf-line2);padding:1px 6px;color:var(--pf-accent);white-space:nowrap}
 .pf h4{margin:0 0 8px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--pf-accent);font-weight:700}
 .pf h4::before{content:"// ";color:var(--pf-faint)}
 .pf-ic{width:16px;height:16px;flex:none;display:block}
@@ -720,20 +720,20 @@
 .pf-item .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}.pf-item small{display:block;color:var(--pf-muted);overflow:hidden;text-overflow:ellipsis}
 .pf-item .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-item .dot.base{background:var(--pf-warn)}
 .pf-list:not(.pf-flat){display:block}
-.pf .pf-dir{display:flex;width:100%;justify-content:flex-start;gap:6px;background:none;border:0;border-bottom:1px solid var(--pf-line);padding:7px 2px 5px;min-height:0;margin-top:6px;color:var(--pf-muted);font-size:11px;letter-spacing:.04em;position:sticky;top:0;z-index:1;background:var(--pf-panel)}
+.pf .pf-dir{display:flex;width:100%;justify-content:flex-start;gap:6px;background:none;border:0;border-bottom:1px solid var(--pf-line);padding:7px 2px 5px;min-height:0;margin-top:6px;color:var(--pf-muted);font-size:11.5px;letter-spacing:.04em;position:sticky;top:0;z-index:1;background:var(--pf-panel)}
 .pf .pf-dir:hover:not(:disabled){box-shadow:none;color:var(--pf-accent)}
-.pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:10.5px}
+.pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}
 .pf-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(60px,1fr));gap:4px;padding:6px 0 4px}
 .pf .pf-cell{flex-direction:column;gap:3px;padding:5px 3px 4px;min-height:0;position:relative;justify-content:flex-start;border:1px solid transparent}
 .pf .pf-cell canvas{width:44px;height:44px;object-fit:contain}
-.pf .pf-cell .n{width:100%;text-align:center;font-size:10.5px;line-height:1.25}.pf .pf-cell small{font-size:9.5px;text-align:center;color:var(--pf-faint)}
+.pf .pf-cell .n{width:100%;text-align:center;font-size:11.5px;line-height:1.25}.pf .pf-cell small{font-size:10.5px;text-align:center;color:var(--pf-faint)}
 .pf .pf-cell.on,.pf .pf-cell.on:hover:not(:disabled){box-shadow:inset 0 0 0 1px var(--pf-accent),0 0 12px rgba(185,140,255,.18)}
 .pf-fam{display:flex;flex-direction:column;gap:6px}.pf-fam-h{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.pf-fam-h b{color:var(--pf-ink)}
 .pf-fam-strip{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
-.pf .pf-fam-m{flex-direction:column;gap:2px;padding:3px;min-height:0;flex:none;font-size:9.5px;color:var(--pf-muted);background:var(--pf-bg)}
+.pf .pf-fam-m{flex-direction:column;gap:2px;padding:3px;min-height:0;flex:none;font-size:10.5px;color:var(--pf-muted);background:var(--pf-bg)}
 .pf .pf-fam-m canvas{width:40px;height:40px;image-rendering:pixelated;object-fit:contain;background:var(--pf-ckbg)}
 .pf .pf-fam-m.on{border-color:var(--pf-accent);color:var(--pf-accent);background:var(--pf-panel2);font-weight:400}.pf .pf-fam-m.playing{box-shadow:0 0 0 1px var(--pf-accent2)}
-.pf .pf-hidden-toggle{width:100%;justify-content:flex-start;text-align:left;white-space:normal;margin:8px 0 4px;font-size:11px;color:var(--pf-muted);border-style:dashed}
+.pf .pf-hidden-toggle{width:100%;justify-content:flex-start;text-align:left;white-space:normal;margin:8px 0 4px;font-size:11.5px;color:var(--pf-muted);border-style:dashed}
 .pf-bg-sw{width:14px;height:14px;border:1px solid var(--pf-line2);background:var(--pf-ckbg);flex:none}
 .pf-bgmenu{position:absolute;z-index:20;background:var(--pf-panel);border:1px solid var(--pf-line2);box-shadow:0 12px 40px rgba(0,0,0,.55);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:210px}
 .pf .pf-bgmenu button{justify-content:flex-start;background:none;border-color:transparent;min-height:30px;width:100%}
@@ -743,7 +743,7 @@
 .pf-ctx{border-top:1px solid var(--pf-line);background:var(--pf-panel);display:flex;flex-direction:column;flex:none}
 .pf-ctx-bar{display:flex;gap:10px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--pf-line)}.pf .pf-ctx-bar .pf-seg button{min-height:24px;padding:1px 8px}
 .pf-ctx-cv{display:block;width:100%;height:150px;image-rendering:pixelated}
-.pf-fam-tools{margin-left:auto;display:inline-flex;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11px}
+.pf-fam-tools{margin-left:auto;display:inline-flex;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11.5px}
 .pf-vision-tag{position:absolute;left:14px;top:12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;background:var(--pf-accent2);color:var(--pf-on);font-weight:700;pointer-events:none}
 .pf[data-vision="grey"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:grayscale(1)}
 .pf[data-vision="protan"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:url(#pf-vision-protan)}
@@ -751,23 +751,23 @@
 .pf[data-vision="tritan"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:url(#pf-vision-tritan)}
 .pf .pf-ref-sprite{width:auto;flex:1;min-width:0}.pf-ref-on{display:flex;flex-direction:column;gap:6px}.pf .pf-refpanel .pf-seg button{min-height:26px;padding:2px 8px}
 .pf-v-shift{display:flex;flex-direction:column;gap:4px}.pf-v-shift input[type=range]{flex:1;width:auto}.pf-v-shift b{min-width:3.2em;text-align:right;color:var(--pf-accent)}
-.pf-v-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.pf-v-col{display:flex;align-items:center;gap:4px;font-size:11px}.pf-v-col i{width:20px;height:20px;border:1px solid var(--pf-line2);flex:none}.pf-v-col input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--pf-line2);background:none}
+.pf-v-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.pf-v-col{display:flex;align-items:center;gap:4px;font-size:11.5px}.pf-v-col i{width:20px;height:20px;border:1px solid var(--pf-line2);flex:none}.pf-v-col input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--pf-line2);background:none}
 .pf-v-preview{display:flex;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-v-preview canvas{image-rendering:pixelated;height:72px}
 .pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}.pf-hist summary h4{display:inline}.pf-hist summary h4::after{content:" ▸";color:var(--pf-faint)}.pf-hist[open] summary h4::after{content:" ▾"}
 .pf-hist-list{display:flex;flex-direction:column;gap:3px;max-height:260px;overflow:auto;margin-top:6px}
 .pf .pf-hist-e{display:grid;grid-template-columns:36px 1fr;gap:2px 8px;text-align:left;justify-content:stretch;align-items:center;background:none;border-color:transparent;padding:4px;min-height:0}
 .pf .pf-hist-e canvas{grid-row:span 2;width:36px;height:36px;image-rendering:pixelated;object-fit:contain;background:var(--pf-ckbg)}
-.pf-hist-e b{font-weight:400;color:var(--pf-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}.pf-hist-e small{color:var(--pf-muted);font-size:10.5px}
+.pf-hist-e b{font-weight:400;color:var(--pf-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}.pf-hist-e small{color:var(--pf-muted);font-size:11.5px}
 .pf .pf-hist-e.on{border-color:var(--pf-accent);background:var(--pf-panel2);font-weight:400}
-.pf-badge{position:absolute;top:2px;right:2px;font-style:normal;font-size:9.5px;line-height:1;padding:2px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted)}
+.pf-badge{position:absolute;top:2px;right:2px;font-style:normal;font-size:10.5px;line-height:1;padding:2px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted)}
 .pf-badge.anim{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent);font-weight:700}
 .pf .pf-cell .dot{position:absolute;top:4px;left:4px}
 .pf-main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .pf-bar,.pf-opts{display:flex;flex-wrap:wrap;gap:6px 14px;padding:7px 10px;border-bottom:1px solid var(--pf-line);background:var(--pf-panel);align-items:center}
-.pf-opts{background:var(--pf-bg);height:46px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;font-size:12px;scrollbar-width:thin}.pf-opt{flex-wrap:nowrap;white-space:nowrap;flex:none}
+.pf-opts{background:var(--pf-bg);height:46px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.pf-opt{flex-wrap:nowrap;white-space:nowrap;flex:none}
 .pf-grp,.pf-opt{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}.pf-opt[hidden]{display:none}
 .pf-grp-end,.pf-opt-end{margin-left:auto}
-.pf-ol{color:var(--pf-faint);text-transform:uppercase;letter-spacing:.1em;font-size:10px;margin-right:2px}
+.pf-ol{color:var(--pf-faint);text-transform:uppercase;letter-spacing:.1em;font-size:10.5px;margin-right:2px}
 .pf-sizev{min-width:1.5em;color:var(--pf-accent)}
 .pf-zl{min-width:3.2em;text-align:center;color:var(--pf-muted)}
 .pf-seg{display:inline-flex;border:1px solid var(--pf-line2)}
@@ -792,8 +792,8 @@
   background-size:12px 1px,1px 12px,12px 1px,1px 12px,12px 1px,1px 12px,12px 1px,1px 12px;
   background-position:0 0,0 0,100% 0,100% 0,0 100%,0 100%,100% 100%,100% 100%;opacity:.55}
 .pf-stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
-.pf-status{display:flex;flex-wrap:wrap;gap:4px 18px;padding:6px 10px;border-top:1px solid var(--pf-line);background:var(--pf-panel);color:var(--pf-muted);font-size:11.5px}
-.pf-status b{color:var(--pf-ink)}.pf-s-sel{color:var(--pf-accent)}
+.pf-status{display:flex;flex-wrap:nowrap;align-items:center;gap:18px;height:30px;box-sizing:border-box;padding:0 10px;white-space:nowrap;overflow:hidden;border-top:1px solid var(--pf-line);background:var(--pf-panel);color:var(--pf-muted);font-size:11.5px}
+.pf-status b{color:var(--pf-ink)}.pf-status>span{flex:none}.pf .pf-status .pf-s-name,.pf .pf-status .pf-s-note{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.pf .pf-status .pf-s-note{flex:1 1 0;text-align:right}.pf-s-pos{min-width:21ch;font-variant-numeric:tabular-nums}.pf-s-sel{color:var(--pf-accent)}
 .pf-sw{display:flex;flex-wrap:wrap;gap:4px}
 .pf .pf-sw button{width:24px;height:24px;min-height:0;padding:0;border:1px solid rgba(0,0,0,.6);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
 .pf .pf-sw button:hover:not(:disabled){box-shadow:0 0 0 1px var(--pf-accent)}
@@ -809,7 +809,8 @@
 .pf-sz-anchorrow{display:flex;gap:10px;align-items:center}.pf-sz-anchor{display:grid;grid-template-columns:repeat(3,26px);gap:3px}
 .pf .pf-sz-anchor button{width:26px;height:26px;min-height:0;padding:0;background:var(--pf-panel2)}.pf .pf-sz-anchor button.on{background:var(--pf-accent);border-color:var(--pf-accent)}
 .pf-sz-prev{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;min-width:170px;min-height:170px;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-sz-cv{image-rendering:pixelated;outline:1px dashed var(--pf-accent)}
-.pf-sz-mode{align-self:flex-start}.pf-sz-info{text-align:center}.pf .pf-sz-quick button{min-width:34px}.pf-c-resume{margin-top:6px}
+.pf-sz-mode{align-self:flex-start}
+.pf-n-line{display:flex;gap:8px;align-items:center}.pf-n-or{color:var(--pf-muted)}.pf .pf-n-line .pf-nw,.pf .pf-n-line .pf-nh{width:64px}.pf .pf-n-line .pf-nn{flex:1;min-width:0}.pf-sz-info{text-align:center}.pf .pf-sz-quick button{min-width:34px}
 .pf-pal-empty[hidden]{display:none}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
 .pf .pf-c-pick.on{border-color:var(--pf-accent)}
@@ -823,15 +824,18 @@
 .pf-c-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pf-c-tile{border:1px solid var(--pf-line);background:var(--pf-bg);padding:12px 14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .pf-c-tile .pf-note{min-height:2.6em}
+.pf-imgtools{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}.pf .pf-imgtools button{padding:0;min-height:0;height:34px;justify-content:center}.pf .pf-imgtools .pf-ic{width:18px;height:18px}.pf .pf-imgtools .pf-delete:hover{color:var(--pf-bad);border-color:var(--pf-bad)}
+.pf-imgtip{min-height:2.6em;margin-top:6px;line-height:1.3}
+.pf-c-locals{display:flex;flex-direction:column;gap:4px;width:100%;max-height:150px;overflow:auto}.pf-c-lp{display:flex;gap:4px}.pf .pf-c-lp .pf-c-lopen{flex:1;justify-content:flex-start;align-items:center;gap:8px;line-height:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pf .pf-c-lp.on .pf-c-lopen{border-color:var(--pf-accent)}.pf .pf-c-lp button{min-height:34px}.pf .pf-c-lopen .pf-note{line-height:1.2;min-height:0}.pf .pf-c-lren,.pf .pf-c-ldel{min-width:34px;padding:0;color:var(--pf-muted)}.pf .pf-c-ldel:hover,.pf .pf-delete:hover{color:var(--pf-bad)}
 .pf-c-foot{text-align:center}.pf-auth-help:empty,.pf-c-addrepo:empty{display:none}
 .pf-auth-row[hidden]{display:none}
-.pf-acct{display:inline-flex;gap:8px;align-items:center;font:12px var(--pf-mono,'JetBrains Mono',ui-monospace,monospace);color:#9a86c4}.pf-acct .pf-who{color:#9a86c4;font-size:12px}
-.pf-acct button{font:inherit;font-size:12px;background:#150e24;color:#e6dcf7;border:1px solid #2a1b45;padding:2px 8px;cursor:pointer}.pf-acct button:hover{border-color:var(--pf-accent,#b98cff);color:var(--pf-accent,#b98cff)}
+.pf-acct{display:inline-flex;gap:8px;align-items:center;font:12.5px var(--pf-mono,'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);color:#9a86c4}.pf-acct .pf-who{color:#9a86c4}
+.pf-acct button{font:inherit;background:#150e24;color:#e6dcf7;border:1px solid #2a1b45;padding:2px 8px;cursor:pointer}.pf-acct button:hover{border-color:var(--pf-accent,#b98cff);color:var(--pf-accent,#b98cff)}
 .pf-side-auth{justify-content:space-between;flex-wrap:nowrap}.pf-side-auth .pf-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pf-side-auth .pf-who:empty{display:none}.pf-side-auth .pf-signin{width:100%}
 .pf .pf-source{width:100%;justify-content:flex-start;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-color:var(--pf-line2);display:block}
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
 .pf .pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pf-tokenbox summary{cursor:pointer;color:var(--pf-muted);font-size:12px}.pf-tokenbox>label,.pf-tokenbox>.pf-note{display:block;margin-top:8px}.pf-tokenbox[hidden]{display:none}
+.pf-tokenbox summary{cursor:pointer;color:var(--pf-muted);font-size:12.5px}.pf-tokenbox>label,.pf-tokenbox>.pf-note{display:block;margin-top:8px}.pf-tokenbox[hidden]{display:none}
 .pf dialog{background:var(--pf-panel);color:var(--pf-ink);border:1px solid var(--pf-line2);box-shadow:0 0 0 1px rgba(185,140,255,.15),0 20px 60px rgba(0,0,0,.6),0 0 40px rgba(185,140,255,.10);padding:18px;width:min(560px,94vw);max-height:92vh;overflow:auto}
 .pf dialog::backdrop{background:rgba(7,4,13,.78);backdrop-filter:blur(2px)}
 .pf-form{display:flex;flex-direction:column;gap:10px}.pf-log:empty{display:none}.pf-log{white-space:pre-wrap;color:var(--pf-muted);max-height:140px;overflow:auto;border:1px solid var(--pf-line);padding:6px;min-height:34px;background:#05030a}
@@ -879,8 +883,29 @@
     my: '<path d="M3 12h18" stroke-dasharray="1.5 2.5"/><path d="M7.5 9L12 4.5 16.5 9z"/><path d="M7.5 15l4.5 4.5 4.5-4.5z"/>',
     sq: '<rect x="6.5" y="6.5" width="11" height="11" fill="currentColor"/>',
     circ: '<circle cx="12" cy="12" r="6" fill="currentColor"/>',
+    fliph: '<path d="M12 3.5v17"/><path d="M9 7.5L4.5 12 9 16.5z" fill="currentColor"/><path d="M15 7.5l4.5 4.5-4.5 4.5z"/>',
+    flipv: '<path d="M3.5 12h17"/><path d="M7.5 9L12 4.5 16.5 9z" fill="currentColor"/><path d="M7.5 15l4.5 4.5 4.5-4.5z"/>',
+    rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19.5 4v4.5H15"/>',
+    outline4: '<rect x="8.5" y="8.5" width="7" height="7" fill="currentColor"/><path d="M8.5 5h7M8.5 19h7M5 8.5v7M19 8.5v7"/>',
+    outline8: '<rect x="8.5" y="8.5" width="7" height="7" fill="currentColor"/><rect x="5" y="5" width="14" height="14"/>',
+    variant: '<rect x="3.5" y="3.5" width="10" height="10"/><rect x="10.5" y="10.5" width="10" height="10" fill="currentColor"/>',
+    left: '<path d="M19.5 12h-15"/><path d="M9.5 7L4.5 12l5 5"/>', right: '<path d="M4.5 12h15"/><path d="M14.5 7l5 5-5 5"/>',
+    up: '<path d="M12 19.5v-15"/><path d="M7 9.5l5-5 5 5"/>', down: '<path d="M12 4.5v15"/><path d="M7 14.5l5 5 5-5"/>',
+    canvas: '<rect x="3.5" y="3.5" width="17" height="17" stroke-dasharray="2.2 2"/><rect x="7.5" y="7.5" width="9" height="9"/>',
+    trim: '<path d="M7 3v14h14"/><path d="M3 7h14v14"/>',
+    clear: '<rect x="4.5" y="4.5" width="15" height="15"/><path d="M9 9l6 6M15 9l-6 6"/>',
+    revert: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 3.5v4h4"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+    trash: '<path d="M4.5 7h15"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v5M14 11v5"/>',
     download: '<path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 17.5v2h15v-2"/>',
   };
+  /* The Image panel: one grid of icon buttons, named in a line below on hover. [class, icon, name, what it does, extra attributes] */
+  const IMAGE_TOOLS = [
+    ['pf-fliph', 'fliph', 'Flip left-right', 'the image, or the selection'], ['pf-flipv', 'flipv', 'Flip up-down', 'the image, or the selection'], ['pf-rot', 'rotate', 'Rotate 90°', 'clockwise; the image, or the selection'],
+    ['pf-outline', 'outline4', 'Outline', '1 pixel in the primary colour around everything opaque, sides only'], ['pf-outline8', 'outline8', 'Outline with corners', 'like Outline, diagonals included'], ['pf-variant', 'variant', 'Make variant…', 'a recoloured copy as new files, with its whole family (every pose and frame), e.g. king → king_dark'],
+    ['pf-sh', 'left', 'Shift left', 'by 1 pixel; what falls off comes back on the other side', ' data-d="-1,0"'], ['pf-sh', 'up', 'Shift up', 'by 1 pixel, wrapping around', ' data-d="0,-1"'], ['pf-sh', 'down', 'Shift down', 'by 1 pixel, wrapping around', ' data-d="0,1"'], ['pf-sh', 'right', 'Shift right', 'by 1 pixel, wrapping around', ' data-d="1,0"'],
+    ['pf-resize', 'canvas', 'Canvas size…', 'grow or cut the canvas, or scale the image (Ctrl+Alt+C, or click the size in the status bar)'], ['pf-trim', 'trim', 'Trim', 'cut away the empty border'],
+    ['pf-clear', 'clear', 'Clear', 'erase every pixel (undo brings them back)'], ['pf-revert', 'revert', 'Revert to original', 'throw away every change to this sprite (undo brings them back)'], ['pf-delete', 'trash', 'Delete sprite', 'it only exists in this browser, never saved into the project', ' hidden'],
+  ];
   const icon = (name) => `<svg class="pf-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   // [id, name, key, rail icon or the rail tool it belongs to]
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
@@ -931,7 +956,7 @@
     };
   }
   /** No project: sprites uploaded or drawn from scratch, living only in this browser until they are downloaded. */
-  const browserSource = () => ({ kind: 'browser', thumbs: false, sprites: [], hidden: [], note: 'Just drawing: these sprites are kept in this browser (they survive reloads). Download them, or open a project.', async read(path) { throw new Error(path + ' only exists in this browser'); } });
+  const browserSource = (id = '', name = '') => ({ kind: 'browser', id, name: name || (id ? 'Untitled' : 'Sketches'), thumbs: false, sprites: [], hidden: [], note: 'A project in this browser: nothing is linked, the sprites are kept here (they survive reloads). Download them when done.', async read(path) { throw new Error(path + ' only exists in this browser'); } });
 
   function mount(host, options = {}) {
     if (!document.getElementById('pf-vision-defs')) { // colour-blind simulations (Machado, Oliveira & Fernandes 2009, full severity), used by CSS filters
@@ -972,7 +997,7 @@
           <div class="pf-stage"><canvas class="pf-view" aria-label="Sprite canvas"></canvas><span class="pf-vision-tag" hidden></span></div>
         </div>
         <div class="pf-ctx" hidden><div class="pf-ctx-bar"><span class="pf-ol">in context</span><span class="pf-seg pf-ctx-scale">${[1, 2, 3, 4].map((n) => `<button data-scale="${n}"${n === 2 ? ' class="on"' : ''}>${n}×</button>`).join('')}</span><span class="pf-note pf-ctx-note"></span></div><canvas class="pf-ctx-cv" aria-label="The sprite in context"></canvas></div>
-        <div class="pf-status"><span class="pf-s-name"></span><span class="pf-s-pos"></span><span class="pf-s-sel"></span><span class="pf-s-info"></span></div>
+        <div class="pf-status"><span class="pf-s-name"></span><span class="pf-s-pos"></span><span class="pf-s-sel"></span><span class="pf-s-note"></span><span class="pf-s-info"></span></div>
       </section>
       <aside class="pf-right">
         <div class="pf-panel"><h4>Colour</h4><div class="pf-cur"><input type="color" class="pf-cpick" aria-label="Current colour"><input type="text" class="pf-chex" maxlength="9" aria-label="Hex colour"></div>
@@ -994,12 +1019,8 @@
             <div class="pf-row"><span class="pf-seg pf-ref-place"><button data-place="under" class="on" title="Behind your pixels">under</button><button data-place="over" title="On top of your pixels">over</button></span><span class="pf-seg pf-ref-fit"><button data-fit="pixels" class="on" title="One image pixel per sprite pixel, from the top-left">1:1</button><button data-fit="fit" title="Scaled to fit the canvas">fit</button></span></div>
             <div class="pf-row"><button class="pf-ref-toggle" title="Show or hide the reference (H)">hide</button><button class="pf-ref-clear">remove</button></div></div></div>
         <details class="pf-panel pf-hist" hidden><summary><h4>History</h4></summary><div class="pf-hist-list"></div><div class="pf-row pf-hist-act" hidden><button class="primary pf-hist-restore">Restore this version</button><span class="pf-note pf-hist-sel"></span></div></details>
-        <div class="pf-panel"><h4>Image</h4><div class="pf-row"><button class="pf-fliph" title="Flip the image, or the selection">Flip ↔</button><button class="pf-flipv">Flip ↕</button><button class="pf-rot" title="Rotate the image, or the selection">Rotate ↻</button></div>
-          <div class="pf-row"><button class="pf-sh" data-d="-1,0">←</button><button class="pf-sh" data-d="0,-1">↑</button><button class="pf-sh" data-d="0,1">↓</button><button class="pf-sh" data-d="1,0">→</button><span class="pf-note">wrap shift</span></div>
-          <div class="pf-row"><button class="pf-variant" title="A recoloured copy of this sprite (and its whole family: every pose and frame) as new files, e.g. king → king_dark">Make variant…</button></div>
-          <div class="pf-row"><button class="pf-outline" title="Draw a 1-pixel outline in the primary colour around everything opaque">Outline</button><label class="pf-note"><input type="checkbox" class="pf-outline-c"> corners</label></div>
-          <div class="pf-row"><button class="pf-resize" title="Change the canvas size, or scale the image (also: click the size in the status bar)">Canvas size…</button><button class="pf-trim" title="Cut away the empty (transparent) border">Trim</button><button class="pf-clear">Clear</button></div>
-          <div class="pf-row"><button class="pf-revert" title="Throw away every change to this sprite and go back to the original (undo brings them back)">Revert to original</button></div></div>
+        <div class="pf-panel pf-imgpanel"><h4>Image</h4><div class="pf-imgtools">${IMAGE_TOOLS.map(([cls, ic, name, tip, extra]) => `<button class="${cls}" aria-label="${name}" data-tip="${esc(name + ': ' + tip)}" title="${esc(name)}"${extra || ''}>${icon(ic)}</button>`).join('')}</div>
+          <div class="pf-note pf-imgtip" aria-live="polite">Point at a button to see what it does</div></div>
       </aside>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
         <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
@@ -1027,7 +1048,7 @@
         </section>
         <div class="pf-c-grid">
           <section class="pf-c-tile pf-c-folderbox"><span class="pf-c-title">Folder on this computer</span><span class="pf-note pf-c-foldernote"></span><button type="button" class="pf-c-folder">Choose folder…</button></section>
-          <section class="pf-c-tile"><span class="pf-c-title">Just draw</span><span class="pf-note">Kept in this browser, even after a reload. Download when done.</span><span class="pf-row"><button type="button" class="pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></span><button type="button" class="pf-c-resume" hidden></button></section>
+          <section class="pf-c-tile pf-c-local"><span class="pf-c-title">Just draw, in this browser</span><span class="pf-note">Nothing to link or sign in to. Kept in this browser, even after a reload; Download when done.</span><span class="pf-row"><button type="button" class="pf-c-blank" title="A new empty project that lives only in this browser">New blank project</button><button type="button" class="pf-c-upload" title="Start a project in this browser from PNG files">Upload PNG…</button></span><div class="pf-c-locals" hidden></div></section>
         </div>
         <div class="pf-log pf-c-msg" aria-live="polite"></div>
         <div class="pf-note pf-c-foot">Tip: drop PNG files onto the canvas at any time.</div></form></dialog>
@@ -1052,10 +1073,9 @@
         <div class="pf-v-preview"></div>
         <div class="pf-row"><button type="button" class="primary pf-v-go">Create</button><button value="cancel">Cancel</button></div></form></dialog>
       <dialog class="pf-dlg-keys"><form method="dialog" class="pf-form"><h4>Keyboard shortcuts</h4><div class="pf-keys"></div><div class="pf-row"><button value="cancel" class="primary">Close</button></div></form></dialog>
-      <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><h4>New sprite</h4>
-        <div class="pf-row"><label>width <input type="number" class="pf-nw" min="1" max="1024" value="16"></label><label>height <input type="number" class="pf-nh" min="1" max="1024" value="16"></label></div>
-        <label>file name <input type="text" class="pf-nn" value="new-sprite.png" placeholder="art/hero.png"></label>
-        <div class="pf-row"><button type="button" class="primary pf-new-ok">Create</button><button value="cancel">Cancel</button></div></form></dialog>
+      <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><div class="pf-dlg-head"><h4>New sprite</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <div class="pf-n-line"><span class="pf-seg pf-n-quick" role="group" aria-label="Common sizes"></span><span class="pf-n-or">or</span><input type="number" class="pf-nw" min="1" max="1024" value="16" aria-label="Width" title="Width"><span class="pf-n-or">×</span><input type="number" class="pf-nh" min="1" max="1024" value="16" aria-label="Height" title="Height"></div>
+        <div class="pf-n-line"><input type="text" class="pf-nn" value="new-sprite.png" placeholder="art/hero.png" aria-label="File name (a path inside the project)" title="File name: a path inside the project, e.g. art/hero.png"><button type="button" class="primary pf-new-ok">Create</button></div></form></dialog>
     </div>`);
     $$dialogs(root);
     if (O.accent) root.style.setProperty('--pf-accent', O.accent);
@@ -1146,10 +1166,8 @@
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
       $('.pf-src').textContent = src.note || '';
-      const label = src.kind === 'github' ? src.repo.slug : src.kind === 'folder' ? src.name : '';
-      $('.pf-source').textContent = label ? label + ' ▾' : 'Open project…'; $('.pf-source').title = (label ? label + ': ' : '') + 'switch to another GitHub repository or a folder on this computer';
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
-      const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src);
+      const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src); sourceButton();
       renderList(); renderPalette(); applyBg();
       if (restored.length) { await openSprite(restored[0].path); note(`${restored.length} sprite${restored.length > 1 ? 's' : ''} with changes restored from this browser`); }
       else if (S.sprites.length) await openSprite(S.sprites[0].path); else { status(); render(); }
@@ -1171,7 +1189,7 @@
         if (last && last.kind === 'github' && O.connect !== false) {
           try { return void (await useSource(await githubSource({ repo: last.slug, branch: last.branch, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase }))); } catch (e) { why = 'Could not reopen ' + last.slug + ': ' + e.message; }
         }
-        await useSource(browserSource(), { remember: !last || last.kind === 'browser' });
+        await useSource(last && last.kind === 'browser' ? browserSource(last.id, localName(last.id)) : browserSource(), { remember: !last || last.kind === 'browser' });
         if (O.blank && !S.docs.size) await addLocal(O.blank.name || 'sprite.png', O.blank.w || 16, O.blank.h || 16, new Uint32Array((O.blank.w || 16) * (O.blank.h || 16)), false);
         else if (!S.docs.size && O.connect !== false) openConnect(why || (last && last.kind === 'folder' ? `Choose the folder "${last.name}" again to pick up where you left off (your unsaved edits are kept in this browser).` : ''));
       } catch (e) { note('Could not start: ' + e.message); }
@@ -1194,9 +1212,60 @@
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
       let path = name, n = 1; while (S.docs.has(path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
-      S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); keepSoon(); return openSprite(path);
+      S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); keepSoon(); sourceButton(); return openSprite(path);
     }
     const canWrite = () => !!(S.src && S.src.write);
+    /** The project button names what is open: a repository, a folder, or a project in this browser (once it has sprites). */
+    function sourceButton() {
+      const src = S.src || {}, label = src.kind === 'github' ? src.repo.slug : src.kind === 'folder' ? src.name : src.kind === 'browser' && (src.id || S.sprites.length) ? src.name : '';
+      $('.pf-source').textContent = label ? label + ' ▾' : 'Open project…';
+      $('.pf-source').title = (label ? label + (src.kind === 'browser' ? ' (in this browser)' : '') + ': ' : '') + 'switch project: a GitHub repository, a folder on this computer, or a project in this browser';
+    }
+
+    /* ---------- projects in this browser: nothing linked, sprites kept in IndexedDB; the list of them lives in localStorage ---------- */
+    const LOCAL_KEY = 'pf:local-projects';
+    const localProjects = () => { try { const l = JSON.parse(localStorage.getItem(LOCAL_KEY) || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
+    const saveLocalProjects = (l) => { try { localStorage.setItem(LOCAL_KEY, JSON.stringify(l)); } catch { /* the projects still work, only the list is not remembered */ } };
+    const localName = (id) => (localProjects().find((x) => x.id === id) || {}).name || (id ? 'Untitled' : 'Sketches');
+    const localKey = (id) => 'browser:' + location.pathname + (id ? '#' + id : '');
+    async function newLocalProject(how = {}) {
+      const list = localProjects(), names = new Set(list.map((x) => x.name)); let n = 1; while (names.has('Untitled ' + n)) n++;
+      const proj = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: 'Untitled ' + n, at: Date.now() };
+      saveLocalProjects([proj, ...list]);
+      if (!(await useSource(browserSource(proj.id, proj.name)))) return false;
+      $('.pf-dlg-connect').close(); if (how.sprite !== false) openNew(); return true;
+    }
+    async function renderLocals() {
+      const box = $('.pf-c-locals'); if (!keeping()) { box.hidden = true; return; }
+      const list = localProjects(); if (!list.some((x) => !x.id)) list.push({ id: '', name: 'Sketches' }); // the default one, from before projects had names
+      const rows = [];
+      for (const x of list) { let c = 0; try { c = (await drafts.list(localKey(x.id))).length; } catch { /* unknown */ } if (x.id || c) rows.push({ ...x, c }); }
+      const cur = S.src && S.src.kind === 'browser' ? S.src.id || '' : null;
+      box.innerHTML = rows.map((x) => `<div class="pf-c-lp${x.id === cur ? ' on' : ''}"><button type="button" class="pf-c-lopen" data-id="${esc(x.id)}" title="Open this project">${esc(x.name)} <span class="pf-note">${x.c} sprite${x.c === 1 ? '' : 's'}${x.id === cur ? ' · open' : ''}</span></button><button type="button" class="pf-c-lren" data-id="${esc(x.id)}" title="Rename">✎</button><button type="button" class="pf-c-ldel" data-id="${esc(x.id)}" title="Delete this project and its sprites from this browser">✕</button></div>`).join('');
+      box.hidden = !rows.length;
+    }
+    async function deleteLocalProject(id) {
+      const name = localName(id); let c = 0; try { c = (await drafts.list(localKey(id))).length; } catch { /* unknown */ }
+      if (!confirm(`Delete "${name}"${c ? ` and its ${c} sprite${c > 1 ? 's' : ''}` : ''} from this browser? This cannot be undone: download anything you want to keep first.`)) return;
+      const open = S.src && S.src.kind === 'browser' && (S.src.id || '') === id;
+      if (open) { S.docs.clear(); S.sprites = []; S.cur = null; } // nothing left to keep for it
+      try { await drafts.clear(localKey(id)); } catch { /* already gone */ }
+      saveLocalProjects(localProjects().filter((x) => x.id !== id));
+      if (open) { await useSource(browserSource()); sourceButton(); renderList(); status(); render(); }
+      note(`deleted "${name}"`); renderLocals();
+    }
+    /** A sprite that exists only here (made or uploaded in this session or kept in this browser, never written to the project) can be deleted. */
+    const deletable = (d) => !!d && (d.local || d.isNew) && !d.onDisk;
+    async function deleteSprite() {
+      const d = doc(); if (!deletable(d)) return;
+      if (d.px.some((v) => v >>> 24) && !confirm(`Delete ${fileName(d)}? It only exists in this browser, so this cannot be undone.`)) return;
+      commitFloat(); S.sel = null; S.float = null;
+      S.docs.delete(d.path); S.sprites = S.sprites.filter((x) => x.path !== d.path); thumbs.delete(d.path);
+      if (drafts && d.kept) try { await drafts.remove(projectKey(), d.path); } catch { /* gone anyway on the next flush */ }
+      const next = S.sprites.find((x) => S.docs.has(x.path)) || S.sprites[0];
+      if (next) await openSprite(next.path); else { S.cur = null; renderList(); renderFamily(); drawPreview(); status(); render(); }
+      sourceButton(); note('deleted ' + fileName(d));
+    }
     /** Save sends this sprite somewhere outside the browser (the project folder, or the page's own save hook). */
     const savesOut = (d) => !!O.save || (canWrite() && !d.local);
 
@@ -1206,7 +1275,7 @@
     const keeping = () => !!drafts && draftsOk;
     const projectKey = () => {
       const s = S.src; if (O.draftsKey) return O.draftsKey;
-      if (!s || s.kind === 'browser') return 'browser:' + location.pathname;
+      if (!s || s.kind === 'browser') return 'browser:' + location.pathname + (s && s.id ? '#' + s.id : '');
       if (s.kind === 'github') return 'github:' + s.repo.slug + '@' + s.branch;
       if (s.kind === 'folder') return 'folder:' + s.name;
       return (s.kind || 'custom') + ':' + location.origin + location.pathname + (O.manifestUrl ? '#' + O.manifestUrl : '');
@@ -1253,7 +1322,7 @@
     const LAST_KEY = 'pf:last';
     const lastProject = () => { try { return JSON.parse(localStorage.getItem(LAST_KEY) || 'null'); } catch { return null; } };
     function rememberProject(src) { // only projects picked on this page; ones given by the page's own options always load anyway
-      const v = src.kind === 'github' ? { kind: 'github', slug: src.repo.slug, branch: src.branch } : src.kind === 'folder' ? { kind: 'folder', name: src.name } : src.kind === 'browser' ? { kind: 'browser' } : null;
+      const v = src.kind === 'github' ? { kind: 'github', slug: src.repo.slug, branch: src.branch } : src.kind === 'folder' ? { kind: 'folder', name: src.name } : src.kind === 'browser' ? { kind: 'browser', id: src.id || '' } : null;
       if (v && !(O.source || O.sprites || O.manifestUrl)) try { localStorage.setItem(LAST_KEY, JSON.stringify(v)); } catch { /* not remembered */ }
     }
 
@@ -1309,16 +1378,18 @@
     let thumbBusy = 0; const thumbQueue = [];
     const thumbSlot = () => new Promise((res) => { if (thumbBusy < 6) { thumbBusy++; res(); } else thumbQueue.push(res); });
     const thumbDone = () => { const next = thumbQueue.shift(); if (next) next(); else thumbBusy--; };
+    /** The list learns a sprite's size from whatever draws it first (its thumbnail, or the sprite itself once open). */
+    function sizeKnown(canvas, s, w, h) { if (s.w && s.h) return; s.w = w; s.h = h; const small = canvas.parentElement && canvas.parentElement.querySelector('small'); if (small) small.textContent = small.textContent.replace(/\?×\?$/, w + '×' + h); }
     async function paintThumb(canvas, s) {
       const d = S.docs.get(s.path);
-      if (d) return drawPx(canvas, d);
+      if (d) { drawPx(canvas, d); return sizeKnown(canvas, s, d.w, d.h); }
       if (!S.src || !S.src.thumbs) return;
       const src = S.src;
       try {
         let bm = thumbs.get(s.path);
         if (!bm) { await thumbSlot(); try { if (S.src !== src) return; bm = await createImageBitmap(new Blob([await src.read(s.path)], { type: 'image/png' })); thumbs.set(s.path, bm); } finally { thumbDone(); } }
         canvas.width = bm.width; canvas.height = bm.height; const c = canvas.getContext('2d'); c.imageSmoothingEnabled = false; c.drawImage(bm, 0, 0);
-        if (!s.w || !s.h) { s.w = bm.width; s.h = bm.height; const small = canvas.parentElement && canvas.parentElement.querySelector('small'); if (small) small.textContent = small.textContent.replace(/\?×\?$/, s.w + '×' + s.h); }
+        sizeKnown(canvas, s, bm.width, bm.height);
       } catch { /* leave blank */ }
     }
 
@@ -1457,9 +1528,10 @@
       const where = !d ? '' : savesOut(d) ? (d.unsaved ? ' · <span class="pf-bad">unsaved</span>' + (keeping() && isKept(d) ? ' (kept in this browser meanwhile)' : '') : d.changed ? ' · saved, not yet in a PR' : '')
         : needsKeep(d) ? (!keeping() ? ' · <span class="pf-bad">not kept: download it before closing</span>' : isKept(d) ? ' · <span class="pf-ok">kept in this browser</span>' + (d.changed && S.src && S.src.kind === 'github' ? ', not in a PR yet' : '') : ' · saving…') : '';
       setHtml($('.pf-s-name'), d ? `<b>${esc(d.path)}</b>${where}${d.changed ? ` · <span class="pf-s-peek" title="Press and hold (or hold \\) to see the original">${d.changedPixels()} px changed · hold \\ for before</span>` : ''}` : 'No sprite open');
-      setHtml($('.pf-s-info'), d ? `<button type="button" class="pf-s-size" title="Canvas size (Ctrl+Alt+C)">${d.w}×${d.h}</button> · zoom ${S.zoom}×${S.notice ? ' · ' + esc(S.notice) : ''}` : esc(S.notice));
+      setHtml($('.pf-s-info'), d ? `<button type="button" class="pf-s-size" title="Canvas size (Ctrl+Alt+C)">${d.w}×${d.h}</button> · zoom ${S.zoom}×` : '');
+      const nt = $('.pf-s-note'); if (nt.textContent !== (S.notice || '')) { nt.textContent = S.notice || ''; nt.title = S.notice || ''; }
       $('.pf-zl').textContent = S.zoom + '×'; $('.pf-s-sel').textContent = S.sel ? `selection ${S.sel.w}×${S.sel.h}${S.float ? ' · floating' : ''}` : '';
-      $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed;
+      $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed; $('.pf-delete').hidden = !deletable(d); $('.pf-revert').hidden = !!d && (d.local || d.isNew) && !d.changed;
       const out = d && savesOut(d), pend = d && !out && needsKeep(d) && !isKept(d);
       $('.pf-save').textContent = !d || out || pend || !keeping() ? 'Save' : 'Saved'; $('.pf-save').classList.toggle('primary', !d || !!out || !!pend || !keeping());
       $('.pf-save').title = out ? 'Save to the project (Ctrl+S). Until then your edits are kept in this browser.' : keeping() ? 'Your edits are kept in this browser as you draw and survive reloads (Ctrl+S keeps them right away). Download or Propose PR to take them out.' : 'This browser cannot keep edits: use Download.';
@@ -1632,8 +1704,7 @@
           if (O.save) await O.save(d, blob); else await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
           d.markSaved(); d.onDisk = true; note('saved ' + d.path);
         } else {
-          await flushDrafts();
-          note(keeping() ? 'kept in this browser: it survives reloads. Download it or propose a PR to take it out.' : 'This browser cannot keep edits: use Download.');
+          await flushDrafts(); if (!keeping()) note('This browser cannot keep edits: use Download.'); // otherwise the status bar already says "kept in this browser"
         }
         changedUi();
       } catch (e) { note('Save failed: ' + e.message); }
@@ -1969,7 +2040,11 @@
     $('.pf-fliph').onclick = () => transformSel((px, w, h) => ({ px: flipH(px, w, h), w, h })) || edit((d) => { d.px = flipH(d.px, d.w, d.h); });
     $('.pf-flipv').onclick = () => transformSel((px, w, h) => ({ px: flipV(px, w, h), w, h })) || edit((d) => { d.px = flipV(d.px, d.w, d.h); });
     $('.pf-rot').onclick = () => transformSel((px, w, h) => ({ px: rotateCW(px, w, h), w: h, h: w })) || edit((d) => { d.px = rotateCW(d.px, d.w, d.h); [d.w, d.h] = [d.h, d.w]; fit(); });
-    $('.pf-outline').onclick = () => { if (isClear(S.color)) return note('Pick an opaque primary colour for the outline.'); commitFloat(); edit((d) => { d.px = outlinePx(d.px, d.w, d.h, S.color, $('.pf-outline-c').checked); }); };
+    const outline = (corners) => { if (isClear(S.color)) return note('Pick an opaque primary colour for the outline.'); commitFloat(); edit((d) => { d.px = outlinePx(d.px, d.w, d.h, S.color, corners); }); };
+    $('.pf-outline').onclick = () => outline(false); $('.pf-outline8').onclick = () => outline(true);
+    { const tips = $('.pf-imgtools'), line = $('.pf-imgtip'), idle = line.textContent; // name the button under the pointer (or keyboard focus)
+      const show = (e) => { const b = e.target.closest('[data-tip]'); line.textContent = b ? b.dataset.tip : idle; };
+      tips.addEventListener('pointerover', show); tips.addEventListener('focusin', show); tips.addEventListener('pointerleave', () => { line.textContent = idle; }); }
     $('.pf-clear').onclick = () => edit((d) => { d.px = new Uint32Array(d.w * d.h); });
     /* canvas size: grow or cut the canvas around an anchor, or scale the image; optionally every frame and pose of the family */
     const sz = { mode: 'canvas', anchor: 'c' };
@@ -2019,10 +2094,26 @@
     $('.pf-revert').onclick = () => { const d = doc(); if (!d || !d.changed) return; commitFloat(); S.sel = null; applySize((x) => ({ px: x.base.px.slice(), w: x.base.w, h: x.base.h }), 'back to the original (Ctrl+Z brings your changes back)'); };
     const dlOutside = (e) => { const m = root.querySelector('.pf-dlmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-download')) closeDlMenu(); };
     document.addEventListener('pointerdown', dlOutside);
-    $('.pf-new').onclick = () => $('.pf-dlg-new').showModal();
+    /* New sprite: the four sizes this project uses most as one-click choices (standard squares when it has fewer), any size by hand */
+    function commonSizes() {
+      const n = new Map(); for (const x of S.sprites) if (x.w && x.h && !x.hiddenByDefault) { const k = x.w + 'x' + x.h; n.set(k, (n.get(k) || 0) + 1); }
+      const top = [...n].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, c]) => { const [w, h] = k.split('x').map(Number); return { w, h, c }; });
+      for (const d of [16, 32, 64, 128]) { if (top.length >= 4) break; if (!top.some((t) => t.w === d && t.h === d)) top.push({ w: d, h: d, c: 0 }); }
+      return top.sort((a, b) => a.w * a.h - b.w * b.h);
+    }
+    const markQuick = () => $$('.pf-n-quick button').forEach((b) => b.classList.toggle('on', b.dataset.w === $('.pf-nw').value && b.dataset.h === $('.pf-nh').value));
+    function openNew() {
+      const sizes = commonSizes(), d = doc();
+      $('.pf-n-quick').innerHTML = sizes.map((x) => `<button type="button" data-w="${x.w}" data-h="${x.h}" title="${x.c ? x.c + ' sprite' + (x.c > 1 ? 's' : '') + ' in this project are this size' : 'a common size'}">${x.w}×${x.h}</button>`).join('');
+      const pick = sizes.find((x) => d && x.w === d.w && x.h === d.h) || sizes.reduce((a, b) => (b.c > a.c ? b : a), sizes[0]); // the open sprite's size, else the project's most used
+      $('.pf-nw').value = pick.w; $('.pf-nh').value = pick.h; markQuick(); $('.pf-dlg-new').showModal();
+    }
+    $('.pf-n-quick').onclick = (e) => { const b = e.target.closest('[data-w]'); if (!b) return; $('.pf-nw').value = b.dataset.w; $('.pf-nh').value = b.dataset.h; markQuick(); };
+    $('.pf-nw').oninput = markQuick; $('.pf-nh').oninput = markQuick;
+    $('.pf-new').onclick = openNew;
     $('.pf-new-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-nw').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-nh').value | 0)); let n = $('.pf-nn').value.trim().replace(/^\/+/, '') || 'new-sprite.png'; if (!/\.png$/i.test(n)) n += '.png'; $('.pf-dlg-new').close(); addLocal(n, w, h, new Uint32Array(w * h), canWrite()); };
-    $('.pf-open').onclick = () => $('.pf-file').click();
-    $('.pf-file').onchange = async (e) => { for (const f of e.target.files) await importFile(f); e.target.value = ''; };
+    $('.pf-open').onclick = () => { uploadToNew = false; $('.pf-file').click(); };
+    $('.pf-file').onchange = async (e) => { const files = [...e.target.files]; e.target.value = ''; if (!files.length) return; if (uploadToNew) { uploadToNew = false; if (!(await newLocalProject({ sprite: false }))) return; } for (const f of files) await importFile(f); };
     async function importFile(f) { try { const img = await decodePng(f); addLocal(f.name, img.w, img.h, img.px); } catch (err) { note('Could not read ' + f.name + ': ' + err.message); } }
     stage.addEventListener('dragover', (e) => e.preventDefault());
     stage.addEventListener('drop', async (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) if (/^image\//.test(f.type)) await importFile(f); });
@@ -2032,16 +2123,22 @@
       if (S.auth.token) loadRepos();
       const canFolder = typeof window.showDirectoryPicker === 'function'; $('.pf-c-folder').disabled = !canFolder; $('.pf-c-foldernote').textContent = canFolder ? 'Saves the PNGs in place. Chrome, Edge and Opera.' : 'Needs Chrome, Edge or Opera.';
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
-      const resume = $('.pf-c-resume'); resume.hidden = true;
-      if (keeping() && !(S.src && S.src.kind === 'browser')) drafts.list('browser:' + location.pathname).then((r) => { if (!r.length) return; resume.hidden = false; resume.textContent = `Resume ${r.length} sprite${r.length > 1 ? 's' : ''} kept in this browser`; }).catch(() => {});
+      renderLocals();
     }
-    $('.pf-c-resume').onclick = async () => { if (await useSource(browserSource())) $('.pf-dlg-connect').close(); };
+    $('.pf-c-locals').onclick = async (e) => {
+      const b = e.target.closest('button[data-id]'); if (!b) return; const id = b.dataset.id;
+      if (b.classList.contains('pf-c-ldel')) return deleteLocalProject(id);
+      if (b.classList.contains('pf-c-lren')) { const n = (prompt('Project name:', localName(id)) || '').trim(); if (!n) return; const l = localProjects(); const x = l.find((p) => p.id === id); if (x) x.name = n; else l.push({ id, name: n, at: Date.now() }); saveLocalProjects(l); if (S.src && S.src.kind === 'browser' && (S.src.id || '') === id) { S.src.name = n; sourceButton(); } return renderLocals(); }
+      if (await useSource(browserSource(id, localName(id)))) $('.pf-dlg-connect').close();
+    };
     $('.pf-source').onclick = () => openConnect();
     authRows('.pf-signin').forEach((b) => (b.onclick = () => { const d = b.closest('dialog'); doSignIn(d && d.querySelector('.pf-c-msg, .pf-log')); }));
     authRows('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
     $('.pf-c-repolist').onclick = (e) => { const b = e.target.closest('.pf-c-pick'); if (!b) return; $('.pf-c-repo').value = b.dataset.repo; $('.pf-c-branch').value = b.dataset.branch; $('.pf-c-gh').click(); };
-    $('.pf-c-upload').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-file').click(); };
-    $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-dlg-new').showModal(); };
+    let uploadToNew = false; // Upload PNG in the dialog starts a project in this browser (unless one is open); Open PNG in the sidebar adds to the open project
+    $('.pf-c-upload').onclick = () => { uploadToNew = !(S.src && S.src.kind === 'browser'); $('.pf-dlg-connect').close(); $('.pf-file').click(); };
+    $('.pf-c-blank').onclick = () => newLocalProject();
+    $('.pf-delete').onclick = deleteSprite;
     $('.pf-c-gh').onclick = async () => {
       const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), typed = S.auth.token ? '' : $('.pf-c-token').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
       try {
