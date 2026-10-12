@@ -469,7 +469,9 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.locator('.pf-brmenu [data-branch="main"]').click();
   await gp.waitForFunction(() => /⎇ main/.test(document.querySelector('.pf-source').textContent));
   ok(/⎇ main/.test(await gp.locator('.pf-source').innerText()), 'and back again');
-  ok((await gp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.w + 'x' + d.h; })) === '16x4' || true, 'opened the first sprite');
+  // useSource names the branch before it opens a sprite: wait for the sprite, not the label.
+  await gp.waitForFunction(() => !!document.getElementById('app').__pf.current);
+  ok(await gp.evaluate(() => { const pf = document.getElementById('app').__pf; return pf.current.path === pf.state.sprites[0].path; }), 'switching branches opens the first sprite again');
   await gp.locator('.pf-item', { hasText: 'hero.png' }).click(); await gp.waitForTimeout(250);
   const gview = await gp.locator('.pf-view').boundingBox();
   const gS = await gp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
