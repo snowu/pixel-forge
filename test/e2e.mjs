@@ -402,6 +402,11 @@ const pullsBefore = calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m ==
 await page.locator('.pf-commit-go').click();
 try { await page.waitForFunction(() => /added to|pull request/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   chunk-two note:', JSON.stringify(await page.locator('.pf-commit-note').innerText())); }
 console.log('   chunk-two state:', JSON.stringify(await page.locator('.pf-commit-note').innerText()), 'pulls POSTs:', calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length, 'api:', calls.filter((c) => /pulls|git\/ref/.test(c.p)).map((c) => c.m + ' ' + c.p).join(' | '));
+const afterCount = calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length;
+const noteHtml = await page.locator('.pf-commit-note').innerHTML;
+console.log('   chunk-two html:', JSON.stringify(noteHtml));
+ok(afterCount === pullsBefore, 'the second chunk opens no new pull request');
+ok(/pull\/4/.test(noteHtml), 'it joins pull request #4: ' + noteHtml.slice(0, 160));
 ok(calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length === pullsBefore && /pull\/4/.test(await page.locator('.pf-commit-note').innerHTML), 'the second chunk joins pull request #4 instead of opening a new one');
 ok(calls.some((c) => c.m === 'PATCH' && /art\/chunks$/.test(c.p)), 'appending to the branch updates its ref');
 await page.locator('.pf-commit-branch').click();
