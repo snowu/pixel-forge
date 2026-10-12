@@ -451,6 +451,8 @@
 .pf-prev canvas{image-rendering:pixelated;background:repeating-conic-gradient(#1a2229 0 25%,#10161a 0 50%) 0 0/8px 8px;max-width:100%;display:block}
 .pf-note{color:var(--pf-muted);font-size:12px}.pf-bad{color:var(--pf-bad)}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px}
+.pf-signed-in .pf-gh-box{order:-1}.pf-dlg-connect h4{order:-2}.pf-c-pick.on{border-color:var(--pf-accent)}
+.pf-source{width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
 .pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-tokenbox summary{cursor:pointer;color:var(--pf-muted);font-size:12px}.pf-tokenbox>label,.pf-tokenbox>.pf-note{display:block;margin-top:8px}.pf-tokenbox[hidden]{display:none}
@@ -489,9 +491,9 @@
     if (!document.getElementById('pf-css')) { const st = document.createElement('style'); st.id = 'pf-css'; st.textContent = CSS; document.head.appendChild(st); }
     const O = Object.assign({ manifestUrl: null, baseUrl: '', save: null, github: null, palette: null, accent: null, pr: true }, options);
     const root = el(`<div class="pf" tabindex="-1">
-      <aside class="pf-side"><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
+      <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
-        <div class="pf-row"><button class="pf-source" title="Connect a GitHub repository or a folder on this computer">Source…</button><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
+        <div class="pf-row"><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
         <div class="pf-note pf-src"></div><input type="file" class="pf-file" accept="image/png,image/*" multiple hidden></aside>
       <section class="pf-main">
         <div class="pf-bar">
@@ -535,7 +537,7 @@
         <div class="pf-box"><b>Just draw</b><div class="pf-note">Upload a PNG, or start a blank sprite. You work on it in this browser tab and download the result. Nothing is sent anywhere.</div>
           <div class="pf-row"><button type="button" class="primary pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></div></div>
         <div class="pf-note pf-conn-intro">Or work on a whole project: a GitHub repository (changes go back as a pull request) or a folder on this computer (saves in place).</div>
-        <div class="pf-box"><b>GitHub repository</b>
+        <div class="pf-box pf-gh-box"><b>GitHub repository</b>
           <div class="pf-row pf-auth-row"><button type="button" class="primary pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div class="pf-note pf-auth-help"></div>
           <div class="pf-c-mine" hidden><div class="pf-c-repolist"></div><div class="pf-note pf-c-addrepo"></div></div>
           <label>Repository <input type="text" class="pf-c-repo" list="pf-repos" placeholder="owner/name" autocomplete="off"></label><datalist id="pf-repos"></datalist>
@@ -601,14 +603,14 @@
       $$('.pf-auth-row').forEach((r) => { r.querySelector('.pf-signin').hidden = on || !authBase; r.querySelector('.pf-signout').hidden = !on; r.querySelector('.pf-who').textContent = on ? 'Signed in as ' + (S.auth.login || 'GitHub user') : ''; });
       $$('.pf-auth-help').forEach((h) => { h.innerHTML = authBase ? (on ? '' : 'Sign in once and pick a repository you own or collaborate on. Edits go back as a pull request, no tokens to paste.') : `Sign-in is not set up on this page. Paste a token instead: <a href="${PAT_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">create one with the right permissions</a> (Contents and Pull requests: read and write, only for your repository).`; });
       $$('.pf-tokenbox').forEach((d) => { d.open = !authBase; d.hidden = on; });
-      $('.pf-c-mine').hidden = !on;
+      $('.pf-c-mine').hidden = !on; $('.pf-dlg-connect .pf-form').classList.toggle('pf-signed-in', on);
       if (!on) { S.repos = null; $('#pf-repos').innerHTML = ''; }
     }
     const installUrl = () => (O.githubApp ? `https://github.com/apps/${encodeURIComponent(O.githubApp)}/installations/select_target` : '');
     function renderRepos() {
       const list = $('.pf-c-repolist'), add = $('.pf-c-addrepo'), repos = S.repos || [], link = installUrl();
       list.innerHTML = S.repos == null ? '<div class="pf-note">Loading your repositories…</div>' : repos.length
-        ? repos.map((r) => `<button type="button" class="pf-c-pick" data-repo="${esc(r.name)}" data-branch="${esc(r.branch || '')}"><b>${esc(r.name)}</b><span class="pf-note">${r.private ? 'private · ' : ''}${r.push ? 'pull requests' : 'read only'}</span></button>`).join('')
+        ? repos.map((r) => `<button type="button" class="pf-c-pick${S.src && S.src.kind === 'github' && S.src.repo.slug === r.name ? ' on' : ''}" data-repo="${esc(r.name)}" data-branch="${esc(r.branch || '')}"><b>${esc(r.name)}</b><span class="pf-note">${S.src && S.src.kind === 'github' && S.src.repo.slug === r.name ? 'open now · ' : ''}${r.private ? 'private · ' : ''}${r.push ? 'pull requests' : 'read only'}</span></button>`).join('')
         : '<div class="pf-note">No repositories yet.</div>';
       $('#pf-repos').innerHTML = repos.map((r) => `<option value="${esc(r.name)}">`).join('');
       add.innerHTML = link ? `Missing one? <a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">Install the app on it</a> (you, or the repository's owner), then reopen this dialog.` : '';
@@ -640,6 +642,9 @@
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
       $('.pf-src').textContent = src.note || '';
+      const label = src.kind === 'github' ? src.repo.slug : src.kind === 'folder' ? src.name : '';
+      $('.pf-source').textContent = label ? label + ' ▾' : 'Open project…'; $('.pf-source').title = (label ? label + ': ' : '') + 'switch to another GitHub repository or a folder on this computer';
+      $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
       renderList(); renderPalette();
       if (S.sprites.length) await openSprite(S.sprites[0].path); else { status(); render(); }
       return true;

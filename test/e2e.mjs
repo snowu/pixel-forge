@@ -338,6 +338,11 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
     if (p === '/user/installations') return j({ installations: [{ id: 1 }] });
     if (p === '/user/installations/1/repositories') return j({ repositories: [{ full_name: 'me/game', private: true, default_branch: 'main', permissions: { push: true } }, { full_name: 'them/art-only', default_branch: 'master', permissions: { push: false, pull: true } }] });
     if (p === '/repos/me/game') return j({ default_branch: 'main', permissions: { push: true } });
+    if (p === '/repos/them/art-only') return j({ default_branch: 'master', permissions: { push: false } });
+    if (p === '/repos/them/art-only/git/ref/heads/master') return j({ object: { sha: 'd1' } });
+    if (p === '/repos/them/art-only/git/commits/d1') return j({ tree: { sha: 'u1' } });
+    if (p === '/repos/them/art-only/git/trees/u1') return j({ tree: [{ path: 'gfx/b.png', type: 'blob', sha: 'sha0', size: 99 }, { path: 'gfx/c.png', type: 'blob', sha: 'sha0', size: 99 }], truncated: false });
+    if (p === '/repos/them/art-only/git/blobs/sha0') return j({ encoding: 'base64', content: encodePng(4, 4, Buffer.alloc(64)).toString('base64') });
     if (p === '/repos/me/game/git/ref/heads/main') return j({ object: { sha: 'c1' } });
     if (p === '/repos/me/game/git/commits/c1') return j({ tree: { sha: 't1' } });
     if (p === '/repos/me/game/git/trees/t1') return j({ tree: [{ path: 'art/a.png', type: 'blob', sha: 'sha0', size: 99 }], truncated: false });
@@ -386,10 +391,23 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   const renewed = await ap.evaluate(() => JSON.parse(localStorage.getItem('pf:gh')));
   ok(renewed.token === 'ghu_renewed' && renewed.refresh === 'ghr_2' && renewed.login === 'artist', 'the renewed token and the new single-use refresh token are stored');
   ap.removeAllListeners('dialog'); ap.on('dialog', (d) => d.dismiss());
-  // 5. sign out
+  // 5. switching repositories: the toolbar button names the open one, the list marks it, and pull requests follow the switch
+  await ap.locator('.pf-c-pick', { hasText: 'me/game' }).click(); await ap.waitForFunction(() => document.querySelector('.pf-source').textContent.includes('me/game'));
+  ok((await ap.locator('.pf-source').innerText()) === 'me/game ▾', 'the project button shows the open repository: ' + await ap.locator('.pf-source').innerText());
+  await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-dlg-connect[open] .pf-c-pick.on');
+  ok(/open now/.test(await ap.locator('.pf-c-pick.on').innerText()) && /me\/game/.test(await ap.locator('.pf-c-pick.on').innerText()), 'the list marks the repository that is open now');
+  ok(await ap.evaluate(() => { const f = document.querySelector('.pf-dlg-connect .pf-form'); return f.querySelector('.pf-gh-box').getBoundingClientRect().top < f.querySelector('.pf-c-upload').getBoundingClientRect().top; }), 'when signed in, your repositories come first in the dialog');
+  await ap.locator('.pf-c-pick', { hasText: 'them/art-only' }).click(); await ap.waitForFunction(() => document.querySelector('.pf-source').textContent.includes('them/art-only'));
+  ok(await ap.locator('.pf-dlg-connect').isHidden() && (await ap.locator('.pf-item').allInnerTexts()).join().includes('b.png'), 'one click switches to the other repository and lists its sprites');
+  await ap.waitForFunction(() => document.getElementById('app').__pf.current); await ap.waitForTimeout(200); await ap.keyboard.press('b'); await ap.locator('.pf-view').click();
+  await ap.locator('.pf-prbtn').click(); await ap.waitForSelector('.pf-dlg-pr[open]');
+  ok((await ap.locator('.pf-pr-repo').inputValue()) === 'them/art-only' && (await ap.locator('.pf-pr-base').inputValue()) === 'master', 'after switching, the pull request goes to the new repository, not the old one');
+  await ap.locator('.pf-dlg-pr button[value=cancel]').click();
+  ap.removeAllListeners('dialog'); ap.on('dialog', (d) => d.accept()); await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-dlg-connect[open]');
+  // 6. sign out
   await ap.locator('.pf-dlg-connect .pf-signout').click();
   ok(await ap.evaluate(() => localStorage.getItem('pf:gh')) === null && await ap.locator('.pf-dlg-connect .pf-signin').isVisible() && await ap.locator('.pf-c-mine').isHidden() && await ap.locator('.pf-dlg-connect .pf-tokenbox').isVisible(), 'sign out forgets the sign-in on this device and hides the list');
-  // 6. a refused login shows the reason and signs nobody in
+  // 7. a refused login shows the reason and signs nobody in
   mode = 'denied'; await ap.locator('.pf-dlg-connect .pf-signin').click();
   await ap.waitForFunction(() => /denied access/.test(document.querySelector('.pf-c-msg').textContent));
   ok(await ap.evaluate(() => localStorage.getItem('pf:gh')) === null && await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'a denied sign-in explains why and leaves you signed out');
