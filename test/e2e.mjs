@@ -406,7 +406,6 @@ const afterCount = calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m ===
 const noteHtml = await page.locator('.pf-commit-note').innerHTML();
 ok(afterCount === pullsBefore, 'the second chunk opens no new pull request');
 ok(/pull\/4/.test(noteHtml), 'it joins pull request #4');
-ok(calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length === pullsBefore && /pull\/4/.test(await page.locator('.pf-commit-note').innerHTML), 'the second chunk joins pull request #4 instead of opening a new one');
 ok(calls.some((c) => c.m === 'PATCH' && /art\/chunks$/.test(c.p)), 'appending to the branch updates its ref');
 await page.locator('.pf-commit-branch').click();
 ok(await until(async () => (await page.locator('#pf-branchlist option').count()) >= 2), 'the branch picker lists the repository branches');
