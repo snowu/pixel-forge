@@ -43,7 +43,7 @@ const until = async (fn, ms = 4000) => { const t = Date.now(); while (Date.now()
 const setHex = async (h) => { await page.locator('.pf-chex').fill(h); await page.locator('.pf-chex').press('Tab'); };
 
 section('opening a project');
-await page.goto(base); await page.waitForSelector('.pf-item');
+await page.goto(base + '?auth=off'); await page.waitForSelector('.pf-item'); // token mode; sign-in is covered by the hosted-page tests below
 ok((await page.locator('.pf-item').count()) === 2, 'the two sprites are listed');
 ok((await page.locator('.pf-s-name').innerText()).includes('art/enemies/walk.png') || (await page.locator('.pf-s-name').innerText()).includes('art/enemies'), 'the first sprite opens: ' + (await page.locator('.pf-s-name').innerText()));
 await page.locator('.pf-item', { hasText: 'slime.png' }).click(); await page.waitForTimeout(150);
@@ -226,7 +226,7 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
     return j(404, { message: 'unexpected ' + m + ' ' + p });
   });
   const gp = await gctx.newPage(); const gerr = []; gp.on('pageerror', (e) => gerr.push(e.message)); gp.on('dialog', (d) => d.dismiss());
-  await gp.goto(sbase); await gp.waitForSelector('.pf-dlg-connect[open]');
+  await gp.goto(sbase + '?auth=off'); await gp.waitForSelector('.pf-dlg-connect[open]');
   ok(true, 'with no server and no manifest the page asks which project to open');
   ok(await gp.locator('.pf-item').count() === 0, 'and lists nothing yet');
   await gp.locator('.pf-c-repo').fill('nope/x'); await gp.locator('.pf-c-gh').click(); await gp.waitForFunction(() => /not found/i.test(document.querySelector('.pf-c-msg').textContent));
@@ -315,11 +315,14 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   const stat = http.createServer((req, res) => { const u = req.url.split('?')[0]; const f = u === '/spritewright.js' ? 'spritewright.js' : u === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
   await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const hbase = `http://127.0.0.1:${stat.address().port}/`;
   const actx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
-  const seen = []; let mode = 'ok';
+  const seen = [], refreshes = [], logins = []; let mode = 'ok';
   await actx.route('https://auth.test/**', async (route) => {
-    const u = new URL(route.request().url()); if (u.pathname !== '/login') return route.fulfill({ status: 404, body: 'x' });
+    const u = new URL(route.request().url());
+    if (u.pathname === '/refresh') { refreshes.push(JSON.parse(route.request().postData()).refresh_token); return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ token: 'ghu_renewed', expires_in: 28800, refresh_token: 'ghr_2', refresh_token_expires_in: 15811200 }) }); }
+    if (u.pathname !== '/login') return route.fulfill({ status: 404, body: 'x' });
+    logins.push(1);
     const origin = u.searchParams.get('origin'), nonce = u.searchParams.get('nonce');
-    const msg = mode === 'ok' ? { type: 'pf-auth', nonce, token: 'gho_fromsignin', expires_in: 28800 } : { type: 'pf-auth', nonce, error: 'The user denied access' };
+    const msg = mode === 'ok' ? { type: 'pf-auth', nonce, token: 'gho_fromsignin', expires_in: 28800, refresh_token: 'ghr_1', refresh_token_expires_in: 15811200 } : { type: 'pf-auth', nonce, error: 'The user denied access' };
     route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>opener.postMessage(${JSON.stringify(msg)}, ${JSON.stringify(origin)}); window.close();</script>` });
   });
   await actx.route('https://api.github.com/**', async (route) => {
@@ -327,8 +330,13 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
     const j = (o) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(o) });
     if (r.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,accept,x-github-api-version', 'access-control-allow-methods': '*' } });
     if (p === '/user') return j({ login: 'artist', name: 'An Artist' });
+    if (r.method() === 'POST' && p === '/repos/me/game/git/blobs') return j({ sha: 'b1' });
+    if (r.method() === 'POST' && p === '/repos/me/game/git/trees') return j({ sha: 't2' });
+    if (r.method() === 'POST' && p === '/repos/me/game/git/commits') return j({ sha: 'c2' });
+    if (r.method() === 'POST' && p === '/repos/me/game/git/refs') return j({});
+    if (r.method() === 'POST' && p === '/repos/me/game/pulls') return j({ html_url: 'https://github.com/me/game/pull/9', number: 9 });
     if (p === '/user/installations') return j({ installations: [{ id: 1 }] });
-    if (p === '/user/installations/1/repositories') return j({ repositories: [{ full_name: 'me/game' }, { full_name: 'me/art-only' }] });
+    if (p === '/user/installations/1/repositories') return j({ repositories: [{ full_name: 'me/game', private: true, default_branch: 'main', permissions: { push: true } }, { full_name: 'them/art-only', default_branch: 'master', permissions: { push: false, pull: true } }] });
     if (p === '/repos/me/game') return j({ default_branch: 'main', permissions: { push: true } });
     if (p === '/repos/me/game/git/ref/heads/main') return j({ object: { sha: 'c1' } });
     if (p === '/repos/me/game/git/commits/c1') return j({ tree: { sha: 't1' } });
@@ -350,24 +358,41 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   await ap.locator('.pf-dlg-connect .pf-signin').click();
   await ap.waitForFunction(() => /Signed in as artist/.test(document.querySelector('.pf-dlg-connect .pf-who').textContent));
   ok(await ap.locator('.pf-dlg-connect .pf-signout').isVisible() && await ap.locator('.pf-dlg-connect .pf-signin').isHidden(), 'the popup login completes and the dialog shows who is signed in');
-  ok((await ap.locator('.pf-c-token').inputValue()) === 'gho_fromsignin', 'the token fills the token field');
-  const opts = await ap.locator('#pf-repos option').evaluateAll((os) => os.map((o) => o.value)); ok(opts.join() === 'me/game,me/art-only', 'repository suggestions come from the app installations: ' + opts.join());
-  await ap.locator('.pf-c-repo').fill('me/game'); await ap.locator('.pf-c-gh').click(); await ap.waitForSelector('.pf-item');
-  ok(seen.filter((x) => x.p.startsWith('/repos/me/game')).every((x) => x.auth === 'Bearer gho_fromsignin'), 'repository calls use the signed-in token');
-  ok(await ap.evaluate(() => sessionStorage.getItem('pf:authtoken')) === 'gho_fromsignin' && await ap.evaluate(() => localStorage.getItem('pf:token')) === null, 'the token lives in this tab\'s session storage only');
-  // 3. the PR dialog shows the same sign-in and pre-fills the token
+  ok(await ap.locator('.pf-dlg-connect .pf-tokenbox').isHidden(), 'once signed in there is no token field at all');
+  await ap.waitForSelector('.pf-c-pick');
+  const picks = await ap.locator('.pf-c-pick').allInnerTexts();
+  ok(picks.length === 2 && /me\/game/.test(picks[0]) && /private · pull requests/.test(picks[0]) && /them\/art-only/.test(picks[1]) && /read only/.test(picks[1]), 'your repositories are listed with what you can do on each: ' + picks.join(' | ').replace(/\n/g, ' '));
+  if (process.env.PF_SHOTS) { await ap.locator('.pf-dlg-connect').screenshot({ path: process.env.PF_SHOTS + '/signed-in.png' }); await ap.setViewportSize({ width: 390, height: 844 }); await ap.screenshot({ path: process.env.PF_SHOTS + '/signed-in-phone.png' }); await ap.setViewportSize({ width: 1280, height: 900 }); }
+  ok(/github\.com\/apps\/spritewright\/installations\/select_target/.test(await ap.locator('.pf-c-addrepo a').getAttribute('href')), 'a link to install the app on more repositories sits under the list');
+  await ap.locator('.pf-c-pick', { hasText: 'me/game' }).click(); await ap.waitForSelector('.pf-item');
+  ok(seen.filter((x) => x.p.startsWith('/repos/me/game')).every((x) => x.auth === 'Bearer gho_fromsignin'), 'one click opens it, with the signed-in token');
+  const stored = await ap.evaluate(() => JSON.parse(localStorage.getItem('pf:gh')));
+  ok(stored.token === 'gho_fromsignin' && stored.refresh === 'ghr_1' && stored.login === 'artist' && stored.exp > Date.now() && await ap.evaluate(() => sessionStorage.getItem('pf:token') === null && localStorage.getItem('pf:token') === null), 'the sign-in is remembered on this device (and no token is stored the old way)');
+  // 3. the PR dialog is signed in too
   await ap.waitForFunction(() => document.getElementById('app').__pf.current); await ap.waitForTimeout(300);
   await ap.locator('.pf-chex').fill('#ff0000'); await ap.locator('.pf-chex').press('Tab'); await ap.keyboard.press('b'); await ap.locator('.pf-view').click();
   ok(!(await ap.locator('.pf-prbtn').isDisabled()), 'after an edit, Propose PR is available');
-  { await ap.locator('.pf-prbtn').click(); await ap.waitForSelector('.pf-dlg-pr[open]'); ok(/Signed in as artist/.test(await ap.locator('.pf-dlg-pr .pf-who').innerText()) && (await ap.locator('.pf-pr-token').inputValue()) === 'gho_fromsignin', 'the pull request dialog is signed in too, with the token pre-filled'); await ap.locator('.pf-dlg-pr button[value=cancel]').click(); }
-  // 4. sign out
-  await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-dlg-connect[open]');
+  { await ap.locator('.pf-prbtn').click(); await ap.waitForSelector('.pf-dlg-pr[open]'); ok(/Signed in as artist/.test(await ap.locator('.pf-dlg-pr .pf-who').innerText()) && await ap.locator('.pf-dlg-pr .pf-tokenbox').isHidden(), 'the pull request dialog is signed in too, no token to paste');
+    await ap.locator('.pf-pr-go').click(); await ap.waitForFunction(() => /pull\/9/.test(document.querySelector('.pf-log').textContent), null, { timeout: 15000 });
+    ok(seen.filter((x) => x.p === '/repos/me/game/pulls').length === 1 && seen.every((x) => !x.auth || x.auth === 'Bearer gho_fromsignin'), 'Create pull request works with the sign-in alone');
+    await ap.locator('.pf-dlg-pr button[value=cancel]').click();
+    await ap.keyboard.press('b'); await ap.locator('.pf-view').click({ position: { x: 300, y: 300 } }); } // an unsaved edit again, for the leave-site check below
+  // 4. sign in once: a new visit is still signed in, and an expiring token is renewed quietly
+  ap.removeAllListeners('dialog'); ap.on('dialog', (d) => d.accept()); // accept "leave site?" for the unsaved edit
+  await ap.evaluate(() => { const a = JSON.parse(localStorage.getItem('pf:gh')); a.exp = Date.now() + 30000; localStorage.setItem('pf:gh', JSON.stringify(a)); });
+  await ap.goto(hbase + '?auth=https://auth.test'); await ap.waitForSelector('.pf-dlg-connect[open]'); await ap.waitForSelector('.pf-c-pick');
+  ok(/Signed in as artist/.test(await ap.locator('.pf-dlg-connect .pf-who').innerText()) && logins.length === 1, 'coming back later: still signed in, no popup');
+  ok(refreshes.join() === 'ghr_1' && seen.at(-1).auth === 'Bearer ghu_renewed', 'a token about to expire was renewed through the service before use');
+  const renewed = await ap.evaluate(() => JSON.parse(localStorage.getItem('pf:gh')));
+  ok(renewed.token === 'ghu_renewed' && renewed.refresh === 'ghr_2' && renewed.login === 'artist', 'the renewed token and the new single-use refresh token are stored');
+  ap.removeAllListeners('dialog'); ap.on('dialog', (d) => d.dismiss());
+  // 5. sign out
   await ap.locator('.pf-dlg-connect .pf-signout').click();
-  ok((await ap.locator('.pf-c-token').inputValue()) === '' && await ap.evaluate(() => sessionStorage.getItem('pf:authtoken')) === null && await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'sign out clears the token everywhere');
-  // 5. a refused login shows the reason and signs nobody in
+  ok(await ap.evaluate(() => localStorage.getItem('pf:gh')) === null && await ap.locator('.pf-dlg-connect .pf-signin').isVisible() && await ap.locator('.pf-c-mine').isHidden() && await ap.locator('.pf-dlg-connect .pf-tokenbox').isVisible(), 'sign out forgets the sign-in on this device and hides the list');
+  // 6. a refused login shows the reason and signs nobody in
   mode = 'denied'; await ap.locator('.pf-dlg-connect .pf-signin').click();
   await ap.waitForFunction(() => /denied access/.test(document.querySelector('.pf-c-msg').textContent));
-  ok((await ap.locator('.pf-c-token').inputValue()) === '' && await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'a denied sign-in explains why and leaves you signed out');
+  ok(await ap.evaluate(() => localStorage.getItem('pf:gh')) === null && await ap.locator('.pf-dlg-connect .pf-signin').isVisible(), 'a denied sign-in explains why and leaves you signed out');
   ok(aerr.length === 0, 'no page errors ' + aerr.join('|'));
   await actx.close(); stat.close();
 }

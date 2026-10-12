@@ -40,6 +40,8 @@ export interface MountOptions {
   pr?: boolean;
   /** URL of the sign-in service (see worker/): enables the "Sign in with GitHub" button. */
   authBase?: string;
+  /** Slug of the GitHub App used for sign-in; when set, the repository list links to installing it on more repositories. */
+  githubApp?: string;
   /** Alternative GitHub API base (GitHub Enterprise, tests). */
   apiBase?: string;
 }
@@ -91,10 +93,14 @@ export const sources: {
   serverSource(manifest: { sprites: SpriteEntry[]; palette?: string[] | null; repo?: RepoInfo | null }, token?: string): Source;
   applyConfig<T extends { path: string }>(items: T[], config?: { dirs?: string[]; ignore?: string[]; exclude?: string[]; frames?: Record<string, { w: number; h: number; fps?: number }> }): T[];
 };
+export interface Grant { token: string; expiresIn: number | null; refreshToken: string | null; refreshExpiresIn: number | null }
 export const auth: {
-  signIn(authBase: string): Promise<{ token: string; expiresIn: number | null }>;
+  signIn(authBase: string): Promise<Grant>;
+  /** Renew an expiring GitHub App user token through the auth service. */
+  refresh(authBase: string, refreshToken: string): Promise<Grant>;
   user(token: string, o?: { apiBase?: string }): Promise<{ login: string; name: string }>;
-  listRepos(token: string, o?: { apiBase?: string }): Promise<string[]>;
+  listRepos(token: string, o?: { apiBase?: string; details?: false }): Promise<string[]>;
+  listRepos(token: string, o: { apiBase?: string; details: true }): Promise<{ name: string; private: boolean; push: boolean; branch: string | null }[]>;
   explainError(status: number, message: string, what: string, repo?: string): string;
   tokenUrl: string;
 };

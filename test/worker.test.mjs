@@ -30,8 +30,8 @@ test('callback exchanges the code with the secret and posts the token to the ver
   assert.equal(sent.url, 'https://github.com/login/oauth/access_token');
   assert.deepEqual(sent.body, { client_id: 'Iv1.test', client_secret: 'sekrit', code: 'abc', redirect_uri: 'https://auth.example/callback' });
   const html = await r.text();
-  assert.match(html, /postMessage\(\{"type":"pf-auth","nonce":"abababab[a-f0-9]*","token":"ghu_secrettoken","expires_in":28800\},"https:\/\/snowu\.github\.io"\)/);
-  assert.ok(!html.includes('ghr_x') && !html.includes('sekrit'), 'the refresh token and the client secret never reach the page');
+  assert.match(html, /postMessage\(\{"type":"pf-auth","nonce":"abababab[a-f0-9]*","token":"ghu_secrettoken","expires_in":28800,"refresh_token":"ghr_x","refresh_token_expires_in":null\},"https:\/\/snowu\.github\.io"\)/);
+  assert.ok(!html.includes('sekrit'), 'the client secret never reaches the page');
   assert.match(r.headers.get('cache-control'), /no-store/); assert.match(r.headers.get('content-security-policy'), /default-src 'none'/);
 });
 
@@ -64,4 +64,30 @@ test('only GET is served, health works, and a missing secret is a clear server e
   assert.deepEqual(await (await handle(req('/health'), env)).json(), { ok: true });
   assert.equal((await handle(req('/nope'), env)).status, 404);
   assert.equal((await handle(req('/login'), { ...env, GITHUB_CLIENT_SECRET: '' })).status, 500);
+});
+
+test('refresh trades a refresh token for a new access token, only for allowed origins', async () => {
+  const post = (body, origin = 'https://snowu.github.io', method = 'POST') => new Request('https://auth.example/refresh', { method, headers: { origin, 'content-type': 'text/plain' }, body: method === 'POST' ? JSON.stringify(body) : undefined });
+  let sent;
+  const gh = async (url, init) => { sent = { url, body: JSON.parse(init.body) }; return { json: async () => ({ access_token: 'ghu_new', expires_in: 28800, refresh_token: 'ghr_next', refresh_token_expires_in: 15811200 }) }; };
+  const r = await handle(post({ refresh_token: 'ghr_old' }), env, gh);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('access-control-allow-origin'), 'https://snowu.github.io');
+  assert.deepEqual(sent.body, { client_id: 'Iv1.test', client_secret: 'sekrit', grant_type: 'refresh_token', refresh_token: 'ghr_old' });
+  assert.deepEqual(await r.json(), { token: 'ghu_new', expires_in: 28800, refresh_token: 'ghr_next', refresh_token_expires_in: 15811200 });
+  const never = async () => { throw new Error('must not call GitHub'); };
+  assert.equal((await handle(post({ refresh_token: 'ghr_old' }, 'https://evil.example'), env, never)).status, 403, 'other sites cannot use it');
+  assert.equal((await handle(post({}), env, never)).status, 400);
+  const pre = await handle(post(null, 'https://snowu.github.io', 'OPTIONS'), env, never);
+  assert.equal(pre.status, 204); assert.match(pre.headers.get('access-control-allow-methods'), /POST/);
+  const expired = await handle(post({ refresh_token: 'ghr_used' }), env, async () => ({ json: async () => ({ error: 'bad_refresh_token', error_description: 'The refresh token passed is incorrect or expired.' }) }));
+  assert.equal(expired.status, 401); assert.match((await expired.json()).error, /incorrect or expired/);
+});
+
+test('loopback origins are allowed only when ALLOW_LOOPBACK is on', async () => {
+  const login = (origin, e) => handle(req(`/login?origin=${encodeURIComponent(origin)}&nonce=${NONCE}`), e);
+  assert.equal((await login('http://localhost:5173', { ...env, ALLOWED_ORIGINS: 'https://snowu.github.io' })).status, 403);
+  const lb = { ...env, ALLOWED_ORIGINS: 'https://snowu.github.io', ALLOW_LOOPBACK: 'true' };
+  for (const o of ['http://localhost:5173', 'http://127.0.0.1:41234', 'http://localhost']) assert.equal((await login(o, lb)).status, 302, o);
+  for (const o of ['https://localhost.evil.example', 'http://localhost.evil.example', 'http://localhost:5173.evil.example', 'http://127.0.0.2:80', 'https://evil.example']) assert.equal((await login(o, lb)).status, 403, o);
 });

@@ -31,6 +31,7 @@
   // Sign in with GitHub needs the small auth service in worker/. Point at yours with ?auth=https://your-worker.example or set the default below.
   const DEFAULT_AUTH_BASE = 'https://spritewright-auth.zancato-t.workers.dev';
   const authQ = q.get('auth'), auth = authQ === 'off' ? '' : authQ || DEFAULT_AUTH_BASE; if (auth) opts.authBase = auth; // ?auth=off: token-only mode
+  opts.githubApp = q.get('app') || 'spritewright'; // the GitHub App people install on their repositories (link shown under the repo list)
   Spritewright.mount(document.getElementById('app'), opts);
 </script>
 </body>

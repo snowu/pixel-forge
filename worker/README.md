@@ -47,11 +47,12 @@ Check it with `curl https://<your-worker>.workers.dev/health` (should print `{"o
 ## How it stays safe
 - `/login` only accepts origins listed in `ALLOWED_ORIGINS`. The origin and a random nonce from the page are packed into a **signed, 10-minute `state`** (HMAC-SHA256 with `STATE_SECRET`); `/callback` rejects anything unsigned, tampered, expired or for an origin that is not allowed.
 - The token is posted to the popup's opener with `postMessage` **only to that verified origin**, and the page only accepts a message from the service's origin that carries its own nonce.
-- The refresh token and the client secret never reach the page. Responses are `no-store` with a strict CSP.
+- The client secret never reaches the page. The refresh token does, so the page can keep people signed in (`POST /refresh`, CORS only for allowed origins); refresh tokens are single use and GitHub rotates them on every renewal. Responses are `no-store` with a strict CSP.
+- `ALLOW_LOOPBACK = "true"` also allows `http://localhost:<port>` and `http://127.0.0.1:<port>` for the local editor. Only code already running on that computer can use those origins.
 - Anything the user or GitHub supplies in an error message is JSON-escaped before it goes into the page.
 
 ## Limits
-- Tokens last 8 hours; after that the editor asks the person to sign in again (refresh is not implemented).
+- Access tokens last 8 hours and are renewed with the refresh token (about 6 months, renewed on each use). After a long break, or after **Sign out**, the person signs in again.
 - A GitHub App token only reaches repositories the app is installed on (plus public ones). If someone can see a repo but the app is not installed there, the editor says so.
 - Creating a **fork** for a contributor without write access is not supported with app tokens; those contributors need write access or a pull request from a fork made on github.com.
 - Organisations with SAML SSO may need to approve the app once.

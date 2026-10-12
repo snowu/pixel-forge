@@ -91,7 +91,11 @@ Static hosting with a manifest, if you prefer it to the GitHub mode: `spritewrig
 
 ## Signing in with GitHub (no tokens to paste)
 
-Reading **public** repositories needs no sign-in at all. To open **private** repositories and to send pull requests, the editor offers **Sign in with GitHub**: a popup on github.com (your normal login, SSO and 2FA included), then the editor can act on the repositories where the *spritewright GitHub App* is installed, with exactly two permissions (Contents and Pull requests, read and write). Tokens last 8 hours and stay in the tab's session storage.
+Reading **public** repositories needs no sign-in at all. To open **private** repositories and to send pull requests, the editor offers **Sign in with GitHub**: a popup on github.com (your normal login, SSO and 2FA included), then the editor can act on the repositories where the *spritewright GitHub App* is installed, with exactly two permissions (Contents and Pull requests, read and write).
+
+**Sign in once.** After signing in, the dialog lists the repositories you own or collaborate on where the app is installed, marked "pull requests" (you can write) or "read only". One click opens one; **Propose PR** then needs nothing else. The sign-in is remembered on that device: GitHub's 8-hour token is renewed quietly through the auth service (with GitHub's ~6-month refresh token), so the popup only comes back after **Sign out** or months of not using it. A repository missing from the list needs the app installed on it, and the dialog links to that. The local editor (`npx spritewright`) offers the same sign-in.
+
+Where it is kept: `localStorage` of the page's site (`pf:gh`). Any script on that same site could read it, so host the page on an origin that only serves pages you trust (for `snowu.github.io` that is every `snowu` Pages site). Sign out removes it, and revoking the app on github.com/settings/applications kills it everywhere.
 
 This needs a small auth service because GitHub's token exchange requires a secret and has no CORS: see [`worker/README.md`](worker/README.md) (a ~100-line Cloudflare Worker that stores nothing; about 10 minutes to set up). Until it is set up, the page says so and links to a **pre-filled fine-grained token** (Contents and Pull requests: read and write) as the fallback. Errors from GitHub are explained in plain language ("you are signed in, but the app is not installed on this repository" instead of `403`).
 

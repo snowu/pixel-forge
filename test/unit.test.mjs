@@ -375,6 +375,17 @@ test('listRepos prefers GitHub App installations and falls back to the user repo
   assert.deepEqual(await PF.auth.listRepos('t', { fetch: app }), ['me/game', 'me/art']);
   const pat = async (url) => (url.includes('/user/repos') ? json([{ full_name: 'me/a' }, { full_name: 'me/a' }, { full_name: 'me/b' }]) : { ok: false, status: 404, text: async () => '{}' });
   assert.deepEqual(await PF.auth.listRepos('t', { fetch: pat }), ['me/a', 'me/b']);
+  const det = async (url) => (url.includes('/user/installations?') ? json({ installations: [{ id: 7 }] }) : json({ repositories: [{ full_name: 'me/game', private: true, default_branch: 'master', permissions: { push: true } }, { full_name: 'them/art', permissions: { push: false, pull: true } }] }));
+  assert.deepEqual(await PF.auth.listRepos('t', { fetch: det, details: true }), [{ name: 'me/game', private: true, push: true, branch: 'master' }, { name: 'them/art', private: false, push: false, branch: null }]);
+});
+test('auth.refresh posts the refresh token to the service and reports an expired one with its status', async () => {
+  let sent;
+  const ok = async (url, init) => { sent = { url, init }; return { ok: true, status: 200, text: async () => JSON.stringify({ token: 'ghu_2', expires_in: 28800, refresh_token: 'ghr_2', refresh_token_expires_in: 100 }) }; };
+  assert.deepEqual(await PF.auth.refresh('https://auth.example/', 'ghr_1', { fetch: ok }), { token: 'ghu_2', expiresIn: 28800, refreshToken: 'ghr_2', refreshExpiresIn: 100 });
+  assert.equal(sent.url, 'https://auth.example/refresh'); assert.equal(sent.init.method, 'POST'); assert.deepEqual(JSON.parse(sent.init.body), { refresh_token: 'ghr_1' });
+  assert.equal(sent.init.headers['content-type'], 'text/plain', 'a simple request: no CORS preflight');
+  const bad = async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ error: 'The refresh token passed is incorrect or expired.' }) });
+  await assert.rejects(PF.auth.refresh('https://auth.example', 'old', { fetch: bad }), (e) => e.status === 401 && /expired/.test(e.message));
 });
 test('githubSignIn: accepts only the right origin and nonce, reports popup problems', async () => {
   const listeners = []; let closed = false;
@@ -385,8 +396,8 @@ test('githubSignIn: accepts only the right origin and nonce, reports popup probl
   const nonce = '07'.repeat(16);
   listeners[0]({ origin: 'https://evil.example', data: { type: 'pf-auth', nonce, token: 'stolen' } }); // wrong origin: ignored
   listeners[0]({ origin: 'https://auth.example', data: { type: 'pf-auth', nonce: 'other', token: 'x' } }); // wrong nonce: ignored
-  listeners[0]({ origin: 'https://auth.example', data: { type: 'pf-auth', nonce, token: 'gho_ok', expires_in: 28800 } });
-  assert.deepEqual(await p, { token: 'gho_ok', expiresIn: 28800 });
+  listeners[0]({ origin: 'https://auth.example', data: { type: 'pf-auth', nonce, token: 'gho_ok', expires_in: 28800, refresh_token: 'ghr_1', refresh_token_expires_in: 15811200 } });
+  assert.deepEqual(await p, { token: 'gho_ok', expiresIn: 28800, refreshToken: 'ghr_1', refreshExpiresIn: 15811200 });
   assert.equal(listeners.length, 0, 'the listener is removed afterwards');
   await assert.rejects(PF.auth.signIn('', { win }), /not set up/);
   await assert.rejects(PF.auth.signIn('https://auth.example', { win: { ...win, open: () => null } }), /blocked/);

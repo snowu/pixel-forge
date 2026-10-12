@@ -5,5 +5,7 @@ compatibility_date = "2025-01-01"
 [vars]
 # the pages allowed to sign in (comma separated origins, no trailing slash)
 ALLOWED_ORIGINS = "https://snowu.github.io"
+# also allow the local editor (`npx spritewright`, http://localhost:<port>)
+ALLOW_LOOPBACK = "true"
 # the public id of your GitHub App (a secret is NOT stored here, see worker/README.md)
 GITHUB_CLIENT_ID = "Iv23li3jrG7gfBenEFC2"

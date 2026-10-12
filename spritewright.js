@@ -381,11 +381,18 @@
     if (!popup) return Promise.reject(new Error('The sign-in window was blocked. Allow pop-ups for this site and try again.'));
     return new Promise((resolve, reject) => {
       const done = (fn, v) => { win.removeEventListener('message', onMsg); clearInterval(poll); clearTimeout(to); try { popup.close(); } catch { /* already closed */ } fn(v); };
-      const onMsg = (e) => { const d = e.data; if (e.origin !== origin || !d || d.type !== 'pf-auth' || d.nonce !== nonce) return; d.error ? done(reject, new Error(d.error)) : d.token ? done(resolve, { token: d.token, expiresIn: d.expires_in || null }) : done(reject, new Error('The sign-in service returned no token.')); };
+      const onMsg = (e) => { const d = e.data; if (e.origin !== origin || !d || d.type !== 'pf-auth' || d.nonce !== nonce) return; d.error ? done(reject, new Error(d.error)) : d.token ? done(resolve, { token: d.token, expiresIn: d.expires_in || null, refreshToken: d.refresh_token || null, refreshExpiresIn: d.refresh_token_expires_in || null }) : done(reject, new Error('The sign-in service returned no token.')); };
       win.addEventListener('message', onMsg);
       const poll = setInterval(() => { if (popup.closed) done(reject, new Error('The sign-in window was closed before finishing.')); }, 500);
       const to = setTimeout(() => done(reject, new Error('Sign-in timed out.')), timeoutMs);
     });
+  }
+  /** Swap a refresh token for a new access token through the auth service (GitHub App user tokens expire after 8 hours). */
+  async function githubRefresh(authBase, refreshToken, o = {}) {
+    const res = await (o.fetch || fetch.bind(globalThis))(authBase.replace(/\/$/, '') + '/refresh', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ refresh_token: refreshToken }) });
+    let j = {}; try { j = JSON.parse(await res.text()); } catch { /* not JSON */ }
+    if (!res.ok || !j.token) { const e = new Error(j.error || 'Could not renew the GitHub sign-in (' + res.status + ').'); e.status = res.status; throw e; }
+    return { token: j.token, expiresIn: j.expires_in || null, refreshToken: j.refresh_token || null, refreshExpiresIn: j.refresh_token_expires_in || null };
   }
   /** Who the token belongs to. */
   async function githubUser(token, o = {}) {
@@ -393,13 +400,15 @@
     if (!res.ok) throw new Error(explainGithubError(res.status, '', 'GET /user'));
     const j = JSON.parse(await res.text()); return { login: j.login, name: j.name || j.login };
   }
-  /** Repositories this token can reach: through the GitHub App installations when it is an app token, else the user's recent repos. */
+  /** Repositories this token can reach: through the GitHub App installations when it is an app token, else the user's recent repos.
+      Names by default; with { details: true } objects { name, private, push, branch } (push = the user may write, so pull requests go straight to it). */
   async function listRepos(token, o = {}) {
     const api = (o.apiBase || 'https://api.github.com'), doFetch = o.fetch || fetch.bind(globalThis), get = async (u) => { const r = await doFetch(api + u, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' } }); return r.ok ? JSON.parse(await r.text()) : null; };
     const out = [], inst = await get('/user/installations?per_page=30');
-    if (inst && inst.installations) for (const i of inst.installations.slice(0, 10)) { const r = await get(`/user/installations/${i.id}/repositories?per_page=100`); if (r && r.repositories) out.push(...r.repositories.map((x) => x.full_name)); }
-    if (!out.length) { const r = await get('/user/repos?sort=updated&per_page=50'); if (r) out.push(...r.map((x) => x.full_name)); }
-    return [...new Set(out)];
+    if (inst && inst.installations) for (const i of inst.installations.slice(0, 10)) { const r = await get(`/user/installations/${i.id}/repositories?per_page=100`); if (r && r.repositories) out.push(...r.repositories); }
+    if (!out.length) { const r = await get('/user/repos?sort=updated&per_page=50'); if (r) out.push(...r); }
+    const seen = new Set(), uniq = out.filter((x) => x && x.full_name && !seen.has(x.full_name) && seen.add(x.full_name));
+    return o.details ? uniq.map((x) => ({ name: x.full_name, private: !!x.private, push: !!(x.permissions && x.permissions.push), branch: x.default_branch || null })) : uniq.map((x) => x.full_name);
   }
   const PAT_URL = 'https://github.com/settings/personal-access-tokens/new?name=spritewright&description=Edit+sprites+and+open+pull+requests&expires_in=30&contents=write&pull_requests=write';
 
@@ -442,6 +451,9 @@
 .pf-prev canvas{image-rendering:pixelated;background:repeating-conic-gradient(#1a2229 0 25%,#10161a 0 50%) 0 0/8px 8px;max-width:100%;display:block}
 .pf-note{color:var(--pf-muted);font-size:12px}.pf-bad{color:var(--pf-bad)}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px}
+.pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
+.pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-tokenbox summary{cursor:pointer;color:var(--pf-muted);font-size:12px}.pf-tokenbox>label,.pf-tokenbox>.pf-note{display:block;margin-top:8px}.pf-tokenbox[hidden]{display:none}
 .pf dialog{background:var(--pf-panel);color:var(--pf-ink);border:1px solid var(--pf-accent);padding:16px;width:min(560px,94vw);max-height:92vh;overflow:auto}
 .pf dialog::backdrop{background:rgba(0,0,0,.7)}
 .pf-form{display:flex;flex-direction:column;gap:10px}.pf-log:empty{display:none}.pf-log{white-space:pre-wrap;color:var(--pf-muted);max-height:140px;overflow:auto;border:1px solid var(--pf-line);padding:6px;min-height:34px}
@@ -513,9 +525,10 @@
         <label>Title <input type="text" class="pf-pr-title" placeholder="Update player sprite"></label>
         <label>Description <textarea class="pf-pr-desc" rows="3" style="width:100%" placeholder="What changed and why"></textarea></label>
         <div class="pf-row pf-auth-row"><button type="button" class="primary pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div class="pf-note pf-auth-help"></div>
-        <label>GitHub token <input type="password" class="pf-pr-token" autocomplete="off" placeholder="fine-grained token with Contents + Pull requests write"></label>
-        <label><input type="checkbox" class="pf-pr-remember"> remember the token in this browser</label>
-        <div class="pf-note">The token is only sent to GitHub. Without write access to the repository your fork is used automatically.</div>
+        <details class="pf-tokenbox"><summary>Use a token instead</summary>
+          <label>GitHub token <input type="password" class="pf-pr-token" autocomplete="off" placeholder="fine-grained token with Contents + Pull requests write"></label>
+          <label><input type="checkbox" class="pf-pr-remember"> remember the token in this browser</label>
+          <div class="pf-note">The token is only sent to GitHub. Without write access to the repository your fork is used automatically.</div></details>
         <div class="pf-log" aria-live="polite"></div>
         <div class="pf-row"><button type="button" class="primary pf-pr-go">Create pull request</button><button value="cancel">Close</button></div></form></dialog>
       <dialog class="pf-dlg-connect"><form method="dialog" class="pf-form"><h4>Open a project</h4>
@@ -523,11 +536,13 @@
           <div class="pf-row"><button type="button" class="primary pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></div></div>
         <div class="pf-note pf-conn-intro">Or work on a whole project: a GitHub repository (changes go back as a pull request) or a folder on this computer (saves in place).</div>
         <div class="pf-box"><b>GitHub repository</b>
+          <div class="pf-row pf-auth-row"><button type="button" class="primary pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div class="pf-note pf-auth-help"></div>
+          <div class="pf-c-mine" hidden><div class="pf-c-repolist"></div><div class="pf-note pf-c-addrepo"></div></div>
           <label>Repository <input type="text" class="pf-c-repo" list="pf-repos" placeholder="owner/name" autocomplete="off"></label><datalist id="pf-repos"></datalist>
           <label>Branch <input type="text" class="pf-c-branch" placeholder="default branch"></label>
-          <div class="pf-row pf-auth-row"><button type="button" class="primary pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div class="pf-note pf-auth-help"></div>
-          <label>Token <input type="password" class="pf-c-token" autocomplete="off" placeholder="optional for public repos; needed for private repos and pull requests"></label>
-          <label><input type="checkbox" class="pf-c-remember"> remember the token in this browser</label>
+          <details class="pf-tokenbox"><summary>Use a token instead</summary>
+            <label>Token <input type="password" class="pf-c-token" autocomplete="off" placeholder="optional for public repos; needed for private repos and pull requests"></label>
+            <label><input type="checkbox" class="pf-c-remember"> remember the token in this browser</label></details>
           <div class="pf-row"><button type="button" class="primary pf-c-gh">Open repository</button></div></div>
         <div class="pf-box pf-c-folderbox"><b>Folder on this computer</b><div class="pf-note pf-c-foldernote">Pick the game project's folder. Works in Chrome, Edge and Opera.</div>
           <div class="pf-row"><button type="button" class="primary pf-c-folder">Choose folder…</button></div></div>
@@ -557,30 +572,63 @@
     let overlay = null; // preview pixels while dragging a shape: { pts, value }
     const note = (t) => { S.notice = t; status(); };
 
-    /* ---------- sign in ---------- */
+    /* ---------- sign in ----------
+       One sign-in per device: the session (access token + refresh token) is kept in localStorage and the access token is renewed
+       through the auth service when it is about to expire, so people do not see the GitHub popup again until they sign out. */
     const authBase = O.authBase || (typeof window !== 'undefined' && window.PF_AUTH_BASE) || '';
-    try { S.auth = { token: sessionStorage.getItem('pf:authtoken') || '', login: sessionStorage.getItem('pf:authuser') || '' }; } catch { /* storage blocked */ }
+    const AUTH_KEY = 'pf:gh', emptyAuth = () => ({ token: '', exp: 0, refresh: '', rexp: 0, login: '' });
+    const loadAuth = () => { try { const a = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); if (a && a.token && (!a.rexp || a.rexp > Date.now() || (a.exp && a.exp > Date.now()))) return { ...emptyAuth(), ...a }; } catch { /* storage blocked */ } return emptyAuth(); };
+    const saveAuth = () => { try { if (S.auth.token) localStorage.setItem(AUTH_KEY, JSON.stringify(S.auth)); else localStorage.removeItem(AUTH_KEY); } catch { /* storage blocked */ } };
+    const fromGrant = (r, login) => ({ token: r.token, exp: r.expiresIn ? Date.now() + r.expiresIn * 1000 : 0, refresh: r.refreshToken || '', rexp: r.refreshExpiresIn ? Date.now() + r.refreshExpiresIn * 1000 : 0, login: login || '' });
+    S.auth = authBase ? loadAuth() : emptyAuth();
+    let renewing = null;
+    /** A usable access token for the signed-in user ('' when signed out), renewed first when it expires within two minutes. */
+    function authToken() {
+      const a = S.auth; if (!a.token) return Promise.resolve('');
+      if (!a.exp || a.exp - Date.now() > 120000 || !a.refresh || !authBase) return Promise.resolve(a.token);
+      if (renewing) return renewing;
+      const run = async () => {
+        const cur = loadAuth(); // another tab may have renewed it already (refresh tokens are single use)
+        if (cur.token && cur.token !== a.token && (!cur.exp || cur.exp - Date.now() > 120000)) { S.auth = cur; return cur.token; }
+        try { S.auth = fromGrant(await githubRefresh(authBase, cur.refresh || a.refresh), a.login); saveAuth(); return S.auth.token; }
+        catch (e) { if (e.status === 401 || e.status === 400) { signOut(); throw new Error('Your GitHub sign-in has expired. Sign in again.'); } throw e; }
+      };
+      renewing = (typeof navigator !== 'undefined' && navigator.locks ? navigator.locks.request('pf-auth-renew', run) : run()).finally(() => { renewing = null; });
+      return renewing;
+    }
     function renderAuth() {
       const on = !!S.auth.token;
       $$('.pf-auth-row').forEach((r) => { r.querySelector('.pf-signin').hidden = on || !authBase; r.querySelector('.pf-signout').hidden = !on; r.querySelector('.pf-who').textContent = on ? 'Signed in as ' + (S.auth.login || 'GitHub user') : ''; });
-      $$('.pf-auth-help').forEach((h) => { h.innerHTML = authBase ? (on ? '' : 'Signing in lets you open private repositories and send pull requests without pasting a token.') : `Sign-in is not set up on this page. Paste a token instead: <a href="${PAT_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">create one with the right permissions</a> (Contents and Pull requests: read and write, only for your repository).`; });
-      if (on) $$('.pf-c-token, .pf-pr-token').forEach((i) => { i.value = i.value || S.auth.token; });
+      $$('.pf-auth-help').forEach((h) => { h.innerHTML = authBase ? (on ? '' : 'Sign in once and pick a repository you own or collaborate on. Edits go back as a pull request, no tokens to paste.') : `Sign-in is not set up on this page. Paste a token instead: <a href="${PAT_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">create one with the right permissions</a> (Contents and Pull requests: read and write, only for your repository).`; });
+      $$('.pf-tokenbox').forEach((d) => { d.open = !authBase; d.hidden = on; });
+      $('.pf-c-mine').hidden = !on;
+      if (!on) { S.repos = null; $('#pf-repos').innerHTML = ''; }
     }
-    async function afterSignIn() {
-      renderAuth();
-      try { const names = await listRepos(S.auth.token, { apiBase: O.apiBase }); $('#pf-repos').innerHTML = names.map((n) => `<option value="${esc(n)}">`).join(''); } catch { /* suggestions are optional */ }
+    const installUrl = () => (O.githubApp ? `https://github.com/apps/${encodeURIComponent(O.githubApp)}/installations/select_target` : '');
+    function renderRepos() {
+      const list = $('.pf-c-repolist'), add = $('.pf-c-addrepo'), repos = S.repos || [], link = installUrl();
+      list.innerHTML = S.repos == null ? '<div class="pf-note">Loading your repositories…</div>' : repos.length
+        ? repos.map((r) => `<button type="button" class="pf-c-pick" data-repo="${esc(r.name)}" data-branch="${esc(r.branch || '')}"><b>${esc(r.name)}</b><span class="pf-note">${r.private ? 'private · ' : ''}${r.push ? 'pull requests' : 'read only'}</span></button>`).join('')
+        : '<div class="pf-note">No repositories yet.</div>';
+      $('#pf-repos').innerHTML = repos.map((r) => `<option value="${esc(r.name)}">`).join('');
+      add.innerHTML = link ? `Missing one? <a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">Install the app on it</a> (you, or the repository's owner), then reopen this dialog.` : '';
+    }
+    async function loadRepos() {
+      if (!S.auth.token) return; S.repos = null; renderRepos();
+      try { S.repos = await listRepos(await authToken(), { apiBase: O.apiBase, details: true }); } catch { S.repos = []; }
+      renderRepos();
     }
     async function doSignIn(msgEl) {
       try {
         if (msgEl) msgEl.textContent = 'Waiting for GitHub…';
-        const r = await githubSignIn(authBase); S.auth.token = r.token;
-        try { S.auth.login = (await githubUser(r.token, { apiBase: O.apiBase })).login; } catch { S.auth.login = ''; }
-        try { sessionStorage.setItem('pf:authtoken', S.auth.token); sessionStorage.setItem('pf:authuser', S.auth.login); sessionStorage.setItem('pf:token', S.auth.token); } catch { /* ignore */ }
-        if (msgEl) msgEl.textContent = 'Signed in' + (S.auth.login ? ' as ' + S.auth.login : '') + '.';
-        await afterSignIn();
+        const r = await githubSignIn(authBase);
+        let login = ''; try { login = (await githubUser(r.token, { apiBase: O.apiBase })).login; } catch { /* name is cosmetic */ }
+        S.auth = fromGrant(r, login); saveAuth();
+        if (msgEl) msgEl.textContent = 'Signed in' + (login ? ' as ' + login : '') + '.';
+        renderAuth(); await loadRepos();
       } catch (e) { if (msgEl) msgEl.textContent = e.message; }
     }
-    function signOut() { S.auth = { token: '', login: '' }; try { ['pf:authtoken', 'pf:authuser', 'pf:token'].forEach((k) => sessionStorage.removeItem(k)); } catch { /* ignore */ } $$('.pf-c-token, .pf-pr-token').forEach((i) => { i.value = ''; }); renderAuth(); }
+    function signOut() { S.auth = emptyAuth(); saveAuth(); try { ['pf:authtoken', 'pf:authuser'].forEach((k) => sessionStorage.removeItem(k)); } catch { /* ignore */ } renderAuth(); }
 
     /* ---------- loading ---------- */
     const storedToken = () => { try { return sessionStorage.getItem('pf:token') || localStorage.getItem('pf:token') || ''; } catch { return ''; } };
@@ -602,7 +650,7 @@
         if (O.sprites) return void (await useSource(staticSource({ sprites: O.sprites, palette: O.paletteList || null, repo: O.github || null }, O.baseUrl)));
         if (O.manifestUrl) { const mf = await fetchJson(O.manifestUrl); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); }
         if (O.connect === 'github' && O.github && O.github.slug) {
-          try { return void (await useSource(await githubSource({ repo: O.github.slug, branch: O.github.base, token: storedToken(), apiBase: O.apiBase }))); } catch (e) { return openConnect(e.message); }
+          try { return void (await useSource(await githubSource({ repo: O.github.slug, branch: O.github.base, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase }))); } catch (e) { return openConnect(e.message); }
         }
         try { const mf = await fetchJson('api/manifest'), m = document.querySelector('meta[name="pf-token"]'); return void (await useSource(serverSource(mf, m ? m.content : ''))); } catch { /* no local server here */ }
         try { const mf = await fetchJson('pixel-art.json'); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); } catch { /* no manifest here */ }
@@ -830,17 +878,19 @@
       const gh = S.meta.repo || {}, dlg = $('.pf-dlg-pr');
       $('.pf-pr-repo').value = $('.pf-pr-repo').value || gh.slug || gh.repo || ''; $('.pf-pr-base').value = $('.pf-pr-base').value || gh.base || gh.branch || '';
       $('.pf-pr-title').value = $('.pf-pr-title').value || (changed.length === 1 ? 'Update ' + changed[0].path.split('/').pop() : 'Update ' + changed.length + ' sprites');
-      try { $('.pf-pr-token').value = $('.pf-pr-token').value || sessionStorage.getItem('pf:token') || localStorage.getItem('pf:token') || ''; } catch { /* storage blocked */ }
+      if (!S.auth.token) try { $('.pf-pr-token').value = $('.pf-pr-token').value || sessionStorage.getItem('pf:token') || localStorage.getItem('pf:token') || ''; } catch { /* storage blocked */ }
       $('.pf-chg-list').innerHTML = changed.map((d) => `<div class="pf-chg"><canvas data-p="${esc(d.path)}"></canvas><span>${esc(d.path)}<br><span class="pf-note">${d.w}×${d.h} · ${d.changedPixels()} px changed</span></span></div>`).join('');
       $$('.pf-chg canvas').forEach((c) => drawPx(c, S.docs.get(c.dataset.p)));
       $('.pf-log').textContent = ''; dlg.showModal();
     }
     async function submitPr() {
       const changed = [...S.docs.values()].filter((d) => d.changed), log = $('.pf-log'), go = $('.pf-pr-go');
-      const token = $('.pf-pr-token').value.trim(), repo = $('.pf-pr-repo').value.trim(), title = $('.pf-pr-title').value.trim() || 'Update sprites';
-      try { if ($('.pf-pr-remember').checked) localStorage.setItem('pf:token', token); else sessionStorage.setItem('pf:token', token); } catch { /* ignore */ }
+      const typed = $('.pf-pr-token').value.trim(), repo = $('.pf-pr-repo').value.trim(), title = $('.pf-pr-title').value.trim() || 'Update sprites';
+      try { if (typed) { if ($('.pf-pr-remember').checked) localStorage.setItem('pf:token', typed); else sessionStorage.setItem('pf:token', typed); } } catch { /* ignore */ }
       go.disabled = true; log.textContent = '';
       try {
+        const token = (S.auth.token && !typed ? await authToken() : typed) || '';
+        if (!token) throw new Error(authBase ? 'Sign in with GitHub first.' : 'Paste a GitHub token first.');
         const files = []; for (const d of changed) files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels() });
         const prefix = (S.meta.repo && S.meta.repo.prefix) || '';
         const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })), branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
@@ -889,20 +939,23 @@
     stage.addEventListener('drop', async (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) if (/^image\//.test(f.type)) await importFile(f); });
     function openConnect(msg) {
       const dlg = $('.pf-dlg-connect'), gh = O.github || {};
-      $('.pf-c-repo').value = $('.pf-c-repo').value || gh.slug || ''; $('.pf-c-branch').value = $('.pf-c-branch').value || gh.base || ''; $('.pf-c-token').value = $('.pf-c-token').value || storedToken();
+      $('.pf-c-repo').value = $('.pf-c-repo').value || gh.slug || ''; $('.pf-c-branch').value = $('.pf-c-branch').value || gh.base || ''; if (!S.auth.token) $('.pf-c-token').value = $('.pf-c-token').value || storedToken();
+      if (S.auth.token) loadRepos();
       const canFolder = typeof window.showDirectoryPicker === 'function'; $('.pf-c-folder').disabled = !canFolder; $('.pf-c-foldernote').textContent = canFolder ? 'Pick the game project\'s folder. Saving writes the PNGs in place. Works in Chrome, Edge and Opera.' : 'This browser cannot open folders (use Chrome, Edge or Opera), but GitHub and Open PNG work everywhere.';
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
     }
     $('.pf-source').onclick = () => openConnect();
     $$('.pf-signin').forEach((b) => (b.onclick = () => doSignIn(b.closest('dialog').querySelector('.pf-c-msg, .pf-log'))));
     $$('.pf-signout').forEach((b) => (b.onclick = signOut));
+    $('.pf-c-repolist').onclick = (e) => { const b = e.target.closest('.pf-c-pick'); if (!b) return; $('.pf-c-repo').value = b.dataset.repo; $('.pf-c-branch').value = b.dataset.branch; $('.pf-c-gh').click(); };
     $('.pf-c-upload').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-file').click(); };
     $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-dlg-new').showModal(); };
     $('.pf-c-gh').onclick = async () => {
-      const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), token = $('.pf-c-token').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
+      const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), typed = S.auth.token ? '' : $('.pf-c-token').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
       try {
+        const token = typed || await authToken();
         const src = await githubSource({ repo: $('.pf-c-repo').value.trim(), branch: $('.pf-c-branch').value.trim() || undefined, token, apiBase: O.apiBase });
-        try { if (token) { if ($('.pf-c-remember').checked) localStorage.setItem('pf:token', token); else sessionStorage.setItem('pf:token', token); } } catch { /* storage blocked */ }
+        try { if (typed) { if ($('.pf-c-remember').checked) localStorage.setItem('pf:token', token); else sessionStorage.setItem('pf:token', token); } } catch { /* storage blocked */ }
         msg.textContent = src.sprites.length + ' PNG file' + (src.sprites.length === 1 ? '' : 's') + ' found.';
         if (await useSource(src)) $('.pf-dlg-connect').close();
       } catch (e) { msg.textContent = e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { btn.disabled = false; }
@@ -938,7 +991,7 @@
     const leaveGuard = (e) => { if ([...S.docs.values()].some((d) => d.unsaved && d.changed)) { e.preventDefault(); e.returnValue = ''; } }; /* unsaved work would be lost: ask first */
     window.addEventListener('beforeunload', leaveGuard);
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const had = doc(); resizeView(); if (had && !S.touched) fit(); render(); }) : null; if (ro) ro.observe(stage);
-    resizeView(); renderAuth(); if (S.auth.token) afterSignIn(); init();
+    resizeView(); renderAuth(); init();
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setTool, undo, redo, state: S,
@@ -948,5 +1001,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, floodFill, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, floodFill, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
 });
