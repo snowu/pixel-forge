@@ -592,6 +592,61 @@ section('standalone: folder on this computer (File System Access, mocked picker)
   await fctx.close();
 }
 
+section('families and animations: grouped list, frame strip, flipbook, onion skin across files');
+{
+  const r2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-fam-'));
+  for (const d of ['chars', 'tiles', 'docs/previews']) fs.mkdirSync(path.join(r2, d), { recursive: true });
+  const dot = (x, c = 'r') => fromRows(['....', '....', '....', '....'].map((row, y) => (y === 1 ? row.slice(0, x) + c + row.slice(x + 1) : row)), { r: [255, 0, 0], b: [0, 0, 255] });
+  [0, 1, 2].forEach((i) => fs.writeFileSync(path.join(r2, `chars/hero_${i}.png`), dot(i).png));
+  fs.writeFileSync(path.join(r2, 'chars/hero_atk.png'), dot(3, 'b').png);
+  fs.writeFileSync(path.join(r2, 'chars/bat.png'), dot(0, 'b').png);
+  fs.writeFileSync(path.join(r2, 'tiles/floor.png'), dot(0).png); fs.writeFileSync(path.join(r2, 'tiles/floor_moss.png'), dot(1).png);
+  fs.writeFileSync(path.join(r2, 'docs/previews/shot.png'), dot(0).png);
+  const s2 = createServer({ root: r2, port: 0 }), b2 = await s2.listen();
+  const fp = await ctx.newPage(); const ferr2 = []; fp.on('pageerror', (e) => ferr2.push(e.message));
+  await fp.goto(b2 + '?auth=off'); await fp.waitForSelector('.pf-item');
+  const dirs = await fp.locator('.pf-dir .pf-dirname').allInnerTexts();
+  ok(dirs.join() === 'chars,tiles', 'the list is grouped by folder, and docs/previews is left out by default: ' + dirs.join(','));
+  const cells = await fp.locator('.pf-cell .n').allInnerTexts();
+  ok(cells.map((t) => t.split('\n')[0]).join() === 'bat.png,hero,floor', 'one tile per family (hero_0..2 + hero_atk → "hero", floor + floor_moss → "floor"): ' + cells.map((t) => t.split('\n')[0]).join(','));
+  ok((await fp.locator('.pf-cell', { hasText: 'hero' }).locator('.pf-badge.anim').innerText()) === '▶4' && (await fp.locator('.pf-cell', { hasText: 'floor' }).locator('.pf-badge').innerText()) === '2', 'badges: ▶ for animations, a count for variant families');
+  await fp.locator('.pf-dir', { hasText: 'tiles' }).click();
+  ok((await fp.locator('.pf-cell').count()) === 2 && /▸/.test(await fp.locator('.pf-dir', { hasText: 'tiles' }).innerText()), 'a folder folds');
+  await fp.reload(); await fp.waitForSelector('.pf-item');
+  ok((await fp.locator('.pf-cell').count()) === 2, 'and stays folded after a reload');
+  await fp.locator('.pf-dir', { hasText: 'tiles' }).click(); ok((await fp.locator('.pf-cell').count()) === 3, 'click again to unfold');
+  // family strip
+  await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(250);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png', 'clicking a family opens its first frame');
+  await until(async () => (await fp.locator('.pf-fam-m').count()) === 4);
+  ok((await fp.locator('.pf-fam-m span').allInnerTexts()).join() === '0,1,2,atk' && /animation · 4 frames/.test(await fp.locator('.pf-fam-kind').innerText()), 'the preview shows the family strip in order: 0,1,2,atk');
+  const stripOk = await until(async () => (await fp.evaluate(() => [...document.querySelectorAll('.pf-fam-m canvas')].every((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return true; return false; }))));
+  ok(stripOk, 'every frame in the strip has its picture, loaded without opening it');
+  await fp.keyboard.press('.'); await fp.waitForTimeout(200);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_1.png' && (await fp.locator('.pf-fam-m.on span').innerText()) === '1', '. steps to the next frame');
+  await fp.keyboard.press(','); await fp.keyboard.press(','); await fp.waitForTimeout(200);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_atk.png', ', steps back and wraps around');
+  await fp.locator('.pf-fam-m', { hasText: '2' }).click(); await fp.waitForTimeout(200);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_2.png', 'clicking a frame in the strip opens it');
+  ok((await fp.locator('.pf-cell', { hasText: 'hero' }).getAttribute('data-path')) === 'chars/hero_2.png', 'the family tile follows the open frame');
+  // flipbook: the animated preview walks through the files
+  const redX = () => fp.evaluate(() => { const c = document.querySelector('.pf-p2'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, s = c.width / 4; for (let x = 0; x < 4; x++) { const i = ((1 * s + 1) * c.width + x * s + 1) * 4; if (d[i + 3]) return d[i] > 200 ? 'r' + x : 'b' + x; } return '-'; });
+  await fp.locator('.pf-play').click(); const seen = new Set(); for (let i = 0; i < 30; i++) { seen.add(await redX()); await fp.waitForTimeout(40); }
+  await fp.locator('.pf-play').click();
+  ok(['r0', 'r1', 'r2', 'b3'].every((x) => seen.has(x)), 'Play flips through all four images of the family: ' + [...seen].join(','));
+  // onion skin across files: on hero_1, hero_0 shows faintly underneath
+  await fp.keyboard.press(','); await fp.waitForTimeout(150); await fp.keyboard.press('n'); await fp.waitForTimeout(150);
+  const at = async (x, y) => fp.evaluate(([x, y]) => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), d = c.getContext('2d').getImageData(Math.round(S.ox + (x + 0.5) * S.zoom), Math.round(S.oy + (y + 0.5) * S.zoom), 1, 1).data; return [...d]; }, [x, y]);
+  const ghost = await at(0, 1), own = await at(1, 1), empty = await at(3, 3);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_1.png' && ghost[0] > empty[0] + 25 && ghost[0] < own[0] - 60, `onion skin: the previous file's pixel shows faintly (${ghost.slice(0, 3)} between ${empty.slice(0, 3)} and ${own.slice(0, 3)})`);
+  await fp.keyboard.press('n');
+  // filtering flattens the list
+  await fp.locator('.pf-q').fill('hero_'); ok((await fp.locator('.pf-item').count()) === 4 && (await fp.locator('.pf-dir').count()) === 0, 'typing a filter shows a flat list of matching files');
+  await fp.locator('.pf-q').fill('');
+  ok(ferr2.length === 0, 'no page errors ' + ferr2.join('|'));
+  await fp.close(); await s2.close();
+}
+
 section('mobile');
 const phone = await browser.newContext({ viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 const mp = await phone.newPage(); const merrors = []; mp.on('pageerror', (e) => merrors.push(e.message));

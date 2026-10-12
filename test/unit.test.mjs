@@ -15,6 +15,24 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pf-'));
 const SLIME = fromRows(['.gg.', 'gGGg', 'gGGg', '.gg.'], { g: [60, 180, 80], G: [120, 230, 130] });
 
 /* ---------- drawing core ---------- */
+test('groupSprites: folders, families by base name or numbered frames, animations, and no grouping by mere category prefixes', () => {
+  const g = C.groupSprites(['e/archer_0.png', 'e/archer_atk.png', 'e/archer_block.png', 'e/king_0.png', 'e/king_atk.png', 'e/king_dark_0.png', 'e/king_dark_atk.png', 'p/flame_2.png', 'p/flame_0.png', 'p/flame_1.png',
+    't/floor_crypt_grave.png', 't/floor_crypt.png', 't/floor_crypt_drain.png', 'i/ic_gem.png', 'i/ic_ring.png', 'i/ic_gem_emerald.png', 'w/icon-512.png', 'w/icon-192.png', 'lone.png']);
+  const fam = (dir) => Object.fromEntries(g.find((d) => d.dir === dir).families.map((f) => [f.key, f.members.map((m) => m.split('/').pop().replace('.png', '')).join(',') + (f.animated ? ' ▶' : '')]));
+  assert.deepEqual(g.map((d) => d.dir), ['', 'e', 'i', 'p', 't', 'w']);
+  assert.deepEqual(fam('e'), { archer: 'archer_0,archer_atk,archer_block', king: 'king_0,king_atk', king_dark: 'king_dark_0,king_dark_atk' }, 'poses group; the longer shared prefix wins');
+  assert.deepEqual(fam('p'), { flame: 'flame_0,flame_1,flame_2 ▶' }, 'numbered frames, in order, are an animation');
+  assert.deepEqual(fam('t'), { floor_crypt: 'floor_crypt,floor_crypt_drain,floor_crypt_grave' }, 'the base image comes first, then its variants');
+  assert.deepEqual(fam('i'), { ic_gem: 'ic_gem,ic_gem_emerald', ic_ring: 'ic_ring' }, 'a shared prefix like ic_ is a category, not a family');
+  assert.deepEqual(fam('w'), { icon: 'icon-192,icon-512' }, 'numbers that are not a 0/1-based run are not animation frames');
+  assert.deepEqual(fam(''), { lone: 'lone' });
+});
+test('applyConfig without a config skips docs, screenshots and previews folders; a config decides for itself', () => {
+  const items = ['art/a.png', 'docs/previews/x.png', 'game/screenshots/s.png', 'art/tests/t.png', 'node_modules/p/q.png'].map((path) => ({ path }));
+  assert.deepEqual(PF.sources.applyConfig(items, {}).map((x) => x.path), ['art/a.png']);
+  assert.deepEqual(PF.sources.applyConfig(items, { dirs: ['docs'] }).map((x) => x.path), ['docs/previews/x.png']);
+  assert.deepEqual(PF.sources.applyConfig(items, { keepDocs: true }).map((x) => x.path), ['art/a.png', 'docs/previews/x.png', 'game/screenshots/s.png', 'art/tests/t.png']);
+});
 const grid = (pts, w, h, ox = 0, oy = 0) => { const g = Array.from({ length: h }, () => Array(w).fill('.')); for (const [x, y] of pts) g[y + oy][x + ox] = '#'; return g.map((r) => r.join('')); };
 test('ellipse: a symmetric 1-pixel ring, filled disc, and the same result whichever corner you start from', () => {
   assert.deepEqual(grid(C.ellipsePoints(0, 0, 8, 8, false), 9, 9), ['..#####..', '.#.....#.', '#.......#', '#.......#', '#.......#', '#.......#', '#.......#', '.#.....#.', '..#####..']);
@@ -433,6 +451,14 @@ test('applyConfig: dirs, ignore, exclude and frames', () => {
 });
 
 /* ---------- init ---------- */
+test('scan with no config leaves out docs, screenshots and previews folders; init still sees everything', () => {
+  const root = tmp(); for (const d of ['art', 'docs/previews', 'game/screenshots']) fs.mkdirSync(path.join(root, d), { recursive: true });
+  for (const f of ['art/a.png', 'docs/previews/p.png', 'game/screenshots/s.png']) fs.writeFileSync(path.join(root, f), SLIME.png);
+  assert.deepEqual(scan(root).sprites.map((x) => x.path), ['art/a.png']);
+  assert.equal(scan(root, { dirs: [] }).sprites.length, 3, 'init scans with dirs: [] and sees all of them');
+  fs.writeFileSync(path.join(root, 'spritewright.config.json'), JSON.stringify({ keepDocs: true }));
+  assert.equal(scan(root).sprites.length, 3, 'keepDocs: true lists them');
+});
 test('suggestConfig picks the art folders and skips docs, screenshots and previews', () => {
   const sprites = ['art/hero.png', 'art/enemies/bat.png', 'art/previews/bat-preview.png', 'public/ui/icon.png', 'docs/previews/a.png', 'docs/b.png', 'tests/fixtures/c.png'].map((path) => ({ path }));
   const { config, kept, skipped } = suggestConfig({ sprites });
