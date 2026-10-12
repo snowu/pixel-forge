@@ -818,8 +818,10 @@
 .pf .pf-dir{display:flex;width:100%;justify-content:flex-start;gap:6px;background:none;border:0;border-bottom:1px solid var(--pf-line);padding:7px 2px 5px;min-height:0;margin-top:6px;color:var(--pf-muted);font-size:11.5px;letter-spacing:.04em;position:sticky;top:0;z-index:1;background:var(--pf-panel)}
 .pf .pf-dir:hover:not(:disabled){box-shadow:none;color:var(--pf-accent)}
 .pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}.pf-dirchg{color:var(--pf-accent);font-size:11.5px;flex:none}
-.pf-foldrow{display:flex;gap:6px;margin-top:6px}
-.pf-foldrow button{flex:1;min-height:24px;font-size:11.5px;color:var(--pf-muted);background:none;border-color:transparent}
+.pf-side-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.pf-side-head h4{margin:0}
+.pf-foldmini{display:flex;gap:2px;flex:none}
+.pf-foldmini button{min-height:0;padding:1px 6px;font-size:11px;color:var(--pf-muted);background:none;border-color:transparent}
 .pf .pf-openrow{display:flex;width:100%;align-items:center;gap:8px;background:none;border:1px solid var(--pf-line2);border-top:0;padding:4px 6px;min-height:0;color:var(--pf-ink);font-size:11.5px}
 .pf-openrow canvas{width:24px;height:24px;image-rendering:pixelated;background:var(--pf-ckbg);flex:none}
 .pf-openrow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
@@ -946,8 +948,9 @@
 .pf-acct{display:inline-flex;gap:8px;align-items:center;font:12.5px var(--pf-mono,'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);color:#9a86c4}.pf-acct .pf-who{color:#9a86c4}
 .pf-acct button{font:inherit;background:#150e24;color:#e6dcf7;border:1px solid #2a1b45;padding:2px 8px;cursor:pointer}.pf-acct button:hover{border-color:var(--pf-accent,#b98cff);color:var(--pf-accent,#b98cff)}
 .pf-side-auth{justify-content:space-between;flex-wrap:nowrap}.pf-side-auth .pf-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pf-side-auth .pf-who:empty{display:none}.pf-side-auth .pf-signin{width:100%}
-.pf .pf-source{width:100%;justify-content:flex-start;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-color:var(--pf-line2);display:block}
-.pf-source .pf-branch{color:var(--pf-accent)}
+.pf .pf-source{width:100%;text-align:left;border-color:var(--pf-line2);display:block;overflow:hidden}
+.pf-source .pf-repo{display:block;font-size:11px;color:var(--pf-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-source .pf-branch{display:block;font-size:14.5px;color:var(--pf-accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-brmenu{min-width:210px;max-width:290px}
 .pf-brmenu .pf-note{white-space:normal}
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
@@ -1085,7 +1088,7 @@
     const O = Object.assign({ manifestUrl: null, baseUrl: '', save: null, github: null, palette: null, accent: null, pr: true }, options);
     const root = el(`<div class="pf" tabindex="-1">
       <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button>
-        <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"><div class="pf-foldrow"><button type="button" class="pf-fold-all" title="Fold every folder">▸ Fold all</button><button type="button" class="pf-unfold-all" title="Unfold every folder">▾ Unfold all</button></div></div>
+        <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><div class="pf-side-head"><h4>Sprites</h4><span class="pf-foldmini"><button type="button" class="pf-fold-all" title="Fold every folder">▸ all</button><button type="button" class="pf-unfold-all" title="Unfold every folder">▾ all</button></span></div><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
         <details class="pf-commit" open hidden><summary><h4>Changes <span class="pf-commit-n"></span></h4></summary>
           <div class="pf-commit-list"></div>
@@ -1347,8 +1350,8 @@
     function sourceButton() {
       const src = S.src || {}, btn = $('.pf-source');
       if (src.kind === 'github' && src.repo.slug) {
-        // A zsh prompt, not a sentence: owner/repo, then the branch. Clicking switches branches.
-        btn.innerHTML = `<span>${esc(src.repo.slug)}</span> <span class="pf-branch">⎇ ${esc(src.branch)}</span>`;
+        // A zsh prompt, stacked: the repo stays put on top, the branch gets the box.
+        btn.innerHTML = `<span class="pf-repo">${esc(src.repo.slug)}</span><span class="pf-branch">⎇ ${esc(src.branch)}</span>`;
         btn.title = `${src.repo.slug} @ ${src.branch}: switch branch, or open another project`;
       } else {
         const label = src.kind === 'folder' ? src.name : src.kind === 'browser' && (src.id || S.sprites.length) ? src.name : '';
