@@ -810,7 +810,7 @@
 .pf .pf-sz-anchor button{width:26px;height:26px;min-height:0;padding:0;background:var(--pf-panel2)}.pf .pf-sz-anchor button.on{background:var(--pf-accent);border-color:var(--pf-accent)}
 .pf-sz-prev{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;min-width:170px;min-height:170px;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-sz-cv{image-rendering:pixelated;outline:1px dashed var(--pf-accent)}
 .pf-sz-mode{align-self:flex-start}
-.pf-n-line{display:flex;gap:8px;align-items:center}.pf-n-or{color:var(--pf-muted)}.pf .pf-n-line .pf-nw,.pf .pf-n-line .pf-nh{width:64px}.pf .pf-n-line .pf-nn{flex:1;min-width:0}.pf-sz-info{text-align:center}.pf .pf-sz-quick button{min-width:34px}.pf-c-resume{margin-top:6px}
+.pf-n-line{display:flex;gap:8px;align-items:center}.pf-n-or{color:var(--pf-muted)}.pf .pf-n-line .pf-nw,.pf .pf-n-line .pf-nh{width:64px}.pf .pf-n-line .pf-nn{flex:1;min-width:0}.pf-sz-info{text-align:center}.pf .pf-sz-quick button{min-width:34px}
 .pf-pal-empty[hidden]{display:none}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
 .pf .pf-c-pick.on{border-color:var(--pf-accent)}
@@ -824,6 +824,7 @@
 .pf-c-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pf-c-tile{border:1px solid var(--pf-line);background:var(--pf-bg);padding:12px 14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .pf-c-tile .pf-note{min-height:2.6em}
+.pf-c-locals{display:flex;flex-direction:column;gap:4px;width:100%;max-height:150px;overflow:auto}.pf-c-lp{display:flex;gap:4px}.pf .pf-c-lp .pf-c-lopen{flex:1;justify-content:flex-start;align-items:center;gap:8px;line-height:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pf .pf-c-lp.on .pf-c-lopen{border-color:var(--pf-accent)}.pf .pf-c-lp button{min-height:34px}.pf .pf-c-lopen .pf-note{line-height:1.2;min-height:0}.pf .pf-c-lren,.pf .pf-c-ldel{min-width:34px;padding:0;color:var(--pf-muted)}.pf .pf-c-ldel:hover,.pf .pf-delete:hover{color:var(--pf-bad)}
 .pf-c-foot{text-align:center}.pf-auth-help:empty,.pf-c-addrepo:empty{display:none}
 .pf-auth-row[hidden]{display:none}
 .pf-acct{display:inline-flex;gap:8px;align-items:center;font:12.5px var(--pf-mono,'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);color:#9a86c4}.pf-acct .pf-who{color:#9a86c4}
@@ -932,7 +933,7 @@
     };
   }
   /** No project: sprites uploaded or drawn from scratch, living only in this browser until they are downloaded. */
-  const browserSource = () => ({ kind: 'browser', thumbs: false, sprites: [], hidden: [], note: 'Just drawing: these sprites are kept in this browser (they survive reloads). Download them, or open a project.', async read(path) { throw new Error(path + ' only exists in this browser'); } });
+  const browserSource = (id = '', name = '') => ({ kind: 'browser', id, name: name || (id ? 'Untitled' : 'Sketches'), thumbs: false, sprites: [], hidden: [], note: 'A project in this browser: nothing is linked, the sprites are kept here (they survive reloads). Download them when done.', async read(path) { throw new Error(path + ' only exists in this browser'); } });
 
   function mount(host, options = {}) {
     if (!document.getElementById('pf-vision-defs')) { // colour-blind simulations (Machado, Oliveira & Fernandes 2009, full severity), used by CSS filters
@@ -1000,7 +1001,7 @@
           <div class="pf-row"><button class="pf-variant" title="A recoloured copy of this sprite (and its whole family: every pose and frame) as new files, e.g. king → king_dark">Make variant…</button></div>
           <div class="pf-row"><button class="pf-outline" title="Draw a 1-pixel outline in the primary colour around everything opaque">Outline</button><label class="pf-note"><input type="checkbox" class="pf-outline-c"> corners</label></div>
           <div class="pf-row"><button class="pf-resize" title="Change the canvas size, or scale the image (also: click the size in the status bar)">Canvas size…</button><button class="pf-trim" title="Cut away the empty (transparent) border">Trim</button><button class="pf-clear">Clear</button></div>
-          <div class="pf-row"><button class="pf-revert" title="Throw away every change to this sprite and go back to the original (undo brings them back)">Revert to original</button></div></div>
+          <div class="pf-row"><button class="pf-revert" title="Throw away every change to this sprite and go back to the original (undo brings them back)">Revert to original</button><button class="pf-delete" title="Delete this sprite: it only exists in this browser (never saved into the project)" hidden>Delete sprite</button></div></div>
       </aside>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
         <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
@@ -1028,7 +1029,7 @@
         </section>
         <div class="pf-c-grid">
           <section class="pf-c-tile pf-c-folderbox"><span class="pf-c-title">Folder on this computer</span><span class="pf-note pf-c-foldernote"></span><button type="button" class="pf-c-folder">Choose folder…</button></section>
-          <section class="pf-c-tile"><span class="pf-c-title">Just draw</span><span class="pf-note">Kept in this browser, even after a reload. Download when done.</span><span class="pf-row"><button type="button" class="pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></span><button type="button" class="pf-c-resume" hidden></button></section>
+          <section class="pf-c-tile pf-c-local"><span class="pf-c-title">Just draw, in this browser</span><span class="pf-note">Nothing to link or sign in to. Kept in this browser, even after a reload; Download when done.</span><span class="pf-row"><button type="button" class="pf-c-blank" title="A new empty project that lives only in this browser">New blank project</button><button type="button" class="pf-c-upload" title="Start a project in this browser from PNG files">Upload PNG…</button></span><div class="pf-c-locals" hidden></div></section>
         </div>
         <div class="pf-log pf-c-msg" aria-live="polite"></div>
         <div class="pf-note pf-c-foot">Tip: drop PNG files onto the canvas at any time.</div></form></dialog>
@@ -1146,10 +1147,8 @@
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
       $('.pf-src').textContent = src.note || '';
-      const label = src.kind === 'github' ? src.repo.slug : src.kind === 'folder' ? src.name : '';
-      $('.pf-source').textContent = label ? label + ' ▾' : 'Open project…'; $('.pf-source').title = (label ? label + ': ' : '') + 'switch to another GitHub repository or a folder on this computer';
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
-      const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src);
+      const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src); sourceButton();
       renderList(); renderPalette(); applyBg();
       if (restored.length) { await openSprite(restored[0].path); note(`${restored.length} sprite${restored.length > 1 ? 's' : ''} with changes restored from this browser`); }
       else if (S.sprites.length) await openSprite(S.sprites[0].path); else { status(); render(); }
@@ -1171,7 +1170,7 @@
         if (last && last.kind === 'github' && O.connect !== false) {
           try { return void (await useSource(await githubSource({ repo: last.slug, branch: last.branch, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase }))); } catch (e) { why = 'Could not reopen ' + last.slug + ': ' + e.message; }
         }
-        await useSource(browserSource(), { remember: !last || last.kind === 'browser' });
+        await useSource(last && last.kind === 'browser' ? browserSource(last.id, localName(last.id)) : browserSource(), { remember: !last || last.kind === 'browser' });
         if (O.blank && !S.docs.size) await addLocal(O.blank.name || 'sprite.png', O.blank.w || 16, O.blank.h || 16, new Uint32Array((O.blank.w || 16) * (O.blank.h || 16)), false);
         else if (!S.docs.size && O.connect !== false) openConnect(why || (last && last.kind === 'folder' ? `Choose the folder "${last.name}" again to pick up where you left off (your unsaved edits are kept in this browser).` : ''));
       } catch (e) { note('Could not start: ' + e.message); }
@@ -1194,9 +1193,60 @@
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
       let path = name, n = 1; while (S.docs.has(path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
-      S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); keepSoon(); return openSprite(path);
+      S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); keepSoon(); sourceButton(); return openSprite(path);
     }
     const canWrite = () => !!(S.src && S.src.write);
+    /** The project button names what is open: a repository, a folder, or a project in this browser (once it has sprites). */
+    function sourceButton() {
+      const src = S.src || {}, label = src.kind === 'github' ? src.repo.slug : src.kind === 'folder' ? src.name : src.kind === 'browser' && (src.id || S.sprites.length) ? src.name : '';
+      $('.pf-source').textContent = label ? label + ' ▾' : 'Open project…';
+      $('.pf-source').title = (label ? label + (src.kind === 'browser' ? ' (in this browser)' : '') + ': ' : '') + 'switch project: a GitHub repository, a folder on this computer, or a project in this browser';
+    }
+
+    /* ---------- projects in this browser: nothing linked, sprites kept in IndexedDB; the list of them lives in localStorage ---------- */
+    const LOCAL_KEY = 'pf:local-projects';
+    const localProjects = () => { try { const l = JSON.parse(localStorage.getItem(LOCAL_KEY) || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
+    const saveLocalProjects = (l) => { try { localStorage.setItem(LOCAL_KEY, JSON.stringify(l)); } catch { /* the projects still work, only the list is not remembered */ } };
+    const localName = (id) => (localProjects().find((x) => x.id === id) || {}).name || (id ? 'Untitled' : 'Sketches');
+    const localKey = (id) => 'browser:' + location.pathname + (id ? '#' + id : '');
+    async function newLocalProject(how = {}) {
+      const list = localProjects(), names = new Set(list.map((x) => x.name)); let n = 1; while (names.has('Untitled ' + n)) n++;
+      const proj = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: 'Untitled ' + n, at: Date.now() };
+      saveLocalProjects([proj, ...list]);
+      if (!(await useSource(browserSource(proj.id, proj.name)))) return false;
+      $('.pf-dlg-connect').close(); if (how.sprite !== false) openNew(); return true;
+    }
+    async function renderLocals() {
+      const box = $('.pf-c-locals'); if (!keeping()) { box.hidden = true; return; }
+      const list = localProjects(); if (!list.some((x) => !x.id)) list.push({ id: '', name: 'Sketches' }); // the default one, from before projects had names
+      const rows = [];
+      for (const x of list) { let c = 0; try { c = (await drafts.list(localKey(x.id))).length; } catch { /* unknown */ } if (x.id || c) rows.push({ ...x, c }); }
+      const cur = S.src && S.src.kind === 'browser' ? S.src.id || '' : null;
+      box.innerHTML = rows.map((x) => `<div class="pf-c-lp${x.id === cur ? ' on' : ''}"><button type="button" class="pf-c-lopen" data-id="${esc(x.id)}" title="Open this project">${esc(x.name)} <span class="pf-note">${x.c} sprite${x.c === 1 ? '' : 's'}${x.id === cur ? ' · open' : ''}</span></button><button type="button" class="pf-c-lren" data-id="${esc(x.id)}" title="Rename">✎</button><button type="button" class="pf-c-ldel" data-id="${esc(x.id)}" title="Delete this project and its sprites from this browser">✕</button></div>`).join('');
+      box.hidden = !rows.length;
+    }
+    async function deleteLocalProject(id) {
+      const name = localName(id); let c = 0; try { c = (await drafts.list(localKey(id))).length; } catch { /* unknown */ }
+      if (!confirm(`Delete "${name}"${c ? ` and its ${c} sprite${c > 1 ? 's' : ''}` : ''} from this browser? This cannot be undone: download anything you want to keep first.`)) return;
+      const open = S.src && S.src.kind === 'browser' && (S.src.id || '') === id;
+      if (open) { S.docs.clear(); S.sprites = []; S.cur = null; } // nothing left to keep for it
+      try { await drafts.clear(localKey(id)); } catch { /* already gone */ }
+      saveLocalProjects(localProjects().filter((x) => x.id !== id));
+      if (open) { await useSource(browserSource()); sourceButton(); renderList(); status(); render(); }
+      note(`deleted "${name}"`); renderLocals();
+    }
+    /** A sprite that exists only here (made or uploaded in this session or kept in this browser, never written to the project) can be deleted. */
+    const deletable = (d) => !!d && (d.local || d.isNew) && !d.onDisk;
+    async function deleteSprite() {
+      const d = doc(); if (!deletable(d)) return;
+      if (d.px.some((v) => v >>> 24) && !confirm(`Delete ${fileName(d)}? It only exists in this browser, so this cannot be undone.`)) return;
+      commitFloat(); S.sel = null; S.float = null;
+      S.docs.delete(d.path); S.sprites = S.sprites.filter((x) => x.path !== d.path); thumbs.delete(d.path);
+      if (drafts && d.kept) try { await drafts.remove(projectKey(), d.path); } catch { /* gone anyway on the next flush */ }
+      const next = S.sprites.find((x) => S.docs.has(x.path)) || S.sprites[0];
+      if (next) await openSprite(next.path); else { S.cur = null; renderList(); renderFamily(); drawPreview(); status(); render(); }
+      sourceButton(); note('deleted ' + fileName(d));
+    }
     /** Save sends this sprite somewhere outside the browser (the project folder, or the page's own save hook). */
     const savesOut = (d) => !!O.save || (canWrite() && !d.local);
 
@@ -1206,7 +1256,7 @@
     const keeping = () => !!drafts && draftsOk;
     const projectKey = () => {
       const s = S.src; if (O.draftsKey) return O.draftsKey;
-      if (!s || s.kind === 'browser') return 'browser:' + location.pathname;
+      if (!s || s.kind === 'browser') return 'browser:' + location.pathname + (s && s.id ? '#' + s.id : '');
       if (s.kind === 'github') return 'github:' + s.repo.slug + '@' + s.branch;
       if (s.kind === 'folder') return 'folder:' + s.name;
       return (s.kind || 'custom') + ':' + location.origin + location.pathname + (O.manifestUrl ? '#' + O.manifestUrl : '');
@@ -1253,7 +1303,7 @@
     const LAST_KEY = 'pf:last';
     const lastProject = () => { try { return JSON.parse(localStorage.getItem(LAST_KEY) || 'null'); } catch { return null; } };
     function rememberProject(src) { // only projects picked on this page; ones given by the page's own options always load anyway
-      const v = src.kind === 'github' ? { kind: 'github', slug: src.repo.slug, branch: src.branch } : src.kind === 'folder' ? { kind: 'folder', name: src.name } : src.kind === 'browser' ? { kind: 'browser' } : null;
+      const v = src.kind === 'github' ? { kind: 'github', slug: src.repo.slug, branch: src.branch } : src.kind === 'folder' ? { kind: 'folder', name: src.name } : src.kind === 'browser' ? { kind: 'browser', id: src.id || '' } : null;
       if (v && !(O.source || O.sprites || O.manifestUrl)) try { localStorage.setItem(LAST_KEY, JSON.stringify(v)); } catch { /* not remembered */ }
     }
 
@@ -1309,16 +1359,18 @@
     let thumbBusy = 0; const thumbQueue = [];
     const thumbSlot = () => new Promise((res) => { if (thumbBusy < 6) { thumbBusy++; res(); } else thumbQueue.push(res); });
     const thumbDone = () => { const next = thumbQueue.shift(); if (next) next(); else thumbBusy--; };
+    /** The list learns a sprite's size from whatever draws it first (its thumbnail, or the sprite itself once open). */
+    function sizeKnown(canvas, s, w, h) { if (s.w && s.h) return; s.w = w; s.h = h; const small = canvas.parentElement && canvas.parentElement.querySelector('small'); if (small) small.textContent = small.textContent.replace(/\?×\?$/, w + '×' + h); }
     async function paintThumb(canvas, s) {
       const d = S.docs.get(s.path);
-      if (d) return drawPx(canvas, d);
+      if (d) { drawPx(canvas, d); return sizeKnown(canvas, s, d.w, d.h); }
       if (!S.src || !S.src.thumbs) return;
       const src = S.src;
       try {
         let bm = thumbs.get(s.path);
         if (!bm) { await thumbSlot(); try { if (S.src !== src) return; bm = await createImageBitmap(new Blob([await src.read(s.path)], { type: 'image/png' })); thumbs.set(s.path, bm); } finally { thumbDone(); } }
         canvas.width = bm.width; canvas.height = bm.height; const c = canvas.getContext('2d'); c.imageSmoothingEnabled = false; c.drawImage(bm, 0, 0);
-        if (!s.w || !s.h) { s.w = bm.width; s.h = bm.height; const small = canvas.parentElement && canvas.parentElement.querySelector('small'); if (small) small.textContent = small.textContent.replace(/\?×\?$/, s.w + '×' + s.h); }
+        sizeKnown(canvas, s, bm.width, bm.height);
       } catch { /* leave blank */ }
     }
 
@@ -1460,7 +1512,7 @@
       setHtml($('.pf-s-info'), d ? `<button type="button" class="pf-s-size" title="Canvas size (Ctrl+Alt+C)">${d.w}×${d.h}</button> · zoom ${S.zoom}×` : '');
       const nt = $('.pf-s-note'); if (nt.textContent !== (S.notice || '')) { nt.textContent = S.notice || ''; nt.title = S.notice || ''; }
       $('.pf-zl').textContent = S.zoom + '×'; $('.pf-s-sel').textContent = S.sel ? `selection ${S.sel.w}×${S.sel.h}${S.float ? ' · floating' : ''}` : '';
-      $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed;
+      $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed; $('.pf-delete').hidden = !deletable(d); $('.pf-revert').hidden = !!d && (d.local || d.isNew) && !d.changed;
       const out = d && savesOut(d), pend = d && !out && needsKeep(d) && !isKept(d);
       $('.pf-save').textContent = !d || out || pend || !keeping() ? 'Save' : 'Saved'; $('.pf-save').classList.toggle('primary', !d || !!out || !!pend || !keeping());
       $('.pf-save').title = out ? 'Save to the project (Ctrl+S). Until then your edits are kept in this browser.' : keeping() ? 'Your edits are kept in this browser as you draw and survive reloads (Ctrl+S keeps them right away). Download or Propose PR to take them out.' : 'This browser cannot keep edits: use Download.';
@@ -2037,8 +2089,8 @@
     $('.pf-nw').oninput = markQuick; $('.pf-nh').oninput = markQuick;
     $('.pf-new').onclick = openNew;
     $('.pf-new-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-nw').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-nh').value | 0)); let n = $('.pf-nn').value.trim().replace(/^\/+/, '') || 'new-sprite.png'; if (!/\.png$/i.test(n)) n += '.png'; $('.pf-dlg-new').close(); addLocal(n, w, h, new Uint32Array(w * h), canWrite()); };
-    $('.pf-open').onclick = () => $('.pf-file').click();
-    $('.pf-file').onchange = async (e) => { for (const f of e.target.files) await importFile(f); e.target.value = ''; };
+    $('.pf-open').onclick = () => { uploadToNew = false; $('.pf-file').click(); };
+    $('.pf-file').onchange = async (e) => { const files = [...e.target.files]; e.target.value = ''; if (!files.length) return; if (uploadToNew) { uploadToNew = false; if (!(await newLocalProject({ sprite: false }))) return; } for (const f of files) await importFile(f); };
     async function importFile(f) { try { const img = await decodePng(f); addLocal(f.name, img.w, img.h, img.px); } catch (err) { note('Could not read ' + f.name + ': ' + err.message); } }
     stage.addEventListener('dragover', (e) => e.preventDefault());
     stage.addEventListener('drop', async (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) if (/^image\//.test(f.type)) await importFile(f); });
@@ -2048,16 +2100,22 @@
       if (S.auth.token) loadRepos();
       const canFolder = typeof window.showDirectoryPicker === 'function'; $('.pf-c-folder').disabled = !canFolder; $('.pf-c-foldernote').textContent = canFolder ? 'Saves the PNGs in place. Chrome, Edge and Opera.' : 'Needs Chrome, Edge or Opera.';
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
-      const resume = $('.pf-c-resume'); resume.hidden = true;
-      if (keeping() && !(S.src && S.src.kind === 'browser')) drafts.list('browser:' + location.pathname).then((r) => { if (!r.length) return; resume.hidden = false; resume.textContent = `Resume ${r.length} sprite${r.length > 1 ? 's' : ''} kept in this browser`; }).catch(() => {});
+      renderLocals();
     }
-    $('.pf-c-resume').onclick = async () => { if (await useSource(browserSource())) $('.pf-dlg-connect').close(); };
+    $('.pf-c-locals').onclick = async (e) => {
+      const b = e.target.closest('button[data-id]'); if (!b) return; const id = b.dataset.id;
+      if (b.classList.contains('pf-c-ldel')) return deleteLocalProject(id);
+      if (b.classList.contains('pf-c-lren')) { const n = (prompt('Project name:', localName(id)) || '').trim(); if (!n) return; const l = localProjects(); const x = l.find((p) => p.id === id); if (x) x.name = n; else l.push({ id, name: n, at: Date.now() }); saveLocalProjects(l); if (S.src && S.src.kind === 'browser' && (S.src.id || '') === id) { S.src.name = n; sourceButton(); } return renderLocals(); }
+      if (await useSource(browserSource(id, localName(id)))) $('.pf-dlg-connect').close();
+    };
     $('.pf-source').onclick = () => openConnect();
     authRows('.pf-signin').forEach((b) => (b.onclick = () => { const d = b.closest('dialog'); doSignIn(d && d.querySelector('.pf-c-msg, .pf-log')); }));
     authRows('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
     $('.pf-c-repolist').onclick = (e) => { const b = e.target.closest('.pf-c-pick'); if (!b) return; $('.pf-c-repo').value = b.dataset.repo; $('.pf-c-branch').value = b.dataset.branch; $('.pf-c-gh').click(); };
-    $('.pf-c-upload').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-file').click(); };
-    $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); openNew(); };
+    let uploadToNew = false; // Upload PNG in the dialog starts a project in this browser (unless one is open); Open PNG in the sidebar adds to the open project
+    $('.pf-c-upload').onclick = () => { uploadToNew = !(S.src && S.src.kind === 'browser'); $('.pf-dlg-connect').close(); $('.pf-file').click(); };
+    $('.pf-c-blank').onclick = () => newLocalProject();
+    $('.pf-delete').onclick = deleteSprite;
     $('.pf-c-gh').onclick = async () => {
       const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), typed = S.auth.token ? '' : $('.pf-c-token').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
       try {

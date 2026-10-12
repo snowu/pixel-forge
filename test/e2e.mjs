@@ -33,7 +33,7 @@ const browser = await launch();
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
 const page = await ctx.newPage();
 const errors = []; page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
-page.on('dialog', (d) => (d.type() === 'prompt' ? d.accept(globalThis.__promptAnswer || '1') : d.dismiss()));
+page.on('dialog', (d) => (d.type() === 'prompt' ? d.accept(globalThis.__promptAnswer || '1') : globalThis.__confirmYes && d.type() === 'confirm' ? d.accept() : d.dismiss()));
 const pf = () => page.evaluate(() => { const d = document.getElementById('app').__pf.current; return { path: d.path, w: d.w, h: d.h, px: [...d.px] }; });
 const px = async (x, y) => { const s = await pf(); return s.px[y * s.w + x]; };
 const RED = 0xff0000ff >>> 0; // pack(255,0,0,255) little-endian: 0xAABBGGRR
@@ -305,6 +305,13 @@ s = await pf(); ok(s.path === 'imported.png' && s.w === 2, 'Open PNG imports a f
   ok(dls === 0 && !fs.existsSync(path.join(root, 'imported.png')), 'Save on an import neither downloads it nor writes it into the project by surprise');
   ok(/kept in this browser/.test(await page.locator('.pf-s-name').innerText()), 'it says the import is kept in this browser'); }
 { const dl3 = page.waitForEvent('download'); await page.keyboard.press('Control+Shift+s'); const d3 = await dl3; ok(d3.suggestedFilename() === 'imported.png', 'Ctrl+Shift+S downloads the PNG'); }
+ok(await page.locator('.pf-delete').isVisible(), 'an import can be deleted (it is not in the project)');
+globalThis.__confirmYes = true; await page.locator('.pf-delete').click(); await page.waitForTimeout(300); globalThis.__confirmYes = false;
+ok(!(await page.locator('.pf-item .n').allInnerTexts()).some((n) => n.startsWith('imported.png')) && !fs.existsSync(path.join(root, 'imported.png')), 'Delete sprite removes it from the list (after asking, since it has pixels)');
+await page.evaluate(() => document.getElementById('app').__pf.open('art/items/gem.png')); await page.waitForTimeout(200);
+ok(await page.locator('.pf-delete').isHidden(), 'a new sprite already saved into the project is a real file now: no Delete here');
+await page.evaluate(() => document.getElementById('app').__pf.open('art/slime.png')); await page.waitForTimeout(200);
+ok(await page.locator('.pf-delete').isHidden(), 'nor for the project\'s own sprites');
 
 section('sprite sheet preview');
 await page.locator('.pf-item', { hasText: 'walk.png' }).click(); await page.waitForTimeout(250);
@@ -481,7 +488,7 @@ section('hosted page, fully in the session: upload, edit, download');
   { const px = await app(sp, () => [...document.getElementById('app').__pf.current.px]); ok(px[0] === (0xff00ff00 >>> 0) && px[1 * 4 + 1] >>> 24 === 250, 'with the edit, and every pixel exact (alpha 250 too)'); }
   { const dz = sp.waitForEvent('download'); await sp.locator('.pf-download').click(); await sp.locator('.pf-dlmenu [data-dl="all"]').click(); const z = await dz; const zf = path.join(os.tmpdir(), 'pf-all.zip'); await z.saveAs(zf);
     const r = spawnSync('python3', ['-I', '-c', 'import zipfile,sys; print(",".join(zipfile.ZipFile(sys.argv[1]).namelist()))', zf], { encoding: 'utf8' });
-    ok(z.suggestedFilename() === 'sprites-changed.zip' && r.stdout.trim() === 'my-heart.png', 'Download → all changed sprites gives a .zip: ' + z.suggestedFilename() + ' [' + r.stdout.trim() + ']'); }
+    ok(z.suggestedFilename() === 'Sketches-changed.zip' && r.stdout.trim() === 'my-heart.png', 'Download → all changed sprites gives a .zip: ' + z.suggestedFilename() + ' [' + r.stdout.trim() + ']'); }
   // leaving: only asks while an edit is not kept yet
   { const v2 = await sp.locator('.pf-view').boundingBox(), S1 = await sp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; });
     await sp.mouse.click(v2.x + (S1.ox + 1.5 * S1.z) / S1.k, v2.y + (S1.oy + 1.5 * S1.z) / S1.k); }
@@ -496,12 +503,34 @@ section('hosted page, fully in the session: upload, edit, download');
   // blank sprite path, next to the kept one
   const bp = await sctx.newPage(); await bp.goto(hbase); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; });
   ok((await bp.evaluate(() => document.getElementById('app').__pf.current.px[1 * 4 + 1])) === lastPx && lastPx !== (0xfa0000ff >>> 0), 'a new tab shows the latest edit too');
-  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-dlg-connect[open]');
-  ok(await bp.locator('.pf-c-resume').isHidden(), 'no "resume" offer while already drawing in this browser');
-  await bp.locator('.pf-c-blank').click(); await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
+  ok((await bp.locator('.pf-source').innerText()) === 'Sketches ▾', 'what was drawn without a project shows as "Sketches", a project in this browser');
+  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-dlg-connect[open]'); await bp.waitForSelector('.pf-c-lp');
+  ok((await bp.locator('.pf-c-lp').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()).join('|').startsWith('Sketches 1 sprite · open'), 'the dialog lists the projects in this browser: ' + (await bp.locator('.pf-c-lp').allInnerTexts()).join('|').replace(/\s+/g, ' '));
+  await bp.locator('.pf-c-blank').click(); await bp.waitForSelector('.pf-dlg-new[open]');
+  ok((await bp.locator('.pf-source').innerText()) === 'Untitled 1 ▾' && await bp.locator('.pf-item').count() === 0, 'New blank project starts an empty project in this browser, nothing linked, and asks for the first sprite');
+  await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
   ok((await bp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.path + ' ' + d.w + 'x' + d.h; })) === 'gem.png 8x8', 'a blank sprite starts a new document of the chosen size');
+  await bp.locator('.pf-new').click(); await bp.locator('.pf-nn').fill('scrap.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
   await bp.reload(); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; }); await bp.waitForTimeout(300);
-  { const names = (await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).sort(); ok(names.join() === 'gem.png,my-heart.png', 'both sprites survive a reload: ' + names); }
+  { const names = (await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).sort(); ok(names.join() === 'gem.png,scrap.png' && (await bp.locator('.pf-source').innerText()) === 'Untitled 1 ▾', 'after a reload the same project reopens with its sprites: ' + names); }
+  // delete a sprite that only exists here
+  await bp.evaluate(() => document.getElementById('app').__pf.open('scrap.png')); await bp.waitForTimeout(200);
+  ok(await bp.locator('.pf-delete').isVisible(), 'Delete sprite is offered for a sprite that only exists in this browser');
+  await bp.locator('.pf-delete').click(); await bp.waitForTimeout(500);
+  ok((await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).join() === 'gem.png' && (await bp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'gem.png', 'it disappears (an empty one without asking) and the next sprite opens');
+  await bp.reload(); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; }); await bp.waitForTimeout(300);
+  ok(await bp.locator('.pf-item').count() === 1, 'and it stays deleted after a reload');
+  // switch between projects in this browser, rename, delete
+  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-c-lp');
+  await bp.locator('.pf-c-lp', { hasText: 'Sketches' }).locator('.pf-c-lopen').click(); await bp.waitForFunction(() => document.querySelector('.pf-source').textContent === 'Sketches ▾');
+  ok((await bp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'my-heart.png', 'one click switches to another project in this browser, with its own sprites');
+  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-c-lp');
+  bp.once('dialog', (d) => d.accept('Dungeon tiles')); await bp.locator('.pf-c-lp', { hasText: 'Untitled 1' }).locator('.pf-c-lren').click(); await bp.waitForTimeout(300);
+  ok((await bp.locator('.pf-c-lp').allInnerTexts()).some((t) => t.startsWith('Dungeon tiles')), 'projects can be renamed');
+  bp.once('dialog', (d) => d.accept()); await bp.locator('.pf-c-lp', { hasText: 'Dungeon tiles' }).locator('.pf-c-ldel').click(); await bp.waitForTimeout(500);
+  ok(!(await bp.locator('.pf-c-lp').allInnerTexts()).some((t) => t.startsWith('Dungeon')) && await bp.evaluate(async () => (await window.Spritewright.core.browserDrafts().list('browser:/#' + JSON.parse(localStorage.getItem('pf:local-projects') || '[]').map((x) => x.id)[0])).length) === 0, 'and deleted, with their sprites');
+  await bp.keyboard.press('Escape');
+  ok(!(await bp.locator('.pf-delete').isVisible()) || (await bp.evaluate(() => document.getElementById('app').__pf.current.local)), 'Delete sprite only shows for sprites that exist only here');
   await bp.close();
   ok(net.length === 0, 'the whole session made no network requests beyond the page itself (' + net.length + ')');
   ok(serr.length === 0, 'no page errors ' + serr.join('|'));
@@ -838,7 +867,7 @@ section('changes view: what you changed since opening, and the original on deman
   const at = (x, y, dx = 0.5) => cp.evaluate(([x, y, dx]) => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), d = c.getContext('2d').getImageData(Math.round(S.ox + (x + dx) * S.zoom), Math.round(S.oy + (y + 0.5) * S.zoom), 1, 1).data; return [...d.slice(0, 3)]; }, [x, y, dx]);
   const pos = async (x, y) => { const b = await cp.locator('.pf-view').boundingBox(); const s = await cp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { zoom: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); return { x: b.x + (s.ox + (x + 0.5) * s.zoom) / s.k, y: b.y + (s.oy + (y + 0.5) * s.zoom) / s.k }; };
   await cp.locator('.pf-chex').fill('#00ff00'); await cp.locator('.pf-chex').press('Tab'); await cp.keyboard.press('b');
-  const p0 = await pos(5, 5); await cp.mouse.click(p0.x, p0.y); await cp.waitForTimeout(100);
+  const p0 = await pos(5, 5); await cp.mouse.click(p0.x, p0.y); await cp.waitForFunction(() => /kept in this browser/.test(document.querySelector('.pf-s-name').textContent)); // settled: the status line is rewritten once the edit is kept
   ok(/1 px changed · hold \\ for before/.test(await cp.locator('.pf-s-name').innerText()), 'the status bar counts the changed pixels and says how to see the original');
   const plainBody = await at(4, 4), plainNew = await at(5, 5);
   await cp.keyboard.press('c');
