@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createServer } from '../src/serve.mjs';
 import { decodePng, encodePng, fromRows } from './png.mjs';
 
@@ -235,9 +236,30 @@ await page.locator('.pf-fliph').click(); s = await pf(); ok(s.px[1 * 16 + 15 - 5
 await page.locator('.pf-fliph').click();
 await page.locator('.pf-sh[data-d="1,0"]').click(); s = await pf(); ok(s.px[1 * 16 + 6] === orig.px[1 * 16 + 5], 'wrap shift moves the picture one pixel');
 await page.locator('.pf-sh[data-d="-1,0"]').click();
-await page.locator('.pf-resize').click(); await page.locator('.pf-sz-w').fill('20'); await page.locator('.pf-sz-h').fill('12'); await page.locator('.pf-sz-ok').click();
-s = await pf(); ok(s.w === 20 && s.h === 12 && s.px[1 * 20 + 5] === orig.px[1 * 16 + 5], 'canvas resize keeps the top-left');
+await page.locator('.pf-resize').click(); await page.locator('.pf-sz-anchor [data-a="tl"]').click(); await page.locator('.pf-sz-w').fill('20'); await page.locator('.pf-sz-h').fill('12'); await page.locator('.pf-sz-ok').click();
+s = await pf(); ok(s.w === 20 && s.h === 12 && s.px.every((v, i) => (i % 20) >= 16 || ((i / 20) | 0) >= 12 ? v === 0 : v === orig.px[((i / 20) | 0) * 16 + (i % 20)]), 'canvas resize anchored top-left keeps every pixel where it was');
 await page.keyboard.press('Control+z'); s = await pf(); ok(s.w === 16 && s.h === 16, 'and can be undone');
+await page.locator('.pf-s-size').click(); ok(await page.locator('.pf-dlg-size').evaluate((d) => d.open), 'clicking the size in the status bar opens Canvas size');
+ok((await page.locator('.pf-sz-info').innerText()).includes('16×16 → 16×16'), 'the dialog previews old → new size');
+await page.locator('.pf-sz-anchor [data-a="br"]').click(); await page.locator('.pf-sz-w').fill('18'); await page.locator('.pf-sz-h').fill('18');
+ok(await page.locator('.pf-sz-cv').evaluate((c) => c.width === 18 && c.height === 18), 'the preview follows the inputs');
+await page.locator('.pf-sz-ok').click(); s = await pf();
+ok(s.w === 18 && s.px[(2 + 1) * 18 + 2 + 5] === orig.px[1 * 16 + 5] && s.px[0] === 0, 'anchored bottom-right the new space goes top-left');
+await page.keyboard.press('Control+z');
+await page.keyboard.press('Control+Alt+c'); await page.locator('.pf-sz-mode [data-mode="scale"]').click(); await page.locator('.pf-sz-quick [data-q="double"]').click();
+ok((await page.locator('.pf-sz-w').inputValue()) === '32' && (await page.locator('.pf-sz-h').inputValue()) === '32', 'Ctrl+Alt+C opens it; ×2 doubles both sides');
+await page.locator('.pf-sz-ok').click(); s = await pf();
+ok(s.w === 32 && s.px[(2 * 1) * 32 + 2 * 5] === orig.px[1 * 16 + 5] && s.px[(2 * 1 + 1) * 32 + 2 * 5 + 1] === orig.px[1 * 16 + 5], 'scale image ×2 turns each pixel into a 2×2 block');
+await page.keyboard.press('Control+z');
+{ const ob = await page.evaluate(() => { const d = document.getElementById('app').__pf.current; return window.Spritewright.core.opaqueBounds(d.px, d.w, d.h); });
+  await page.locator('.pf-trim').click(); s = await pf();
+  ok(ob && s.w === ob.w && s.h === ob.h && s.px[0] === orig.px[ob.y * 16 + ob.x], `Trim cuts away the empty border (${ob && ob.w}×${ob && ob.h})`);
+  await page.keyboard.press('Control+z'); }
+await page.keyboard.press('s');
+{ const a = await cellPos(2, 2), b = await cellPos(6, 4); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up(); }
+await page.locator('.pf-sel-crop').click(); s = await pf();
+ok(s.w === 5 && s.h === 3 && s.px[0] === orig.px[2 * 16 + 2], 'select an area, then crop the canvas to it: ' + s.w + '×' + s.h);
+await page.keyboard.press('Control+z'); await page.keyboard.press('b');
 await page.locator('.pf-rot').click(); s = await pf(); ok(s.w === 16 && s.h === 16 && s.px[5 * 16 + 14] === orig.px[1 * 16 + 5], 'rotate clockwise');
 await page.keyboard.press('Control+z');
 
@@ -258,16 +280,18 @@ await page.locator('.pf-new').click(); await page.locator('.pf-nw').fill('8'); a
 s = await pf(); ok(s.path === 'art/items/gem.png' && s.w === 8, 'New creates a blank sprite at a path inside the project');
 await setHex('#00ff00'); await page.keyboard.press('b'); await click(3, 3); await page.keyboard.press('Control+s'); await until(() => fs.existsSync(path.join(root, 'art/items/gem.png')));
 ok(fs.existsSync(path.join(root, 'art/items/gem.png')) && decodePng(fs.readFileSync(path.join(root, 'art/items/gem.png'))).w === 8, 'saving it creates the file and its folder');
-globalThis.__promptAnswer = '4';
-const dl = page.waitForEvent('download'); await page.locator('.pf-export').click(); const d1 = await dl;
+await page.locator('.pf-download').click(); ok(await page.locator('.pf-dlmenu [data-dl]').count() === 6, 'Download opens a menu: this PNG, 2/4/8/16×, all changed');
+const dl = page.waitForEvent('download'); await page.locator('.pf-dlmenu [data-dl="4"]').click(); const d1 = await dl;
 const out = path.join(os.tmpdir(), 'pf-export.png'); await d1.saveAs(out); const ex = decodePng(fs.readFileSync(out));
-ok(d1.suggestedFilename() === 'gem@4x.png' && ex.w === 32 && ex.h === 32, 'Export at 4x downloads ' + d1.suggestedFilename() + ' ' + ex.w + 'x' + ex.h);
+ok(d1.suggestedFilename() === 'gem@4x.png' && ex.w === 32 && ex.h === 32, 'Download at 4× gives ' + d1.suggestedFilename() + ' ' + ex.w + 'x' + ex.h);
 const idx = (12 * 32 + 12) * 4; ok(ex.rgba[idx] === 0 && ex.rgba[idx + 1] === 255 && ex.rgba[idx + 3] === 255 && ex.rgba[(15 * 32 + 15) * 4 + 1] === 255, 'the upscale is nearest-neighbour (each pixel becomes a 4x4 block)');
 const imp = fromRows(['rr', 'rr'], { r: [255, 0, 0] }); const impFile = path.join(os.tmpdir(), 'imported.png'); fs.writeFileSync(impFile, imp.png);
 await page.locator('.pf-file').setInputFiles(impFile); await page.waitForTimeout(300);
 s = await pf(); ok(s.path === 'imported.png' && s.w === 2, 'Open PNG imports a file from disk');
-const dl2 = page.waitForEvent('download'); await page.keyboard.press('Control+s'); const d2 = await dl2;
-ok(d2.suggestedFilename() === 'imported.png' && !fs.existsSync(path.join(root, 'imported.png')), 'imports are downloaded on Save, never written into the project by surprise');
+{ let dls = 0; const h = () => dls++; page.on('download', h); await page.keyboard.press('Control+s'); await page.waitForTimeout(500); page.off('download', h);
+  ok(dls === 0 && !fs.existsSync(path.join(root, 'imported.png')), 'Save on an import neither downloads it nor writes it into the project by surprise');
+  ok(/kept in this browser/.test(await page.locator('.pf-s-name').innerText()), 'it says the import is kept in this browser'); }
+{ const dl3 = page.waitForEvent('download'); await page.keyboard.press('Control+Shift+s'); const d3 = await dl3; ok(d3.suggestedFilename() === 'imported.png', 'Ctrl+Shift+S downloads the PNG'); }
 
 section('sprite sheet preview');
 await page.locator('.pf-item', { hasText: 'walk.png' }).click(); await page.waitForTimeout(250);
@@ -372,8 +396,13 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.locator('.pf-chex').fill('#ff0000'); await gp.locator('.pf-chex').press('Tab');
   await gp.mouse.click(gview.x + (gS.ox + 0.5 * gS.z) / gS.k, gview.y + (gS.oy + 0.5 * gS.z) / gS.k);
   ok(await gp.evaluate(() => document.getElementById('app').__pf.current.px[0]) === RED, 'drawing works on a repository sprite');
-  const gdl = gp.waitForEvent('download'); await gp.keyboard.press('Control+s'); const gd = await gdl;
-  ok(gd.suggestedFilename() === 'hero.png', 'Save downloads the PNG (a repository cannot be written to directly): ' + gd.suggestedFilename());
+  { let dls = 0; const h = () => dls++; gp.on('download', h); await gp.keyboard.press('Control+s'); await gp.waitForTimeout(400); gp.off('download', h);
+    ok(dls === 0 && /kept in this browser, not in a PR yet/.test(await gp.locator('.pf-s-name').innerText()), 'Save does not download: the edit is kept in this browser, not in a PR yet');
+    ok((await gp.locator('.pf-save').innerText()) === 'Saved', 'the Save button says Saved'); }
+  await gp.reload(); await gp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current && a.current.path === 'art/hero.png'; });
+  ok(!(await gp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'after a reload the last repository reopens by itself');
+  ok(await gp.evaluate(() => document.getElementById('app').__pf.current.px[0]) === RED && /restored from this browser/.test(await gp.locator('.pf-s-info').innerText()), 'and the edited sprite comes back with the edit, opened first');
+  ok(await gp.locator('.pf-item .dot.base').count() === 1, 'the list marks it as changed (not in a PR yet)');
   await gp.locator('.pf-prbtn').click(); await gp.waitForSelector('.pf-dlg-pr[open]');
   ok((await gp.locator('.pf-pr-repo').inputValue()) === 'me/game' && (await gp.locator('.pf-pr-base').inputValue()) === 'main' && (await gp.locator('.pf-pr-token').inputValue()) === 'ghp_standalone', 'the PR dialog is prefilled from the connection (repo, branch, token)');
   await gp.locator('.pf-pr-title').fill('Hero update'); await gp.locator('.pf-pr-go').click(); await gp.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 8000 });
@@ -387,6 +416,8 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.locator('.pf-clear').click(); await gp.locator('.pf-prbtn').click(); await gp.waitForSelector('.pf-dlg-pr[open]');
   await gp.locator('.pf-pr-go').click(); await gp.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 12000 });
   ok(gcalls.some((c) => c.p.endsWith('/forks')) && gcalls.find((c) => c.p === '/repos/me/game/pulls').body.head.startsWith('artist:'), 'without push access it forks and opens the PR from the fork');
+  await gp.waitForTimeout(500);
+  ok(await gp.evaluate(async () => (await window.Spritewright.core.browserDrafts().list('github:me/game@main')).length) === 0, 'once the changes are in pull requests the browser copies are dropped');
   await gp.close();
   // public repository: files come from GitHub's file CDN (no API rate limit), the API is only used to list them
   { isPublic = true; const before = gcalls.filter((c) => /\/git\/blobs\/sha/.test(c.p)).length, rawBefore = rawSeen.length;
@@ -421,22 +452,43 @@ section('hosted page, fully in the session: upload, edit, download');
   const v = await sp.locator('.pf-view').boundingBox(); const S0 = await sp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; });
   await sp.locator('.pf-chex').fill('#00ff00'); await sp.locator('.pf-chex').press('Tab');
   await sp.mouse.click(v.x + (S0.ox + 0.5 * S0.z) / S0.k, v.y + (S0.oy + 0.5 * S0.z) / S0.k);
-  ok(/unsaved/.test(await sp.locator('.pf-s-name').innerText()), 'drawing marks the sprite unsaved');
-  const dl = sp.waitForEvent('download'); await sp.keyboard.press('Control+s'); const d1 = await dl;
+  const app = (pg, fn) => pg.evaluate(fn);
+  await sp.waitForFunction(() => /kept in this browser/.test(document.querySelector('.pf-s-name').textContent));
+  ok(true, 'a drawn pixel is kept in this browser straight away (no download, no button)');
+  { let dls = 0; const h = () => dls++; sp.on('download', h); await sp.keyboard.press('Control+s'); await sp.waitForTimeout(400); sp.off('download', h);
+    ok(dls === 0 && (await sp.locator('.pf-save').innerText()) === 'Saved', 'Ctrl+S does not download anything; the button says Saved'); }
+  const dl = sp.waitForEvent('download'); await sp.locator('.pf-download').click(); await sp.locator('.pf-dlmenu [data-dl="1"]').click(); const d1 = await dl;
   const f1 = path.join(os.tmpdir(), 'pf-session-out.png'); await d1.saveAs(f1); const out = decodePng(fs.readFileSync(f1));
-  ok(d1.suggestedFilename() === 'my-heart.png', 'Save downloads the edited file under its own name: ' + d1.suggestedFilename());
+  ok(d1.suggestedFilename() === 'my-heart.png', 'Download gives the edited file under its own name: ' + d1.suggestedFilename());
   ok(out.rgba[0] === 0 && out.rgba[1] === 255 && out.rgba[3] === 255, 'the downloaded PNG contains the edit');
   ok(out.rgba[(1 * 4 + 1) * 4 + 3] === 250 && out.rgba[(1 * 4 + 1) * 4] === 255, 'and the semi-transparent pixels of the upload (alpha 250) are unchanged');
-  ok(!/unsaved/.test(await sp.locator('.pf-s-name').innerText()), 'after downloading it is marked saved');
-  // leaving with unsaved work asks first
-  await sp.mouse.click(v.x + (S0.ox + 1.5 * S0.z) / S0.k, v.y + (S0.oy + 1.5 * S0.z) / S0.k);
+  // a reload brings it all back
+  await sp.reload(); await sp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current && a.current.path === 'my-heart.png'; });
+  ok(!(await sp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'after a reload the page carries on with the sprite from this browser (no project dialog)');
+  { const px = await app(sp, () => [...document.getElementById('app').__pf.current.px]); ok(px[0] === (0xff00ff00 >>> 0) && px[1 * 4 + 1] >>> 24 === 250, 'with the edit, and every pixel exact (alpha 250 too)'); }
+  { const dz = sp.waitForEvent('download'); await sp.locator('.pf-download').click(); await sp.locator('.pf-dlmenu [data-dl="all"]').click(); const z = await dz; const zf = path.join(os.tmpdir(), 'pf-all.zip'); await z.saveAs(zf);
+    const r = spawnSync('python3', ['-I', '-c', 'import zipfile,sys; print(",".join(zipfile.ZipFile(sys.argv[1]).namelist()))', zf], { encoding: 'utf8' });
+    ok(z.suggestedFilename() === 'sprites-changed.zip' && r.stdout.trim() === 'my-heart.png', 'Download → all changed sprites gives a .zip: ' + z.suggestedFilename() + ' [' + r.stdout.trim() + ']'); }
+  // leaving: only asks while an edit is not kept yet
+  { const v2 = await sp.locator('.pf-view').boundingBox(), S1 = await sp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; });
+    await sp.mouse.click(v2.x + (S1.ox + 1.5 * S1.z) / S1.k, v2.y + (S1.oy + 1.5 * S1.z) / S1.k); }
   let asked = false; sp.once('dialog', async (d) => { asked = d.type() === 'beforeunload'; await d.dismiss(); });
   await sp.close({ runBeforeUnload: true }); await new Promise((r) => setTimeout(r, 300));
-  ok(asked, 'closing the tab with unsaved changes shows the browser\'s "leave site?" warning');
-  // blank sprite path
-  const bp = await sctx.newPage(); await bp.goto(hbase); await bp.waitForSelector('.pf-dlg-connect[open]');
-  await bp.locator('.pf-c-blank').click(); await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(250);
+  ok(asked, 'closing the tab in the instant before an edit is kept shows the "leave site?" warning');
+  await sp.waitForFunction(() => /kept in this browser/.test(document.querySelector('.pf-s-name').textContent));
+  const lastPx = await sp.evaluate(() => document.getElementById('app').__pf.current.px[1 * 4 + 1]);
+  asked = false; sp.once('dialog', async (d) => { asked = true; await d.dismiss(); });
+  await sp.close({ runBeforeUnload: true }); await new Promise((r) => setTimeout(r, 300));
+  ok(!asked && sp.isClosed(), 'once it is kept the tab closes without a warning (nothing would be lost)');
+  // blank sprite path, next to the kept one
+  const bp = await sctx.newPage(); await bp.goto(hbase); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; });
+  ok((await bp.evaluate(() => document.getElementById('app').__pf.current.px[1 * 4 + 1])) === lastPx && lastPx !== (0xfa0000ff >>> 0), 'a new tab shows the latest edit too');
+  await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-dlg-connect[open]');
+  ok(await bp.locator('.pf-c-resume').isHidden(), 'no "resume" offer while already drawing in this browser');
+  await bp.locator('.pf-c-blank').click(); await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
   ok((await bp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.path + ' ' + d.w + 'x' + d.h; })) === 'gem.png 8x8', 'a blank sprite starts a new document of the chosen size');
+  await bp.reload(); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; }); await bp.waitForTimeout(300);
+  { const names = (await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).sort(); ok(names.join() === 'gem.png,my-heart.png', 'both sprites survive a reload: ' + names); }
   await bp.close();
   ok(net.length === 0, 'the whole session made no network requests beyond the page itself (' + net.length + ')');
   ok(serr.length === 0, 'no page errors ' + serr.join('|'));
@@ -521,8 +573,10 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   // 4. sign in once: a new visit is still signed in, and an expiring token is renewed quietly
   ap.removeAllListeners('dialog'); ap.on('dialog', (d) => d.accept()); // accept "leave site?" for the unsaved edit
   await ap.evaluate(() => { const a = JSON.parse(localStorage.getItem('pf:gh')); a.exp = Date.now() + 30000; localStorage.setItem('pf:gh', JSON.stringify(a)); });
-  await ap.goto(hbase + '?auth=https://auth.test'); await ap.waitForSelector('.pf-dlg-connect[open]'); await ap.waitForSelector('.pf-c-pick');
-  ok(/Signed in as artist/.test(await ap.locator('.pf-dlg-connect .pf-who').innerText()) && logins.length === 1, 'coming back later: still signed in, no popup');
+  await ap.goto(hbase + '?auth=https://auth.test'); await ap.waitForFunction(() => document.querySelector('.pf-source').textContent.includes('me/game'));
+  ok(!(await ap.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'coming back later: the last repository reopens by itself');
+  await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-c-pick');
+  ok(/Signed in as artist/.test(await ap.locator('.pf-dlg-connect .pf-who').innerText()) && logins.length === 1, 'still signed in, no popup');
   ok(refreshes.join() === 'ghr_1' && seen.at(-1).auth === 'Bearer ghu_renewed', 'a token about to expire was renewed through the service before use');
   const renewed = await ap.evaluate(() => JSON.parse(localStorage.getItem('pf:gh')));
   ok(renewed.token === 'ghu_renewed' && renewed.refresh === 'ghr_2' && renewed.login === 'artist', 'the renewed token and the new single-use refresh token are stored');
@@ -697,6 +751,36 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.keyboard.press('v'); ok(await fp.locator('.pf-ctx').isHidden(), 'V hides it');
   ok(ferr2.length === 0, 'no page errors ' + ferr2.join('|'));
   await fp.close(); await s2.close();
+}
+
+section('project folder: unsaved edits survive a reload; canvas size for a whole family');
+{
+  const r3 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-keep-')); fs.mkdirSync(path.join(r3, 'chars'));
+  const dot = (x) => fromRows(['....', '....', '....', '....'].map((row, y) => (y === 1 ? row.slice(0, x) + 'r' + row.slice(x + 1) : row)), { r: [255, 0, 0] });
+  [0, 1].forEach((i) => fs.writeFileSync(path.join(r3, `chars/hero_${i}.png`), dot(i).png));
+  const s3 = createServer({ root: r3, port: 0 }), b3 = await s3.listen();
+  const kp = await ctx.newPage(); const kerr = []; kp.on('pageerror', (e) => kerr.push(e.message));
+  await kp.goto(b3 + '?auth=off'); await kp.waitForSelector('.pf-item'); await kp.evaluate(() => document.getElementById('app').__pf.open('chars/hero_0.png')); await kp.waitForTimeout(200);
+  const kpos = async (x, y) => { const b = await kp.locator('.pf-view').boundingBox(), st = await kp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); return { x: b.x + (st.ox + (x + 0.5) * st.z) / st.k, y: b.y + (st.oy + (y + 0.5) * st.z) / st.k }; };
+  await kp.locator('.pf-chex').fill('#0000ff'); await kp.locator('.pf-chex').press('Tab'); await kp.keyboard.press('b');
+  { const p = await kpos(3, 3); await kp.mouse.click(p.x, p.y); }
+  await kp.waitForFunction(() => /unsaved \(kept in this browser meanwhile\)/.test(document.querySelector('.pf-s-name').textContent));
+  ok((await kp.locator('.pf-save').innerText()) === 'Save', 'with a project folder Save still means "write the file"; until then the edit is kept in this browser');
+  await kp.reload(); await kp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current && a.current.path === 'chars/hero_0.png'; });
+  { const st = await kp.evaluate(() => { const d = document.getElementById('app').__pf.current; return { px: d.px[3 * 4 + 3], unsaved: d.unsaved }; });
+    ok(st.px === 0xffff0000 >>> 0 && st.unsaved && /unsaved/.test(await kp.locator('.pf-s-name').innerText()), 'after a reload the unsaved edit is back, still marked unsaved');
+    ok(decodePng(fs.readFileSync(path.join(r3, 'chars/hero_0.png'))).rgba[(3 * 4 + 3) * 4 + 3] === 0, 'and the file on disk is untouched until Save'); }
+  await kp.keyboard.press('Control+s'); await until(() => decodePng(fs.readFileSync(path.join(r3, 'chars/hero_0.png'))).rgba[(3 * 4 + 3) * 4 + 2] === 255); await kp.waitForTimeout(500);
+  ok(await kp.evaluate(async () => (await window.Spritewright.core.browserDrafts().list('server:' + location.origin + location.pathname)).length) === 0, 'Ctrl+S writes the file and drops the browser copy');
+  // canvas size for every frame
+  await kp.locator('.pf-resize').click();
+  ok(await kp.locator('.pf-sz-famrow').isVisible() && /all 2 frames of "hero"/.test(await kp.locator('.pf-sz-famtext').innerText()), 'for an animation the dialog offers to resize all its frames: ' + await kp.locator('.pf-sz-famtext').innerText());
+  await kp.locator('.pf-sz-anchor [data-a="c"]').click(); await kp.locator('.pf-sz-w').fill('6'); await kp.locator('.pf-sz-h').fill('6'); await kp.locator('.pf-sz-ok').click(); await kp.waitForTimeout(300);
+  { const ds = await kp.evaluate(() => { const a = document.getElementById('app').__pf; return ['chars/hero_0.png', 'chars/hero_1.png'].map((p) => { const d = a.docs.get(p); return { w: d.w, h: d.h, red: d.px.findIndex((v) => v === 0xff0000ff) }; }); });
+    ok(ds.every((d) => d.w === 6 && d.h === 6) && ds[0].red === 2 * 6 + 1 && ds[1].red === 2 * 6 + 2, 'both frames are 6×6 now, centred: ' + JSON.stringify(ds)); }
+  await kp.keyboard.press('Control+z'); ok(await kp.evaluate(() => document.getElementById('app').__pf.current.w) === 4, 'undo works per image');
+  ok(kerr.length === 0, 'no page errors ' + kerr.join('|'));
+  await kp.close(); await s3.close();
 }
 
 section('background behind transparent pixels');

@@ -142,6 +142,30 @@ test('flip, rotate, shift and resize', () => {
   assert.deepEqual([...C.resizePx(px, 3, 2, 4, 3, 'tl')], [1, 2, 3, 0, 4, 5, 6, 0, 0, 0, 0, 0]);
   assert.deepEqual([...C.resizePx(px, 3, 2, 1, 1, 'tl')], [1]);
 });
+test('canvas size: nine anchors, scaling, trim bounds', () => {
+  const px = Uint32Array.from([1, 2, 3, 4, 5, 6]); // 3 wide, 2 tall
+  assert.deepEqual(C.anchorOffset(3, 2, 5, 4, 'br'), { x: 2, y: 2 });
+  assert.deepEqual(C.anchorOffset(3, 2, 5, 4, 't'), { x: 1, y: 0 });
+  assert.deepEqual(C.anchorOffset(3, 2, 5, 4, 'l'), { x: 0, y: 1 });
+  assert.deepEqual(C.anchorOffset(3, 2, 5, 4, 'c'), { x: 1, y: 1 });
+  assert.deepEqual([...C.resizePx(px, 3, 2, 4, 2, 'r')], [0, 1, 2, 3, 0, 4, 5, 6]);
+  assert.deepEqual([...C.resizePx(px, 3, 2, 1, 1, 'br')], [6], 'shrinking keeps the anchored corner');
+  assert.deepEqual([...C.resizePx(px, 3, 2, 3, 3, 'b')], [0, 0, 0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual([...C.scalePx(px, 3, 2, 6, 4)], [1, 1, 2, 2, 3, 3, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 4, 4, 5, 5, 6, 6], 'doubling repeats each pixel 2x2');
+  assert.deepEqual([...C.scalePx(C.scalePx(px, 3, 2, 6, 4), 6, 4, 3, 2)], [...px], 'halving it back is exact');
+  const A = 0xff000000, img = new Uint32Array(25); img[6] = A; img[13] = A | 5;
+  assert.deepEqual(C.opaqueBounds(img, 5, 5), { x: 1, y: 1, w: 3, h: 2 });
+  assert.equal(C.opaqueBounds(new Uint32Array(4), 2, 2), null);
+  assert.equal(C.opaqueBounds(Uint32Array.from([0x00ffffff]), 1, 1), null, 'invisible colour (alpha 0) counts as empty');
+});
+test('zipFiles writes a zip that unzip tools read, folders kept', () => {
+  const dir = tmp(), a = encodePng(2, 2, new Uint8Array(16).fill(255)), b = new TextEncoder().encode('hello');
+  const z = C.zipFiles([{ name: 'art/enemies/slime.png', bytes: a }, { name: 'notes/ü.txt', bytes: b }]);
+  fs.writeFileSync(path.join(dir, 'x.zip'), z);
+  const r = spawnSync('python3', ['-I', '-c', 'import zipfile,sys,json; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; print(json.dumps({n.filename: len(z.read(n)) for n in z.infolist()}))', path.join(dir, 'x.zip')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { 'art/enemies/slime.png': a.length, 'notes/ü.txt': 5 });
+});
 test('colorsOf counts by use and lists transparent last', () => {
   const a = C.pack(1, 2, 3), b = C.pack(9, 9, 9);
   const out = C.colorsOf(Uint32Array.from([a, b, a, 0, a, 0]));

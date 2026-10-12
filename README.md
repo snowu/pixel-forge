@@ -16,7 +16,17 @@ And it can hand art back as a **GitHub pull request**, so an artist never needs 
 
 **https://snowu.github.io/spritewright/**
 
-Click **Upload PNG** (or **Blank sprite**), draw, and press **Save** or **Export** to download the result. Everything happens in your browser tab: the file is never uploaded anywhere, and the page warns you before you close the tab with unsaved changes. The same page can also open a whole GitHub repository or a folder on your computer (below).
+Click **Upload PNG** (or **Blank sprite**) and draw. Everything happens in your browser: the file is never uploaded anywhere, and your edits are **kept in this browser as you draw**, so a reload or a closed tab loses nothing (the page carries on where you left off, and reopens the last GitHub repository). **Download** gives you the PNG (also scaled up 2–16×, or every changed sprite as a .zip). The same page can also open a whole GitHub repository or a folder on your computer (below).
+
+### What Save does
+
+| Project | Save (`Ctrl+S`) | Your edits until then |
+| --- | --- | --- |
+| Folder on your computer, or `npx spritewright` | writes the PNG into the project | kept in this browser, restored after a reload, marked *unsaved* |
+| GitHub repository | nothing to write: the button says **Saved** | kept in this browser until you **Propose PR** (then dropped: the work is in the pull request) |
+| Just drawing (upload / blank) | nothing to write: the button says **Saved** | kept in this browser until you revert them; **Download** takes them out |
+
+Browser copies live in IndexedDB on that device, one per project and file. **Revert to original** (Image panel) throws a sprite's changes away (undo brings them back). The page only asks before closing in the instant before an edit is kept, or when the browser blocks storage.
 
 ## Three ways to use it
 
@@ -71,7 +81,18 @@ const editor = Spritewright.mount(document.getElementById('editor')!, {
 });
 ```
 
-Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `pr: false` to hide the pull-request button. `Spritewright.createPullRequest`, `Spritewright.png.decode/encode`, `Spritewright.sources.*` and `Spritewright.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
+Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `drafts: false` to not keep edits in the browser (or your own store; `draftsKey` names the project), `pr: false` to hide the pull-request button. `Spritewright.createPullRequest`, `Spritewright.png.decode/encode`, `Spritewright.sources.*` and `Spritewright.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
+
+## Canvas size
+
+**Canvas size…** (Image panel, the `16×16` in the status bar, or `Ctrl+Alt+C`) changes a sprite's size after it was made, with a live preview:
+
+- **resize canvas**: add or cut away space; a 3×3 anchor says which part stays put (e.g. bottom-centre for a character that has to keep its feet on the ground). It warns when visible pixels would be cut off.
+- **scale image**: nearest neighbour, so pixels repeat or drop and never blur; keep proportions on by default.
+- quick sizes: ½, ×2, the next power of two, square.
+- for a family (an animation's frames, or poses), **all frames** at once, so they keep matching.
+
+Also **Trim** (cut away the empty border) and, with the select tool (`S`), **crop** to the selection. Selections also **cut**, **delete**, **move** (drag or arrows) and flip/rotate on their own.
 
 ## Families and animations
 
@@ -171,7 +192,7 @@ It listens on `127.0.0.1` only, rejects requests whose `Host` header is not `loc
 
 ## Keys
 
-Press `?` in the editor for the full list. The main ones: `B` pencil · `E` eraser · `G` fill · `I` picker · `L` line · `R`/`F` rectangle/filled · `O`/`U` ellipse/filled · `S` select · `D` shade · `[` `]` brush size · `X` swap colours · `M` mirror · `T` tile preview · `N` onion skin · `#` grid · `Ctrl+C`/`X`/`V` copy/cut/paste · `Ctrl+A` select all · arrows nudge · `Enter` apply · `Esc` drop · `Del` delete · `Ctrl+Z`/`Ctrl+Y` undo/redo · `Ctrl+S` save · scroll or `+`/`-`/`0` zoom · space+drag or middle mouse to pan · pinch to zoom on touch screens.
+Press `?` in the editor for the full list. The main ones: `B` pencil · `E` eraser · `G` fill · `I` picker · `L` line · `R`/`F` rectangle/filled · `O`/`U` ellipse/filled · `S` select · `D` shade · `[` `]` brush size · `X` swap colours · `M` mirror · `T` tile preview · `N` onion skin · `#` grid · `Ctrl+C`/`X`/`V` copy/cut/paste · `Ctrl+A` select all · arrows nudge · `Enter` apply · `Esc` drop · `Del` delete · `Ctrl+Z`/`Ctrl+Y` undo/redo · `Ctrl+S` save · `Ctrl+Shift+S` download · `Ctrl+Alt+C` canvas size · scroll or `+`/`-`/`0` zoom · space+drag or middle mouse to pan · pinch to zoom on touch screens.
 
 ## Tests
 
