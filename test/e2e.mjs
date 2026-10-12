@@ -398,7 +398,8 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   ok(/open now/.test(await ap.locator('.pf-c-pick.on').innerText()) && /me\/game/.test(await ap.locator('.pf-c-pick.on').innerText()), 'the list marks the repository that is open now');
   ok(await ap.evaluate(() => { const f = document.querySelector('.pf-dlg-connect .pf-form'); return f.querySelector('.pf-gh-box').getBoundingClientRect().top < f.querySelector('.pf-c-upload').getBoundingClientRect().top; }), 'when signed in, your repositories come first in the dialog');
   await ap.locator('.pf-c-pick', { hasText: 'them/art-only' }).click(); await ap.waitForFunction(() => document.querySelector('.pf-source').textContent.includes('them/art-only'));
-  ok(await ap.locator('.pf-dlg-connect').isHidden() && (await ap.locator('.pf-item').allInnerTexts()).join().includes('b.png'), 'one click switches to the other repository and lists its sprites');
+  await ap.waitForSelector('.pf-dlg-connect', { state: 'hidden' }); await ap.waitForFunction(() => document.querySelectorAll('.pf-item').length === 2);
+  { const hid = await ap.locator('.pf-dlg-connect').isHidden(), items = (await ap.locator('.pf-item').allInnerTexts()).join(); ok(hid && items.includes('b.png'), 'one click switches to the other repository and lists its sprites: ' + hid + ' ' + items.replace(/\n/g, ' ')); }
   await ap.waitForFunction(() => document.getElementById('app').__pf.current); await ap.waitForTimeout(200); await ap.keyboard.press('b'); await ap.locator('.pf-view').click();
   await ap.locator('.pf-prbtn').click(); await ap.waitForSelector('.pf-dlg-pr[open]');
   ok((await ap.locator('.pf-pr-repo').inputValue()) === 'them/art-only' && (await ap.locator('.pf-pr-base').inputValue()) === 'master', 'after switching, the pull request goes to the new repository, not the old one');
@@ -463,6 +464,7 @@ const mp = await phone.newPage(); const merrors = []; mp.on('pageerror', (e) => 
 await mp.goto(base); await mp.waitForSelector('.pf-item'); await mp.waitForTimeout(300);
 ok(await mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no sideways scroll at 390px');
 await mp.locator('.pf-item', { hasText: 'slime.png' }).tap(); await mp.waitForTimeout(250);
+await mp.locator('.pf-view').evaluate((v) => v.scrollIntoView({ block: 'center' })); await mp.waitForTimeout(100);
 const vb = await mp.locator('.pf-view').boundingBox(); ok(vb.width > 300 && vb.height > 250, 'the canvas gets a usable size on a phone: ' + Math.round(vb.width) + 'x' + Math.round(vb.height));
 const mS = await mp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { zoom: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
 await mp.touchscreen.tap(vb.x + (mS.ox + 10.5 * mS.zoom) / mS.k, vb.y + (mS.oy + 12.5 * mS.zoom) / mS.k);
