@@ -62,7 +62,11 @@ export interface Editor {
   open(path: string): Promise<void>;
   save(): Promise<void>;
   setColor(abgr: number): void;
-  setTool(tool: 'pen' | 'erase' | 'fill' | 'line' | 'rect' | 'rectf' | 'pick'): void;
+  /** The colour right click paints with; 0 (clear) means right click erases. */
+  setColor2(abgr: number): void;
+  setTool(tool: 'pen' | 'erase' | 'fill' | 'line' | 'rect' | 'rectf' | 'ellipse' | 'ellipsef' | 'pick' | 'select' | 'shade'): void;
+  /** Select the whole image (the select tool becomes active). */
+  selectAll(): void;
   undo(): void; redo(): void;
   dispose(): void;
 }

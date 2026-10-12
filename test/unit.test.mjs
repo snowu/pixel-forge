@@ -15,6 +15,66 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pf-'));
 const SLIME = fromRows(['.gg.', 'gGGg', 'gGGg', '.gg.'], { g: [60, 180, 80], G: [120, 230, 130] });
 
 /* ---------- drawing core ---------- */
+const grid = (pts, w, h, ox = 0, oy = 0) => { const g = Array.from({ length: h }, () => Array(w).fill('.')); for (const [x, y] of pts) g[y + oy][x + ox] = '#'; return g.map((r) => r.join('')); };
+test('ellipse: a symmetric 1-pixel ring, filled disc, and the same result whichever corner you start from', () => {
+  assert.deepEqual(grid(C.ellipsePoints(0, 0, 8, 8, false), 9, 9), ['..#####..', '.#.....#.', '#.......#', '#.......#', '#.......#', '#.......#', '#.......#', '.#.....#.', '..#####..']);
+  assert.deepEqual(grid(C.ellipsePoints(0, 0, 4, 4, true), 5, 5), ['.###.', '#####', '#####', '#####', '.###.']);
+  const key = (p) => p.map(([x, y]) => x + ',' + y).sort().join(' ');
+  assert.equal(key(C.ellipsePoints(11, 6, 0, 0, false)), key(C.ellipsePoints(0, 0, 11, 6, false)));
+  const ring = C.ellipsePoints(0, 0, 11, 6, false); assert.deepEqual(grid(ring, 12, 7), grid(ring.map(([x, y]) => [11 - x, y]), 12, 7), 'mirror symmetric');
+  assert.deepEqual(C.ellipsePoints(3, 3, 3, 3, false), [[3, 3]], 'a one-pixel ellipse is one pixel');
+});
+test('brush tips: sizes, round vs square, centred on the cursor', () => {
+  assert.deepEqual(C.brushOffsets(1, 'round'), [[0, 0]]);
+  assert.deepEqual(grid(C.brushOffsets(3, 'round'), 3, 3, 1, 1), ['.#.', '###', '.#.']);
+  assert.deepEqual(grid(C.brushOffsets(3, 'square'), 3, 3, 1, 1), ['###', '###', '###']);
+  assert.deepEqual(grid(C.brushOffsets(5, 'round'), 5, 5, 2, 2), ['.###.', '#####', '#####', '#####', '.###.']);
+  assert.equal(C.brushOffsets(4, 'square').length, 16); assert.equal(C.brushOffsets(99, 'square').length, 32 * 32, 'capped at 32');
+});
+test('dither pattern is a checkerboard and the phase flips it', () => {
+  assert.equal(C.ditherOn(0, 0), true); assert.equal(C.ditherOn(1, 0), false); assert.equal(C.ditherOn(1, 1), true); assert.equal(C.ditherOn(0, 0, 1), false);
+});
+test('fillSame replaces one colour everywhere, not just the connected area', () => {
+  const r = C.pack(255, 0, 0), b = C.pack(0, 0, 255), px = new Uint32Array([r, b, r, b, r, b]);
+  assert.deepEqual(C.fillSame(px, 0, 0, 3, b), [0, 2, 4]); assert.ok(px.every((v) => v === b));
+  const clear = new Uint32Array([0, C.pack(1, 2, 3, 0), r]); C.fillSame(clear, 0, 0, 3, b); assert.deepEqual([...clear], [b, b, r], 'every fully clear pixel counts as the same colour');
+});
+test('outline: side neighbours only, or with corners', () => {
+  const k = C.pack(0, 0, 0), g = C.pack(0, 255, 0), px = new Uint32Array(25); px[12] = g;
+  const side = C.outlinePx(px, 5, 5, k, false), all = C.outlinePx(px, 5, 5, k, true);
+  assert.deepEqual([...side].map((v, i) => (v === k ? i : -1)).filter((i) => i >= 0), [7, 11, 13, 17]);
+  assert.equal([...all].filter((v) => v === k).length, 8); assert.equal(px[7], 0, 'the input is not modified');
+});
+test('hue-shifted ramps and shading: darker drifts to blue, lighter to yellow, greys stay grey', () => {
+  const red = C.pack(200, 60, 60), ramp = C.hueRamp(red, 5);
+  assert.equal(ramp.length, 5); assert.equal(ramp[2], red, 'the middle of an odd ramp is the colour itself');
+  const lum = (c) => { const [r, g, b] = C.unpack(c); return 0.299 * r + 0.587 * g + 0.114 * b; };
+  for (let i = 1; i < 5; i++) assert.ok(lum(ramp[i]) > lum(ramp[i - 1]), 'ramp goes dark to light');
+  const hue = (c) => C.toHsv(c)[0];
+  assert.ok(hue(ramp[0]) > 300 && hue(ramp[0]) < 360, 'the shadow of red leans toward purple/blue: ' + hue(ramp[0]));
+  assert.ok(hue(ramp[4]) > 0 && hue(ramp[4]) < 60, 'the highlight of red leans toward orange/yellow: ' + hue(ramp[4]));
+  for (const c of C.hueRamp(C.pack(128, 128, 128), 5)) { const [r, g, b] = C.unpack(c); assert.ok(r === g && g === b, 'grey ramp stays grey ' + C.toHex(c)); }
+  assert.ok(lum(C.shadeColor(red, 1)) > lum(red) && lum(C.shadeColor(red, -1)) < lum(red));
+  const pal = [C.pack(0, 0, 0), C.pack(80, 20, 40), red, C.pack(255, 180, 120), C.pack(255, 255, 255)];
+  assert.equal(C.shadeColor(red, 1, pal), pal[3]); assert.equal(C.shadeColor(red, -1, pal), pal[1], 'with a palette, shading steps to palette colours');
+  assert.equal(C.shadeColor(0, 1), 0, 'clear stays clear');
+  for (const c of [C.pack(0, 0, 0), C.pack(255, 255, 255), C.pack(10, 200, 250, 128)]) { C.shadeColor(c, 1); C.shadeColor(c, -1); }
+  assert.equal(C.shadeColor(C.pack(10, 200, 250, 128), -1) >>> 24, 128, 'alpha is kept');
+  assert.equal(C.fromHsv(...C.toHsv(C.pack(12, 200, 99))), C.pack(12, 200, 99), 'HSV round trip');
+});
+test('selection helpers: copy, paste with and without transparency, clipping, constrain', () => {
+  const a = C.pack(255, 0, 0), b = C.pack(0, 255, 0), px = new Uint32Array([a, b, 0, 0, a, b, 0, 0, 0]);
+  assert.deepEqual([...C.copyRect(px, 3, 3, { x: 0, y: 0, w: 2, h: 2 })], [a, b, 0, a]);
+  assert.deepEqual([...C.copyRect(px, 3, 3, { x: 2, y: 2, w: 2, h: 2 })], [0, 0, 0, 0], 'outside comes back clear');
+  const dst = new Uint32Array(9).fill(b); C.pasteRect(dst, 3, 3, new Uint32Array([a, 0]), 2, 1, 2, 0, false);
+  assert.deepEqual([...dst.slice(0, 3)], [b, b, a], 'clear source pixels keep what is underneath, and the part off the edge is dropped');
+  const op = new Uint32Array(4).fill(b); C.pasteRect(op, 2, 2, new Uint32Array([a, 0]), 2, 1, 0, 0, true); assert.deepEqual([...op.slice(0, 2)], [a, 0]);
+  assert.deepEqual(C.rectBetween({ x: 5, y: -2 }, { x: 1, y: 3 }, 4, 4), { x: 1, y: 0, w: 3, h: 4 });
+  assert.equal(C.rectBetween({ x: 9, y: 9 }, { x: 12, y: 12 }, 4, 4), null);
+  assert.deepEqual(C.constrain({ x: 0, y: 0 }, { x: 5, y: -2 }, 'box'), { x: 5, y: -5 });
+  assert.deepEqual(C.constrain({ x: 0, y: 0 }, { x: 6, y: 1 }, 'line'), { x: 6, y: 0 });
+  assert.deepEqual(C.constrain({ x: 0, y: 0 }, { x: 5, y: 4 }, 'line'), { x: 4, y: 4 });
+});
 test('colour packing round-trips and parses hex', () => {
   assert.equal(C.toHex(C.pack(255, 0, 128)), '#ff0080');
   assert.equal(C.fromHex('#ff0080'), C.pack(255, 0, 128));

@@ -85,6 +85,114 @@ await page.locator('.pf-mx').click(); await click(1, 8);
 s = await pf(); ok(s.px[8 * 16 + 1] === RED && s.px[8 * 16 + 14] === RED, 'mirror X paints the opposite pixel too');
 await page.locator('.pf-mx').click(); await page.keyboard.press('Control+z');
 
+section('more tools: brush size, dither, ellipse, shading, selection, tile, outline, ramps');
+{
+  const C = (await import('../spritewright.js'), globalThis.Spritewright.core);
+  const at = (s, x, y) => s.px[y * s.w + x];
+  await setHex('#ff0000'); await page.keyboard.press('b');
+  // brush size and tip
+  await page.keyboard.press(']'); await page.keyboard.press(']');
+  ok((await page.locator('.pf-sizev').innerText()) === '3' && await page.locator('.pf-size').isVisible(), '] grows the brush (size shown in the options bar)');
+  await click(8, 13); s = await pf();
+  ok([[7, 12], [9, 12], [8, 13], [7, 14], [9, 14]].every(([x, y]) => at(s, x, y) === RED), 'a size-3 square brush paints 3×3');
+  await page.keyboard.press('Control+z');
+  await page.locator('.pf-shape button[data-shape=round]').click(); await click(8, 13); s = await pf();
+  ok(at(s, 8, 12) === RED && at(s, 7, 13) === RED && at(s, 7, 12) !== RED && at(s, 9, 14) !== RED, 'the round tip leaves the corners out');
+  await page.keyboard.press('Control+z'); await page.locator('.pf-shape button[data-shape=square]').click(); await page.keyboard.press('['); await page.keyboard.press('[');
+  ok((await page.locator('.pf-sizev').innerText()) === '1', '[ shrinks it again');
+  // dither pencil
+  await page.locator('.pf-pattern button[data-pattern=dither]').click(); await drag(0, 15, 5, 15); s = await pf();
+  ok([0, 1, 2, 3, 4, 5].every((x) => (at(s, x, 15) === RED) === ((x + 15) % 2 === 0)), 'the dither pattern paints every other pixel of a stroke');
+  await page.keyboard.press('Control+z');
+  // dither fill
+  await page.keyboard.press('g'); await click(15, 0); s = await pf();
+  ok(at(s, 15, 1) === RED && at(s, 15, 0) === 0 && at(s, 0, 0) === RED, 'a dithered fill checkers the area and leaves the other pixels alone (secondary colour is clear)');
+  await page.keyboard.press('Control+z'); await page.locator('.pf-pattern button[data-pattern=solid]').click();
+  // fill same colour vs area
+  const green = (0xff000000 | (80 << 16) | (180 << 8) | 60) >>> 0, before = await pf(), nGreen = before.px.filter((v) => v === green).length, gi = before.px.indexOf(green);
+  await page.locator('.pf-fillmode button[data-fill=same]').click(); await click(gi % 16, Math.floor(gi / 16)); s = await pf();
+  ok(nGreen > 3 && s.px.filter((v) => v === green).length === 0 && s.px.filter((v) => v === RED).length === nGreen + before.px.filter((v) => v === RED).length, `"same colour" fill recolours all ${nGreen} pixels of that colour`);
+  await page.keyboard.press('Control+z'); await page.locator('.pf-fillmode button[data-fill=area]').click();
+  ok(await page.locator('.pf-fillmode').isVisible() && !(await page.locator('.pf-size').isVisible()), 'the options bar shows the fill options for the fill tool, not the brush size');
+  // ellipses
+  await page.keyboard.press('o'); await drag(0, 0, 4, 4); s = await pf();
+  ok(at(s, 2, 0) === RED && at(s, 0, 2) === RED && at(s, 4, 2) === RED && at(s, 2, 2) !== RED && at(s, 0, 0) !== RED, 'O draws an ellipse outline');
+  await page.keyboard.press('Control+z'); await page.keyboard.press('u'); await drag(0, 0, 4, 4); s = await pf();
+  ok(at(s, 2, 2) === RED && at(s, 0, 0) !== RED, 'U draws a filled ellipse');
+  ok(await page.locator('.pf-filled button[data-filled="1"]').evaluate((b) => b.classList.contains('on')) && await page.locator('.pf-tools button[data-t=ellipse]').evaluate((b) => b.classList.contains('on')), 'the rail shows the ellipse tool, the options bar says filled');
+  await page.keyboard.press('Control+z');
+  // shift constrains rectangles to squares
+  await page.keyboard.press('r'); { const a = await cellPos(0, 0), b = await cellPos(5, 2); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.keyboard.down('Shift'); await page.mouse.move(b.x, b.y, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Shift'); }
+  s = await pf(); ok(at(s, 0, 5) === RED && at(s, 5, 5) === RED, 'Shift turns a rectangle into a square');
+  await page.keyboard.press('Control+z');
+  // secondary colour
+  await page.keyboard.press('b'); await page.locator('.pf-pal-colors button').first().click({ modifiers: ['Shift'] });
+  const sec = await page.evaluate(() => document.getElementById('app').__pf.state.color2);
+  await setHex('#ff0000');
+  await click(0, 15, { button: 'right' }); ok(await px(0, 15) === sec && sec !== 0, 'Shift+click a swatch sets the secondary colour, and right click paints with it');
+  await page.keyboard.press('x'); ok(await page.evaluate(() => document.getElementById('app').__pf.state.color) === sec, 'X swaps primary and secondary');
+  await page.keyboard.press('x'); await page.keyboard.press('Control+z');
+  await page.evaluate(() => document.getElementById('app').__pf.setColor2(0));
+  // shading
+  const lum = (c) => { const [r, g, b] = C.unpack(c); return 0.299 * r + 0.587 * g + 0.114 * b; };
+  await page.keyboard.press('d'); const gx = gi % 16, gy = Math.floor(gi / 16);
+  await click(gx, gy); const lighter = await px(gx, gy); await page.keyboard.press('Control+z');
+  await click(gx, gy, { button: 'right' }); const darker = await px(gx, gy); await page.keyboard.press('Control+z');
+  ok(lighter !== green && darker !== green, 'D shades: click and right click change the colour');
+  ok(lum(lighter) > lum(green) && lum(darker) < lum(green), 'click lightens, right click darkens');
+  const pal = await page.evaluate(() => document.getElementById('app').__pf.state.palette);
+  ok(pal.includes(lighter) || pal.includes(darker), 'with a project palette, shading steps to palette colours');
+  // selection: move
+  await page.keyboard.press('s'); const orig = await pf(); await drag(4, 4, 7, 7);
+  ok(/selection 4×4/.test(await page.locator('.pf-s-sel').innerText()), 'S + drag selects a rectangle (shown in the status bar)');
+  await drag(5, 5, 11, 5);
+  s = await pf(); ok(at(s, 4, 4) === 0 && at(s, 5, 5) === 0 || at(s, 4, 4) === 0, 'dragging inside the selection lifts the pixels');
+  await page.keyboard.press('Enter'); s = await pf();
+  ok(at(s, 10, 4) === at(orig, 4, 4) && at(s, 13, 7) === at(orig, 7, 7) && at(s, 4, 4) === 0, 'Enter drops them at the new place');
+  await page.keyboard.press('Control+z'); s = await pf(); ok(JSON.stringify(s.px) === JSON.stringify(orig.px), 'a whole move is one undo step');
+  // copy / paste
+  await drag(4, 4, 5, 5); await page.keyboard.press('Control+c'); await page.keyboard.press('Escape');
+  ok(!(await page.locator('.pf-s-sel').innerText()), 'Esc drops the selection');
+  await page.keyboard.press('Control+v'); await page.waitForTimeout(150); await page.keyboard.press('Enter'); s = await pf();
+  ok(at(s, 0, 0) === at(orig, 4, 4) && at(s, 1, 1) === at(orig, 5, 5), 'Ctrl+C then Ctrl+V pastes a copy (top-left with no selection)');
+  await page.keyboard.press('Control+z'); s = await pf(); ok(JSON.stringify(s.px) === JSON.stringify(orig.px), 'undo removes the paste');
+  // nudge with arrows, delete, flip
+  await drag(4, 4, 7, 4); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); s = await pf();
+  ok(at(s, 4, 5) === at(orig, 4, 4) && at(s, 7, 5) === at(orig, 7, 4), 'arrow keys nudge the selection');
+  await page.keyboard.press('Control+z');
+  await drag(4, 4, 7, 4); await page.locator('.pf-fliph').click(); await page.keyboard.press('Enter'); s = await pf();
+  ok(at(s, 4, 4) === at(orig, 7, 4) && at(s, 7, 4) === at(orig, 4, 4) && at(s, 4, 5) === at(orig, 4, 5), 'Flip ↔ flips only the selection');
+  await page.keyboard.press('Control+z');
+  await drag(4, 4, 7, 7); await page.keyboard.press('Delete'); s = await pf();
+  ok([4, 5, 6, 7].every((x) => at(s, x, 6) === 0) && at(s, 8, 6) === at(orig, 8, 6), 'Delete clears the selection');
+  await page.keyboard.press('Control+z'); await page.keyboard.press('Control+a');
+  ok(/selection 16×16/.test(await page.locator('.pf-s-sel').innerText()), 'Ctrl+A selects everything'); await page.keyboard.press('Escape');
+  // paste an image from another app
+  await page.evaluate(async () => { const c = document.createElement('canvas'); c.width = 2; c.height = 1; const g = c.getContext('2d'); g.fillStyle = '#00ff00'; g.fillRect(0, 0, 2, 1); const blob = await new Promise((r) => c.toBlob(r, 'image/png')); const dt = new DataTransfer(); dt.items.add(new File([blob], 'x.png', { type: 'image/png' })); document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true })); });
+  await until(async () => /selection 2×1/.test(await page.locator('.pf-s-sel').innerText())); await page.keyboard.press('Enter'); s = await pf();
+  ok(at(s, 0, 0) === ((0xff000000 | (0 << 16) | (255 << 8) | 0) >>> 0) && at(s, 1, 0) === at(s, 0, 0), 'an image on the clipboard (from another app) pastes as a selection');
+  await page.keyboard.press('Control+z');
+  // tile mode: draw across the edge
+  await page.keyboard.press('b'); await page.keyboard.press('t');
+  ok(await page.locator('.pf-tile').evaluate((b) => b.classList.contains('on')), 'T turns the tile preview on');
+  await click(-1, 1); ok(await px(15, 1) === RED, 'in tile mode a click in the neighbouring copy wraps onto the other edge');
+  await page.keyboard.press('Control+z'); await page.keyboard.press('t'); await page.locator('.pf-fit').click();
+  // outline
+  const pre = await pf(); await setHex('#000000'); await page.locator('.pf-outline').click(); s = await pf();
+  const expect = [...C.outlinePx(Uint32Array.from(pre.px), 16, 16, C.pack(0, 0, 0), false)];
+  ok(JSON.stringify(s.px) === JSON.stringify(expect) && s.px.some((v, i) => v !== pre.px[i]), 'Outline adds a 1-pixel outline in the primary colour');
+  await page.keyboard.press('Control+z'); await setHex('#ff0000');
+  // hue-shift ramp into the palette
+  const palBefore = await page.locator('.pf-pal-colors button').count();
+  await page.locator('.pf-ramp-btn').click(); ok((await page.locator('.pf-ramp-colors button').count()) === 5, 'Hue-shift ramp shows 5 colours around the current one');
+  const fresh = await page.evaluate(() => { const S = document.getElementById('app').__pf.state; return S.ramp.filter((c) => !S.palette.includes(c)).length; });
+  await page.locator('.pf-ramp-add').click(); ok(fresh >= 4 && (await page.locator('.pf-pal-colors button').count()) === palBefore + fresh, `and adds the ${fresh} new ones to the palette`);
+  // shortcuts
+  await page.keyboard.press('?'); ok(await page.locator('.pf-dlg-keys').isVisible() && /Ctrl\+C/.test(await page.locator('.pf-dlg-keys').innerText()), '? lists the keyboard shortcuts');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('b');
+}
+
 section('clean lines, palette and recolouring');
 await page.locator('.pf-pp').click(); await page.locator('.pf-pp').click(); // on
 await page.keyboard.press('b');

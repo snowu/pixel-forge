@@ -99,6 +99,98 @@
   }
   const countDiff = (a, b) => { if (a.length !== b.length) return Math.max(a.length, b.length); let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
 
+  /** The pixels of an ellipse inside the box between two corners. Filled = every pixel centre inside; outline = the filled
+      pixels that touch the outside on a side (a clean 1-pixel, 8-connected ring, symmetric like hand-placed pixel art). */
+  function ellipsePoints(x0, y0, x1, y1, filled) {
+    const ax = Math.min(x0, x1), bx = Math.max(x0, x1), ay = Math.min(y0, y1), by = Math.max(y0, y1), w = bx - ax + 1, h = by - ay + 1;
+    const cx = (w - 1) / 2, cy = (h - 1) / 2, rx = w / 2, ry = h / 2, inside = new Uint8Array(w * h), pts = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0001) inside[y * w + x] = 1;
+    const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && inside[y * w + x];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (inside[y * w + x] && (filled || !at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1))) pts.push([ax + x, ay + y]);
+    return pts;
+  }
+  /** Offsets of a brush tip of the given size: 'square' or 'round'. Size 1 is a single pixel; even sizes lean up-left. */
+  function brushOffsets(size, shape) {
+    const s = Math.max(1, Math.min(32, size | 0)), lo = 0 - Math.floor((s - 1) / 2) || 0, out = [], c = (s - 1) / 2 + lo, r = s / 2;
+    for (let y = lo; y < lo + s; y++) for (let x = lo; x < lo + s; x++) if (shape !== 'round' || s <= 2 || (x - c) ** 2 + (y - c) ** 2 <= r * r - 0.5) out.push([x, y]);
+    return out;
+  }
+  /** The checkerboard used by the dither pattern: true on the pixels it paints. */
+  const ditherOn = (x, y, phase = 0) => ((x + y + phase) & 1) === 0;
+  /** Replace every pixel of one colour (fully clear pixels count as one colour). Returns the indices changed. */
+  function fillSame(px, x, y, w, value) {
+    const t = px[y * w + x], clear = isClear(t), changed = [];
+    if (t === value) return changed;
+    for (let i = 0; i < px.length; i++) if (clear ? isClear(px[i]) : px[i] === t) { px[i] = value; changed.push(i); }
+    return changed;
+  }
+  /** Outline: every clear pixel next to an opaque one gets the colour. corners = also diagonal neighbours (a thicker, rounder line). */
+  function outlinePx(px, w, h, color, corners) {
+    const o = px.slice(), solid = (x, y) => x >= 0 && y >= 0 && x < w && y < h && !isClear(px[y * w + x]);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (!isClear(px[y * w + x])) continue;
+      if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1) || (corners && (solid(x - 1, y - 1) || solid(x + 1, y - 1) || solid(x - 1, y + 1) || solid(x + 1, y + 1)))) o[y * w + x] = color;
+    }
+    return o;
+  }
+  /* HSV helpers for ramps and shading. h in degrees, s and v in 0..1. */
+  function toHsv(c) {
+    const [r, g, b] = unpack(c).map((v) => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0; if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [(h * 60 + 360) % 360, mx ? d / mx : 0, mx];
+  }
+  function fromHsv(h, s, v, a = 255) {
+    h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(1, s)); v = Math.max(0, Math.min(1, v));
+    const f = (n) => { const k = (n + h / 60) % 6; return Math.round((v - v * s * Math.max(0, Math.min(k, 4 - k, 1))) * 255); };
+    return pack(f(5), f(3), f(1), a);
+  }
+  /** Move hue `amt` degrees toward `target` along the shorter way round the colour wheel. */
+  const hueToward = (h, target, amt) => { const d = ((target - h + 540) % 360) - 180; return h + Math.sign(d) * Math.min(Math.abs(d), amt); };
+  /** One step lighter (dir > 0) or darker (dir < 0), the pixel-art way: shadows drift toward blue and lose a little
+      saturation, highlights drift toward yellow. With a palette, the result snaps to the nearest palette colour that differs. */
+  function shadeColor(c, dir, palette) {
+    if (isClear(c)) return c;
+    let [h, s, v] = toHsv(c), out = c;
+    for (let step = 1; step <= 6; step++) {
+      const t = 0.1 * step, nh = s < 0.05 ? h : hueToward(h, dir > 0 ? 60 : 240, 12 * step);
+      const cand = fromHsv(nh, s < 0.05 ? s : dir > 0 ? s - 0.06 * step : s + 0.04 * step, dir > 0 ? v + t : v - t, c >>> 24);
+      out = palette && palette.length ? nearestColor(cand, palette) : cand;
+      if (out !== c) return out;
+    }
+    return out;
+  }
+  /** A ramp of n colours around c, darkest first, with hue shifting (cool shadows, warm highlights). */
+  function hueRamp(c, n = 5) {
+    const [h, s, v] = toHsv(c), mid = (n - 1) / 2, out = [];
+    for (let i = 0; i < n; i++) {
+      const k = (i - mid) / Math.max(1, mid); // -1 darkest .. 1 lightest
+      out.push(i === Math.round(mid) && n % 2 ? c : fromHsv(s < 0.05 ? h : hueToward(h, k > 0 ? 60 : 240, Math.abs(k) * 30), s < 0.05 ? s : s * (1 - 0.25 * k) + (k < 0 ? 0.1 * -k : 0), v + k * (k > 0 ? Math.min(0.35, 1 - v + 0.1) : Math.min(0.45, v - 0.08))));
+    }
+    return out;
+  }
+  /** Copy a rectangle {x,y,w,h} out of an image; parts outside the image come back clear. */
+  function copyRect(px, w, h, r) {
+    const o = new Uint32Array(r.w * r.h);
+    for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++) { const X = r.x + x, Y = r.y + y; if (X >= 0 && Y >= 0 && X < w && Y < h) o[y * r.w + x] = px[Y * w + X]; }
+    return o;
+  }
+  /** Paste src (sw x sh) at (x,y). Clear source pixels leave what is underneath (like placing a sprite), unless opaque is true. */
+  function pasteRect(px, w, h, src, sw, sh, x, y, opaque) {
+    for (let j = 0; j < sh; j++) for (let i = 0; i < sw; i++) { const X = x + i, Y = y + j, v = src[j * sw + i]; if (X >= 0 && Y >= 0 && X < w && Y < h && (opaque || !isClear(v))) px[Y * w + X] = v; }
+    return px;
+  }
+  /** Normalise a drag between two cells into a rectangle clipped to the image (null when it misses the image). */
+  function rectBetween(a, b, w, h) {
+    const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y)), x1 = Math.min(w - 1, Math.max(a.x, b.x)), y1 = Math.min(h - 1, Math.max(a.y, b.y));
+    return x1 < x0 || y1 < y0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  }
+  /** Shift-constrain the second corner so the box is square (shapes) or the line snaps to 0/45/90 degrees. */
+  function constrain(a, b, mode) {
+    const dx = b.x - a.x, dy = b.y - a.y, m = Math.max(Math.abs(dx), Math.abs(dy));
+    if (mode === 'line') { const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4); return { x: a.x + Math.round(Math.cos(ang) * m), y: a.y + Math.round(Math.sin(ang) * m) }; }
+    return { x: a.x + Math.sign(dx || 1) * m, y: a.y + Math.sign(dy || 1) * m };
+  }
+
   /* =====================================================================================================
      A document is one image being edited, with undo history.
      base    = the pixels when this session loaded it (what a pull request is measured against)
@@ -416,64 +508,147 @@
      The editor UI
      ===================================================================================================== */
   const CSS = `
-.pf{--pf-bg:#07090b;--pf-panel:#0d1114;--pf-panel2:#141a1f;--pf-line:#232d34;--pf-ink:#d6e4dc;--pf-muted:#7f948a;--pf-accent:#39ff7a;--pf-on:#04120a;--pf-bad:#ff5470;
-  display:grid;grid-template-columns:220px minmax(0,1fr) 230px;grid-template-rows:minmax(0,1fr);height:100%;min-height:420px;background:var(--pf-bg);color:var(--pf-ink);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border:1px solid var(--pf-line);box-sizing:border-box}
+.pf{--pf-bg:#07040d;--pf-panel:#0e0918;--pf-panel2:#150e24;--pf-line:#2a1b45;--pf-line2:#443070;--pf-ink:#e6dcf7;--pf-muted:#9a86c4;--pf-faint:#6a5890;--pf-accent:#b98cff;--pf-accent2:#e08cff;--pf-on:#12081f;--pf-bad:#ff5470;--pf-good:#7dffb2;--pf-warn:#ffb000;
+  --pf-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  display:grid;grid-template-columns:220px minmax(0,1fr) 248px;grid-template-rows:minmax(0,1fr);height:100%;min-height:440px;background:var(--pf-bg);color:var(--pf-ink);font:12.5px/1.45 var(--pf-mono);border:1px solid var(--pf-line);box-sizing:border-box;font-variant-ligatures:none}
 .pf *{box-sizing:border-box;border-radius:0}
+.pf [hidden]{display:none!important}
+.pf ::selection{background:var(--pf-accent);color:var(--pf-on)}
 .pf button,.pf select,.pf input{font:inherit;color:inherit}
-.pf button{background:var(--pf-panel2);border:1px solid var(--pf-line);padding:5px 9px;cursor:pointer;min-height:30px}
-.pf button:hover:not(:disabled){border-color:var(--pf-accent);color:var(--pf-accent)}
-.pf button:disabled{opacity:.4;cursor:default}
+.pf button{background:var(--pf-panel2);border:1px solid var(--pf-line);padding:4px 9px;cursor:pointer;min-height:30px;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:border-color .12s,color .12s,box-shadow .12s}
+.pf button:hover:not(:disabled){border-color:var(--pf-accent);color:var(--pf-accent);box-shadow:0 0 0 1px rgba(185,140,255,.12),0 0 14px rgba(185,140,255,.12)}
+.pf button:focus-visible{outline:1px solid var(--pf-accent);outline-offset:1px}
+.pf button:disabled{opacity:.35;cursor:default}
 .pf button.on,.pf button.primary{background:var(--pf-accent);border-color:var(--pf-accent);color:var(--pf-on);font-weight:700}
-.pf input[type=text],.pf input[type=number],.pf input[type=password],.pf select,.pf textarea{background:#05080a;border:1px solid var(--pf-line);padding:5px 7px;min-height:30px;width:100%}
-.pf input[type=number]{width:70px}
+.pf button.on:hover:not(:disabled),.pf button.primary:hover:not(:disabled){color:var(--pf-on);background:#cba8ff}
+.pf input[type=text],.pf input[type=number],.pf input[type=password],.pf select,.pf textarea{background:#05030a;border:1px solid var(--pf-line);padding:5px 7px;min-height:30px;width:100%;color:var(--pf-ink)}
+.pf input:focus,.pf textarea:focus{outline:none;border-color:var(--pf-accent)}
+.pf input[type=number]{width:64px}
+.pf input[type=range]{accent-color:var(--pf-accent);width:92px}
+.pf input[type=checkbox]{accent-color:var(--pf-accent)}
 .pf label{display:flex;gap:6px;align-items:center;color:var(--pf-muted)}
-.pf h4{margin:0 0 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--pf-accent);font-weight:700}
-.pf-side,.pf-right{background:var(--pf-panel);overflow:auto;padding:10px;display:flex;flex-direction:column;gap:12px;min-width:0}
-.pf-side{border-right:1px solid var(--pf-line)}.pf-right{border-left:1px solid var(--pf-line)}
+.pf kbd{font:inherit;font-size:11px;background:var(--pf-panel2);border:1px solid var(--pf-line2);padding:1px 6px;color:var(--pf-accent);white-space:nowrap}
+.pf h4{margin:0 0 8px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--pf-accent);font-weight:700}
+.pf h4::before{content:"// ";color:var(--pf-faint)}
+.pf-ic{width:16px;height:16px;flex:none;display:block}
+.pf-side,.pf-right{background:var(--pf-panel);overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.pf-side{border-right:1px solid var(--pf-line)}.pf-right{border-left:1px solid var(--pf-line);gap:0;padding:0}
+.pf-panel{padding:12px 12px 14px;border-bottom:1px solid var(--pf-line);display:flex;flex-direction:column;gap:8px}
 .pf-list{display:flex;flex-direction:column;gap:2px;overflow:auto;flex:1;min-height:80px}
-.pf-item{display:flex;gap:8px;align-items:center;padding:4px;border:1px solid transparent;cursor:pointer;background:none;text-align:left;width:100%;min-height:44px}
-.pf .pf-item.on{border-color:var(--pf-accent);background:var(--pf-panel2);color:var(--pf-ink);font-weight:400}
-.pf-item canvas{width:36px;height:36px;image-rendering:pixelated;background:repeating-conic-gradient(#1a2229 0 25%,#10161a 0 50%) 0 0/8px 8px;flex:none}
+.pf-item{display:flex;gap:8px;align-items:center;padding:4px;border:1px solid transparent;cursor:pointer;background:none;text-align:left;width:100%;min-height:44px;justify-content:flex-start}
+.pf .pf-item{background:none;border-color:transparent}.pf .pf-item:hover:not(:disabled){box-shadow:none;background:var(--pf-panel2)}
+.pf .pf-item.on,.pf .pf-item.on:hover:not(:disabled){border-color:var(--pf-accent);background:var(--pf-panel2);color:var(--pf-ink);font-weight:400;box-shadow:inset 3px 0 0 var(--pf-accent)}
+.pf-item canvas{width:36px;height:36px;image-rendering:pixelated;background:repeating-conic-gradient(#1c1530 0 25%,#130e22 0 50%) 0 0/8px 8px;flex:none}
 .pf-item .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}.pf-item small{display:block;color:var(--pf-muted);overflow:hidden;text-overflow:ellipsis}
-.pf-item .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-item .dot.base{background:#ffb000}
+.pf-item .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-item .dot.base{background:var(--pf-warn)}
 .pf-main{display:flex;flex-direction:column;min-width:0;min-height:0}
-.pf-bar{display:flex;flex-wrap:wrap;gap:6px;padding:8px;border-bottom:1px solid var(--pf-line);background:var(--pf-panel);align-items:center}
-.pf-bar .sep{width:1px;align-self:stretch;background:var(--pf-line);margin:0 2px}
-.pf-stage{position:relative;flex:1;min-height:200px;overflow:hidden;background:#05070a;touch-action:none}
+.pf-bar,.pf-opts{display:flex;flex-wrap:wrap;gap:6px 14px;padding:7px 10px;border-bottom:1px solid var(--pf-line);background:var(--pf-panel);align-items:center}
+.pf-opts{background:var(--pf-bg);height:46px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;font-size:12px;scrollbar-width:thin}.pf-opt{flex-wrap:nowrap;white-space:nowrap;flex:none}
+.pf-grp,.pf-opt{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}.pf-opt[hidden]{display:none}
+.pf-grp-end,.pf-opt-end{margin-left:auto}
+.pf-ol{color:var(--pf-faint);text-transform:uppercase;letter-spacing:.1em;font-size:10px;margin-right:2px}
+.pf-sizev{min-width:1.5em;color:var(--pf-accent)}
+.pf-zl{min-width:3.2em;text-align:center;color:var(--pf-muted)}
+.pf-seg{display:inline-flex;border:1px solid var(--pf-line2)}
+.pf .pf-seg button{border:0;border-right:1px solid var(--pf-line2);min-height:28px;padding:3px 9px;background:var(--pf-panel)}
+.pf .pf-seg button:last-child{border-right:0}.pf .pf-seg button.on{background:var(--pf-accent);color:var(--pf-on)}
+.pf-work{flex:1;display:flex;min-height:0}
+.pf-rail{display:flex;flex-direction:column;gap:4px;padding:8px 6px;border-right:1px solid var(--pf-line);background:var(--pf-panel);align-items:center;overflow:auto}
+.pf-tools{display:flex;flex-direction:column;gap:4px}
+.pf .pf-tools button{width:38px;height:38px;padding:0;background:transparent;border-color:transparent}
+.pf .pf-tools button .pf-ic{width:20px;height:20px}
+.pf .pf-tools button.on{background:var(--pf-accent);border-color:var(--pf-accent);color:var(--pf-on);box-shadow:0 0 16px rgba(185,140,255,.35)}
+.pf-swatch{position:relative;width:40px;height:44px;margin-top:10px;flex:none}
+.pf .pf-prim,.pf .pf-sec{position:absolute;width:26px;height:26px;min-height:0;padding:0;border:2px solid var(--pf-ink);background:var(--pf-c,#000)}
+.pf .pf-prim{left:0;top:0;z-index:1}.pf .pf-sec{right:0;bottom:0;border-color:var(--pf-faint)}
+.pf .pf-prim.clear,.pf .pf-sec.clear{background:repeating-conic-gradient(#3a2d55 0 25%,#1c1530 0 50%) 0 0/8px 8px}
+.pf .pf-swap{position:absolute;right:-3px;top:-4px;min-height:0;width:16px;height:16px;padding:0;font-size:10px;background:none;border:0;color:var(--pf-muted)}
+.pf-stage{position:relative;flex:1;min-height:200px;overflow:hidden;touch-action:none;background-color:#05030a;
+  background-image:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(185,140,255,.10),transparent 70%),linear-gradient(rgba(185,140,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(185,140,255,.045) 1px,transparent 1px);background-size:auto,32px 32px,32px 32px}
+.pf-stage::after{content:"";position:absolute;inset:6px;pointer-events:none;background-repeat:no-repeat;background-image:
+  linear-gradient(var(--pf-accent),var(--pf-accent)),linear-gradient(var(--pf-accent),var(--pf-accent)),linear-gradient(var(--pf-accent),var(--pf-accent)),linear-gradient(var(--pf-accent),var(--pf-accent)),
+  linear-gradient(var(--pf-accent),var(--pf-accent)),linear-gradient(var(--pf-accent),var(--pf-accent)),linear-gradient(var(--pf-accent),var(--pf-accent)),linear-gradient(var(--pf-accent),var(--pf-accent));
+  background-size:12px 1px,1px 12px,12px 1px,1px 12px,12px 1px,1px 12px,12px 1px,1px 12px;
+  background-position:0 0,0 0,100% 0,100% 0,0 100%,0 100%,100% 100%,100% 100%;opacity:.55}
 .pf-stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
-.pf-status{display:flex;flex-wrap:wrap;gap:4px 16px;padding:6px 10px;border-top:1px solid var(--pf-line);background:var(--pf-panel);color:var(--pf-muted);font-size:12px}
-.pf-status b{color:var(--pf-ink)}
+.pf-status{display:flex;flex-wrap:wrap;gap:4px 18px;padding:6px 10px;border-top:1px solid var(--pf-line);background:var(--pf-panel);color:var(--pf-muted);font-size:11.5px}
+.pf-status b{color:var(--pf-ink)}.pf-s-sel{color:var(--pf-accent)}
 .pf-sw{display:flex;flex-wrap:wrap;gap:4px}
-.pf-sw button{width:28px;height:28px;min-height:0;padding:0;border:2px solid var(--pf-line)}
-.pf-sw button.on{border-color:var(--pf-ink);outline:2px solid var(--pf-accent)}
-.pf-cur{display:flex;gap:8px;align-items:center}.pf-cur input[type=color]{width:44px;height:34px;padding:0;border:1px solid var(--pf-line);background:none}
+.pf .pf-sw button{width:24px;height:24px;min-height:0;padding:0;border:1px solid rgba(0,0,0,.6);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+.pf .pf-sw button:hover:not(:disabled){box-shadow:0 0 0 1px var(--pf-accent)}
+.pf .pf-sw button.on{outline:2px solid var(--pf-accent);outline-offset:1px;border-color:var(--pf-on)}
+.pf .pf-sw button.sec{outline:1px dashed var(--pf-muted);outline-offset:1px}
+.pf-cur{display:flex;gap:8px;align-items:center}.pf-cur input[type=color]{width:44px;height:32px;padding:0;border:1px solid var(--pf-line2);background:none;flex:none;cursor:pointer}
+.pf-ramp{display:flex;flex-direction:column;gap:6px}.pf-ramp[hidden]{display:none}.pf .pf-ramp .pf-sw button{width:34px;height:24px}
 .pf-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-.pf-prev canvas{image-rendering:pixelated;background:repeating-conic-gradient(#1a2229 0 25%,#10161a 0 50%) 0 0/8px 8px;max-width:100%;display:block}
-.pf-note{color:var(--pf-muted);font-size:12px}.pf-bad{color:var(--pf-bad)}
-.pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px}
-.pf-signed-in .pf-gh-box{order:-1}.pf-dlg-connect h4{order:-2}.pf-c-pick.on{border-color:var(--pf-accent)}
+.pf-prev canvas{image-rendering:pixelated;background:repeating-conic-gradient(#1c1530 0 25%,#130e22 0 50%) 0 0/8px 8px;max-width:100%;display:block;border:1px solid var(--pf-line)}
+.pf-note{color:var(--pf-muted);font-size:11.5px}.pf-bad{color:var(--pf-bad)}
+.pf-pal-empty[hidden]{display:none}
+.pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
+.pf-signed-in .pf-gh-box{order:-1}.pf-dlg-connect h4{order:-2}.pf .pf-c-pick.on{border-color:var(--pf-accent)}
 .pf-auth-row[hidden]{display:none}
-.pf-acct{display:inline-flex;gap:8px;align-items:center;font-size:12px;color:#7f948a}.pf-acct .pf-who{color:#7f948a;font-size:12px}
-.pf-acct button{font:inherit;font-size:12px;background:#141a1f;color:#d6e4dc;border:1px solid #232d34;padding:2px 8px;cursor:pointer}.pf-acct button:hover{border-color:var(--pf-accent,#39ff7a);color:var(--pf-accent,#39ff7a)}.pf-side-auth{justify-content:space-between;flex-wrap:nowrap}.pf-side-auth .pf-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pf-side-auth .pf-who:empty{display:none}.pf-side-auth .pf-signin{width:100%}
-.pf-source{width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-acct{display:inline-flex;gap:8px;align-items:center;font:12px var(--pf-mono,'JetBrains Mono',ui-monospace,monospace);color:#9a86c4}.pf-acct .pf-who{color:#9a86c4;font-size:12px}
+.pf-acct button{font:inherit;font-size:12px;background:#150e24;color:#e6dcf7;border:1px solid #2a1b45;padding:2px 8px;cursor:pointer}.pf-acct button:hover{border-color:var(--pf-accent,#b98cff);color:var(--pf-accent,#b98cff)}
+.pf-side-auth{justify-content:space-between;flex-wrap:nowrap}.pf-side-auth .pf-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pf-side-auth .pf-who:empty{display:none}.pf-side-auth .pf-signin{width:100%}
+.pf .pf-source{width:100%;justify-content:flex-start;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-color:var(--pf-line2);display:block}
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
-.pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf .pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-tokenbox summary{cursor:pointer;color:var(--pf-muted);font-size:12px}.pf-tokenbox>label,.pf-tokenbox>.pf-note{display:block;margin-top:8px}.pf-tokenbox[hidden]{display:none}
-.pf dialog{background:var(--pf-panel);color:var(--pf-ink);border:1px solid var(--pf-accent);padding:16px;width:min(560px,94vw);max-height:92vh;overflow:auto}
-.pf dialog::backdrop{background:rgba(0,0,0,.7)}
-.pf-form{display:flex;flex-direction:column;gap:10px}.pf-log:empty{display:none}.pf-log{white-space:pre-wrap;color:var(--pf-muted);max-height:140px;overflow:auto;border:1px solid var(--pf-line);padding:6px;min-height:34px}
-.pf-chg{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--pf-line)}.pf-chg canvas{width:40px;height:40px;image-rendering:pixelated;background:#10161a}
+.pf dialog{background:var(--pf-panel);color:var(--pf-ink);border:1px solid var(--pf-line2);box-shadow:0 0 0 1px rgba(185,140,255,.15),0 20px 60px rgba(0,0,0,.6),0 0 40px rgba(185,140,255,.10);padding:18px;width:min(560px,94vw);max-height:92vh;overflow:auto}
+.pf dialog::backdrop{background:rgba(7,4,13,.78);backdrop-filter:blur(2px)}
+.pf-form{display:flex;flex-direction:column;gap:10px}.pf-log:empty{display:none}.pf-log{white-space:pre-wrap;color:var(--pf-muted);max-height:140px;overflow:auto;border:1px solid var(--pf-line);padding:6px;min-height:34px;background:#05030a}
+.pf-chg{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--pf-line)}.pf-chg canvas{width:40px;height:40px;image-rendering:pixelated;background:#130e22}
+.pf-keys{display:grid;grid-template-columns:1fr;gap:6px}.pf-key{display:grid;grid-template-columns:minmax(150px,auto) 1fr;gap:12px;align-items:baseline;padding:3px 0;border-bottom:1px dashed var(--pf-line)}.pf-key span{color:var(--pf-muted)}.pf-key kbd{justify-self:start}
+@media (max-width:1100px){.pf{grid-template-columns:200px minmax(0,1fr) 220px}.pf-bar button span,.pf-opt-end button span{display:none}}
 @media (max-width:900px){
-  .pf{grid-template-columns:1fr;grid-template-rows:auto minmax(380px,1fr) auto;height:auto}
+  .pf{grid-template-columns:1fr;grid-template-rows:auto minmax(420px,1fr) auto;height:auto}
   .pf-side{flex-direction:column;border-right:0;border-bottom:1px solid var(--pf-line);max-height:none}.pf-list{flex-direction:row;overflow-x:auto;overflow-y:hidden;flex:none;min-height:0}.pf-item{width:150px;flex:none}
   .pf-right{border-left:0;border-top:1px solid var(--pf-line)}
+  .pf-work{flex-direction:column}
+  .pf-rail{flex-direction:row;border-right:0;border-bottom:1px solid var(--pf-line);overflow-x:auto;padding:6px}
+  .pf-tools{flex-direction:row}
+  .pf-swatch{margin:0 0 0 8px}
   .pf-stage{min-height:340px}
+  .pf-grp-end,.pf-opt-end{margin-left:0}
   .pf button{min-height:38px}.pf input[type=text],.pf input[type=password],.pf input[type=number],.pf select,.pf textarea{font-size:16px;min-height:38px}
+  .pf-key{grid-template-columns:1fr}
 }`;
 
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F'], ['pick', 'Colour picker', 'I']];
+  /* Tool icons are pixel art too: 12x12 grids turned into crisp SVG paths (currentColor, so they follow the theme). */
+  const ICONS = {
+    pen: ['.........##.', '........#..#', '.......#..#.', '......#..#..', '.....#..#...', '....#..#....', '...#..#.....', '..#..#......', '.#.##.......', '.#.#........', '.##.........', '............'],
+    erase: ['............', '......####..', '.....#...##.', '....#...#.#.', '...#...#..#.', '..#...#..#..', '.#####..#...', '.#...#.#....', '.#...##.....', '.#####......', '............', '###########.'],
+    fill: ['....#.......', '...#.#......', '..#...#.....', '.#.....#....', '#.......#...', '.#.....####.', '..#...#.####', '...#.#..####', '....#....##.', '..........#.', '..........#.', '............'],
+    pick: ['.........##.', '........####', '.......#####', '......####..', '.....#.##...', '....#.#.....', '...#.#......', '..#.#.......', '.#.#........', '.##.........', '#...........', '............'],
+    line: ['............', '..........##', '.........##.', '........##..', '.......##...', '......##....', '.....##.....', '....##......', '...##.......', '..##........', '.##.........', '............'],
+    rect: ['............', '.##########.', '.#........#.', '.#........#.', '.#........#.', '.#........#.', '.#........#.', '.#........#.', '.#........#.', '.##########.', '............', '............'],
+    ellipse: ['............', '....####....', '..##....##..', '.#........#.', '.#........#.', '#..........#', '#..........#', '.#........#.', '.#........#.', '..##....##..', '....####....', '............'],
+    select: ['............', '##.##.##.##.', '#.........#.', '............', '#.........#.', '#.........#.', '............', '#.........#.', '#.........#.', '##.##.##.##.', '............', '............'],
+    shade: ['............', '....####....', '..##.####...', '.#...#####..', '.#...#####..', '#....######.', '#....######.', '.#...#####..', '.#...#####..', '..##.####...', '....####....', '............'],
+    undo: ['............', '...#........', '..##........', '.#######....', '..##....#...', '...#.....#..', '..........#.', '..........#.', '.........#..', '......###...', '............', '............'],
+    redo: ['............', '........#...', '........##..', '....#######.', '...#....##..', '..#.....#...', '.#..........', '.#..........', '..#.........', '...###......', '............', '............'],
+    grid: ['............', '.#..#..#..#.', '############', '.#..#..#..#.', '.#..#..#..#.', '############', '.#..#..#..#.', '.#..#..#..#.', '############', '.#..#..#..#.', '............', '............'],
+    tile: ['............', '.####..####.', '.#..#..#..#.', '.#..#..#..#.', '.####..####.', '............', '............', '.####..####.', '.#..#..#..#.', '.#..#..#..#.', '.####..####.', '............'],
+    onion: ['............', '.......#####', '.......#...#', '....####...#', '....#..#...#', '.####..#####', '.#..#...#...', '.#..#####...', '.#.....#....', '.#######....', '............', '............'],
+    mx: ['.....##.....', '.#...##...#.', '.##..##..##.', '.###.##.###.', '.##..##..##.', '.#...##...#.', '.....##.....', '.....##.....', '.....##.....', '.....##.....', '............', '............'],
+    my: ['............', '.#######....', '..#####.....', '...###......', '....#.......', '############', '############', '....#.......', '...###......', '..#####.....', '.#######....', '............'],
+    sq: ['............', '............', '..########..', '..########..', '..########..', '..########..', '..########..', '..########..', '..########..', '..########..', '............', '............'],
+    circ: ['............', '............', '....####....', '..########..', '..########..', '.##########.', '.##########.', '..########..', '..########..', '....####....', '............', '............'],
+  };
+  const iconCache = {};
+  function icon(name) {
+    if (iconCache[name]) return iconCache[name];
+    let d = ''; (ICONS[name] || []).forEach((row, y) => { for (let x = 0; x < row.length; x++) if (row[x] === '#') { let n = 1; while (row[x + n] === '#') n++; d += `M${x} ${y}h${n}v1h-${n}z`; x += n - 1; } });
+    return (iconCache[name] = `<svg class="pf-ic" viewBox="0 0 12 12" aria-hidden="true" shape-rendering="crispEdges"><path fill="currentColor" d="${d}"/></svg>`);
+  }
+  // [id, name, key, rail icon or the rail tool it belongs to]
+  const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
+  const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
+  const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D', 'select & move · shade'], ['[ ]', 'brush size'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
+    ['M', 'mirror left-right'], ['T · N · #', 'tile preview · onion skin · grid'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
+  const CHECK = ['#1c1530', '#130e22']; // transparent-pixel checkerboard, violet-tinted
   const toBlob = (canvas) => new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('Could not encode the PNG'))), 'image/png'));
   const drawPx = (canvas, doc, scale = 1) => { // blit a doc's pixels to a canvas at scale (nearest neighbour)
     const t = document.createElement('canvas'); t.width = doc.w; t.height = doc.h; t.getContext('2d').putImageData(doc.imageData(), 0, 0);
@@ -501,29 +676,45 @@
         <div class="pf-note pf-src"></div><input type="file" class="pf-file" accept="image/png,image/*" multiple hidden></aside>
       <section class="pf-main">
         <div class="pf-bar">
-          <span class="pf-row pf-tools"></span><span class="sep"></span>
-          <button class="pf-undo" title="Undo (Ctrl+Z)">Undo</button><button class="pf-redo" title="Redo (Ctrl+Y)">Redo</button><span class="sep"></span>
-          <button class="pf-zout" title="Zoom out (-)">−</button><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button><button class="pf-grid on" title="Grid (#)">Grid</button><span class="sep"></span>
-          <button class="pf-mx" title="Mirror left-right (M)">Mirror X</button><button class="pf-my" title="Mirror up-down">Mirror Y</button><button class="pf-pp on" title="Pixel-perfect pencil: removes the corner doubles that make lines lumpy">Clean lines</button><span class="sep"></span>
-          <button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-export" title="Download a PNG">Export</button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button>
+          <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
+          <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
+          <span class="pf-grp"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
+          <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-export" title="Download a PNG, optionally scaled up">Export</button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
-        <div class="pf-stage"><canvas class="pf-view" aria-label="Sprite canvas"></canvas></div>
-        <div class="pf-status"><span class="pf-s-name"></span><span class="pf-s-pos"></span><span class="pf-s-info"></span></div>
+        <div class="pf-opts">
+          <span class="pf-opt" data-for="pen erase shade"><span class="pf-ol">size</span><input type="range" class="pf-size" min="1" max="8" value="1" aria-label="Brush size"><b class="pf-sizev">1</b>
+            <span class="pf-seg pf-shape"><button data-shape="square" class="on" title="Square tip">${icon('sq')}</button><button data-shape="round" title="Round tip">${icon('circ')}</button></span></span>
+          <span class="pf-opt" data-for="pen fill rect rectf ellipse ellipsef line"><span class="pf-ol">pattern</span><span class="pf-seg pf-pattern"><button data-pattern="solid" class="on" title="Solid">solid</button><button data-pattern="dither" title="Checkerboard dither: the primary colour on every other pixel (fills put the secondary colour in between)">dither</button></span></span>
+          <span class="pf-opt" data-for="fill"><span class="pf-ol">fill</span><span class="pf-seg pf-fillmode"><button data-fill="area" class="on" title="Only the connected area">area</button><button data-fill="same" title="Every pixel of that colour in the image">same colour</button></span></span>
+          <span class="pf-opt" data-for="rect rectf ellipse ellipsef"><span class="pf-seg pf-filled"><button data-filled="0" class="on" title="Outline (R / O)">outline</button><button data-filled="1" title="Filled (F / U)">filled</button></span><span class="pf-note">Shift: square / circle</span></span>
+          <span class="pf-opt" data-for="line"><span class="pf-note">Shift snaps to 45°</span></span>
+          <span class="pf-opt" data-for="pen"><button class="pf-pp on" title="Pixel-perfect pencil: removes the corner doubles that make 1-pixel lines lumpy">clean lines</button><span class="pf-note">Shift+click: line from the last point</span></span>
+          <span class="pf-opt" data-for="shade"><span class="pf-note">click lightens · right click darkens · steps through the palette when one is loaded</span></span>
+          <span class="pf-opt" data-for="select"><button class="pf-sel-copy" title="Copy (Ctrl+C)">copy</button><button class="pf-sel-cut" title="Cut (Ctrl+X)">cut</button><button class="pf-sel-paste" title="Paste (Ctrl+V; images from other apps too)">paste</button><button class="pf-sel-del" title="Delete (Del)">delete</button><button class="pf-sel-all" title="Select all (Ctrl+A)">all</button><button class="pf-sel-none" title="Drop the selection (Esc)">deselect</button><span class="pf-note">drag inside to move · arrows nudge</span></span>
+          <span class="pf-opt pf-opt-end" data-for="*"><button class="pf-mx" title="Mirror left-right (M)">${icon('mx')}<span>mirror X</span></button><button class="pf-my" title="Mirror up-down">${icon('my')}<span>mirror Y</span></button></span>
+        </div>
+        <div class="pf-work">
+          <nav class="pf-rail" aria-label="Tools"><span class="pf-tools"></span>
+            <span class="pf-swatch" title="Primary (left click) and secondary (right click) colours. X swaps them."><button class="pf-prim" aria-label="Primary colour"></button><button class="pf-sec" aria-label="Secondary colour"></button><button class="pf-swap" title="Swap colours (X)">⇄</button></span></nav>
+          <div class="pf-stage"><canvas class="pf-view" aria-label="Sprite canvas"></canvas></div>
+        </div>
+        <div class="pf-status"><span class="pf-s-name"></span><span class="pf-s-pos"></span><span class="pf-s-sel"></span><span class="pf-s-info"></span></div>
       </section>
       <aside class="pf-right">
-        <div><h4>Colour</h4><div class="pf-cur"><input type="color" class="pf-cpick" aria-label="Current colour"><input type="text" class="pf-chex" maxlength="9" aria-label="Hex colour"></div>
-          <div class="pf-row" style="margin-top:6px"><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour all…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div></div>
-        <div><h4>In this image</h4><div class="pf-sw pf-img-colors"></div></div>
-        <div class="pf-pal-wrap" hidden><h4>Project palette</h4><div class="pf-sw pf-pal-colors"></div><div class="pf-row" style="margin-top:6px"><button class="pf-snap">Snap to palette</button></div><div class="pf-note pf-off"></div></div>
-        <div class="pf-row"><button class="pf-palload">Load palette…</button><button class="pf-palsave">Save .hex</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
-        <div class="pf-prev"><h4>Preview</h4><canvas class="pf-p1"></canvas>
-          <div class="pf-row" style="margin-top:6px"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
-          <div class="pf-row" style="margin-top:6px"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
-          <canvas class="pf-p2" style="margin-top:6px"></canvas></div>
-        <div><h4>Image</h4><div class="pf-row"><button class="pf-fliph">Flip ↔</button><button class="pf-flipv">Flip ↕</button><button class="pf-rot">Rotate ↻</button></div>
-          <div class="pf-row" style="margin-top:6px"><button class="pf-sh" data-d="-1,0">←</button><button class="pf-sh" data-d="0,-1">↑</button><button class="pf-sh" data-d="0,1">↓</button><button class="pf-sh" data-d="1,0">→</button><span class="pf-note">wrap shift</span></div>
-          <div class="pf-row" style="margin-top:6px"><button class="pf-resize">Canvas size…</button><button class="pf-clear">Clear</button></div></div>
-        <div class="pf-note pf-keys">B pencil · E eraser · G fill · L line · R rect · I pick · M mirror · Ctrl+Z undo · scroll to zoom · space+drag or middle mouse to pan · right click erases</div>
+        <div class="pf-panel"><h4>Colour</h4><div class="pf-cur"><input type="color" class="pf-cpick" aria-label="Current colour"><input type="text" class="pf-chex" maxlength="9" aria-label="Hex colour"></div>
+          <div class="pf-row"><button class="pf-ramp-btn" title="A 5-colour ramp around this colour: cool, darker shadows and warm highlights">Hue-shift ramp</button><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour all…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div>
+          <div class="pf-ramp" hidden><div class="pf-sw pf-ramp-colors"></div><button class="pf-ramp-add" title="Add these colours to the palette">+ add to palette</button></div></div>
+        <div class="pf-panel"><h4>In this image</h4><div class="pf-sw pf-img-colors"></div></div>
+        <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load a .hex (Lospec), or add colours with +.</div><div class="pf-note pf-off"></div></div>
+          <div class="pf-row"><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><button class="pf-palload">Load…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div></div>
+        <div class="pf-panel pf-prev"><h4>Preview</h4><canvas class="pf-p1"></canvas>
+          <div class="pf-row"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
+          <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
+          <canvas class="pf-p2"></canvas></div>
+        <div class="pf-panel"><h4>Image</h4><div class="pf-row"><button class="pf-fliph" title="Flip the image, or the selection">Flip ↔</button><button class="pf-flipv">Flip ↕</button><button class="pf-rot" title="Rotate the image, or the selection">Rotate ↻</button></div>
+          <div class="pf-row"><button class="pf-sh" data-d="-1,0">←</button><button class="pf-sh" data-d="0,-1">↑</button><button class="pf-sh" data-d="0,1">↓</button><button class="pf-sh" data-d="1,0">→</button><span class="pf-note">wrap shift</span></div>
+          <div class="pf-row"><button class="pf-outline" title="Draw a 1-pixel outline in the primary colour around everything opaque">Outline</button><label class="pf-note"><input type="checkbox" class="pf-outline-c"> corners</label></div>
+          <div class="pf-row"><button class="pf-resize">Canvas size…</button><button class="pf-clear">Clear</button></div></div>
       </aside>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
         <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
@@ -559,6 +750,7 @@
         <div class="pf-row"><label>width <input type="number" class="pf-sz-w" min="1" max="1024"></label><label>height <input type="number" class="pf-sz-h" min="1" max="1024"></label></div>
         <label>keep <select class="pf-sz-a"><option value="tl">top-left</option><option value="c">centre</option></select></label>
         <div class="pf-row"><button type="button" class="primary pf-sz-ok">Apply</button><button value="cancel">Cancel</button></div></form></dialog>
+      <dialog class="pf-dlg-keys"><form method="dialog" class="pf-form"><h4>Keyboard shortcuts</h4><div class="pf-keys"></div><div class="pf-row"><button value="cancel" class="primary">Close</button></div></form></dialog>
       <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><h4>New sprite</h4>
         <div class="pf-row"><label>width <input type="number" class="pf-nw" min="1" max="1024" value="16"></label><label>height <input type="number" class="pf-nh" min="1" max="1024" value="16"></label></div>
         <label>file name <input type="text" class="pf-nn" value="new-sprite.png" placeholder="art/hero.png"></label>
@@ -574,7 +766,8 @@
     const authRows = (sel) => [...$$('.pf-auth-row'), ...(accountEl ? [account] : [])].map((r) => (sel ? r.querySelector(sel) : r));
 
     /* ---------- state ---------- */
-    const S = { sprites: [], docs: new Map(), cur: null, tool: 'pen', color: pack(57, 255, 122), mx: false, my: false, pp: true, grid: true, zoom: 8, ox: 0, oy: 0,
+    const S = { sprites: [], docs: new Map(), cur: null, tool: 'pen', color: pack(185, 140, 255), mx: false, my: false, pp: true, grid: true, zoom: 8, ox: 0, oy: 0,
+      color2: 0, size: 1, shape: 'square', pattern: 'solid', fillMode: 'area', tile: false, onion: false, sel: null, float: null, clip: null, hover: null, lastPt: null,
       palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], src: null, meta: {}, auth: { token: '', login: '' }, anim: { timer: 0, t: 0 }, notice: '' };
     const doc = () => S.docs.get(S.cur);
     const view = $('.pf-view'), stage = $('.pf-stage'), g = view.getContext('2d');
@@ -647,7 +840,7 @@
     /** Make `src` the project being edited. Returns false if the user chose to keep their unsaved session. */
     async function useSource(src) {
       if ([...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
-      play(false); S.docs.clear(); S.cur = null; S.src = src; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
+      play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
       $('.pf-src').textContent = src.note || '';
@@ -673,6 +866,7 @@
       } catch (e) { note('Could not start: ' + e.message); }
     }
     async function openSprite(path) {
+      if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; }
       if (!S.docs.has(path)) {
         const meta = S.sprites.find((s) => s.path === path);
         try {
@@ -713,20 +907,24 @@
     /* ---------- palette / colours ---------- */
     function renderColors() {
       const d = doc(); if (!d) return;
-      const cols = colorsOf(d.px).filter(([c]) => c !== 0).slice(0, 64);
+      swatches(); const cols = colorsOf(d.px).filter(([c]) => c !== 0).slice(0, 64);
       $('.pf-img-colors').innerHTML = cols.map(([c, n]) => `<button data-c="${c}" title="${toHex(c)} · ${n}px" class="${c === S.color ? 'on' : ''}" style="background:${toHex(c)}"></button>`).join('') || '<span class="pf-note">transparent</span>';
       $('.pf-cpick').value = toHex(S.color); if (document.activeElement !== $('.pf-chex')) $('.pf-chex').value = toHex(S.color);
-      $$('.pf-pal-colors button').forEach((b) => b.classList.toggle('on', +b.dataset.c === S.color));
+      $$('.pf-sw button').forEach((b) => { b.classList.toggle('on', +b.dataset.c === S.color); b.classList.toggle('sec', !isClear(S.color2) && +b.dataset.c === S.color2); });
       if (S.palette.length) {
         const set = new Set(S.palette), off = cols.filter(([c]) => !set.has(c)).length;
         $('.pf-off').innerHTML = off ? `<span class="pf-bad">${off} colour${off > 1 ? 's' : ''} outside the palette</span>` : 'All colours are in the palette.';
       }
     }
+    function swatches() {
+      for (const [sel, c] of [['.pf-prim', S.color], ['.pf-sec', S.color2]]) { const b = $(sel); b.classList.toggle('clear', isClear(c)); b.style.setProperty('--pf-c', toHex(c)); b.title = (sel === '.pf-prim' ? 'Primary ' : 'Secondary ') + (isClear(c) ? 'clear (erases)' : toHex(c)); }
+    }
     function renderPalette() {
-      $('.pf-pal-wrap').hidden = !S.palette.length;
+      $('.pf-pal-empty').hidden = !!S.palette.length; if (!S.palette.length) $('.pf-off').textContent = '';
       $('.pf-pal-colors').innerHTML = S.palette.map((c) => `<button data-c="${c}" title="${toHex(c)}" style="background:${toHex(c)}"></button>`).join('');
     }
-    function setColor(c) { S.color = c; if (S.tool === 'erase' || S.tool === 'pick') setTool('pen'); renderColors(); }
+    function setColor(c) { S.color = c; if (S.tool === 'erase' || S.tool === 'pick') setTool('pen'); renderColors(); swatches(); }
+    function setColor2(c) { S.color2 = c; renderColors(); swatches(); }
 
     /* ---------- viewport ---------- */
     function resizeView() {
@@ -748,98 +946,203 @@
       const d = doc(); g.clearRect(0, 0, view.width, view.height); g.imageSmoothingEnabled = false;
       if (!d) return;
       const z = S.zoom, W = d.w * z, H = d.h * z;
+      offscreen.width = d.w; offscreen.height = d.h; offscreen.getContext('2d').putImageData(d.imageData(), 0, 0);
+      if (S.tile) { /* the eight neighbours, dimmed, so seams show */
+        g.globalAlpha = 0.45; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (i || j) g.drawImage(offscreen, S.ox + i * W, S.oy + j * H, W, H); g.globalAlpha = 1;
+      }
       /* checkerboard behind transparent pixels, one square per 2 art pixels at low zoom */
       const cs = Math.max(8, z * 2 > 16 ? z : 16);
       g.save(); g.beginPath(); g.rect(S.ox, S.oy, W, H); g.clip();
-      for (let y = 0; y * cs < H; y++) for (let x = 0; x * cs < W; x++) { g.fillStyle = (x + y) % 2 ? '#1a2229' : '#10161a'; g.fillRect(S.ox + x * cs, S.oy + y * cs, cs, cs); }
-      g.restore();
-      offscreen.width = d.w; offscreen.height = d.h; offscreen.getContext('2d').putImageData(d.imageData(), 0, 0);
+      for (let y = 0; y * cs < H; y++) for (let x = 0; x * cs < W; x++) { g.fillStyle = (x + y) % 2 ? CHECK[0] : CHECK[1]; g.fillRect(S.ox + x * cs, S.oy + y * cs, cs, cs); }
+      const f = frameSize(d), multi = f && (f.w < d.w || f.h < d.h);
+      if (S.onion && multi) { /* each frame shows the one before it, faintly, underneath */
+        const cols = Math.floor(d.w / f.w), rows = Math.floor(d.h / f.h); g.globalAlpha = 0.28;
+        for (let k = 1; k < cols * rows; k++) { const sx = ((k - 1) % cols) * f.w, sy = Math.floor((k - 1) / cols) * f.h, dx = (k % cols) * f.w, dy = Math.floor(k / cols) * f.h; g.drawImage(offscreen, sx, sy, f.w, f.h, S.ox + dx * z, S.oy + dy * z, f.w * z, f.h * z); }
+        g.globalAlpha = 1;
+      }
       g.drawImage(offscreen, S.ox, S.oy, W, H);
-      if (overlay) { g.globalAlpha = 0.9; for (const [x, y] of overlay.pts) if (x >= 0 && y >= 0 && x < d.w && y < d.h) { g.fillStyle = isClear(overlay.value) ? 'rgba(255,255,255,.35)' : toHex(overlay.value); g.fillRect(S.ox + x * z, S.oy + y * z, z, z); } g.globalAlpha = 1; }
+      g.restore();
+      const fl = S.float;
+      if (fl) { const t = document.createElement('canvas'); t.width = fl.w; t.height = fl.h; t.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(fl.px.buffer.slice(0)), fl.w, fl.h), 0, 0); g.drawImage(t, S.ox + fl.x * z, S.oy + fl.y * z, fl.w * z, fl.h * z); }
+      if (overlay) { g.globalAlpha = 0.9; for (const [x, y] of overlay.pts) { g.fillStyle = isClear(overlay.value) ? 'rgba(255,255,255,.35)' : toHex(overlay.value); g.fillRect(S.ox + x * z, S.oy + y * z, z, z); } g.globalAlpha = 1; }
       if (S.grid && z >= 6) {
-        g.strokeStyle = 'rgba(255,255,255,.10)'; g.lineWidth = 1; g.beginPath();
+        g.strokeStyle = 'rgba(230,220,247,.09)'; g.lineWidth = 1; g.beginPath();
         for (let x = 0; x <= d.w; x++) { g.moveTo(S.ox + x * z + .5, S.oy); g.lineTo(S.ox + x * z + .5, S.oy + H); }
         for (let y = 0; y <= d.h; y++) { g.moveTo(S.ox, S.oy + y * z + .5); g.lineTo(S.ox + W, S.oy + y * z + .5); }
         g.stroke();
       }
-      const f = frameSize(d);
-      if (f && (f.w < d.w || f.h < d.h)) { g.strokeStyle = 'rgba(255,176,0,.6)'; g.beginPath(); for (let x = f.w; x < d.w; x += f.w) { g.moveTo(S.ox + x * z + .5, S.oy); g.lineTo(S.ox + x * z + .5, S.oy + H); } for (let y = f.h; y < d.h; y += f.h) { g.moveTo(S.ox, S.oy + y * z + .5); g.lineTo(S.ox + W, S.oy + y * z + .5); } g.stroke(); }
-      g.strokeStyle = 'rgba(255,255,255,.35)'; g.strokeRect(S.ox - .5, S.oy - .5, W + 1, H + 1);
-      if (S.mx) { g.strokeStyle = 'rgba(255,0,200,.6)'; g.beginPath(); g.moveTo(S.ox + W / 2, S.oy); g.lineTo(S.ox + W / 2, S.oy + H); g.stroke(); }
-      if (S.my) { g.strokeStyle = 'rgba(255,0,200,.6)'; g.beginPath(); g.moveTo(S.ox, S.oy + H / 2); g.lineTo(S.ox + W, S.oy + H / 2); g.stroke(); }
+      if (multi) { g.strokeStyle = 'rgba(255,176,0,.6)'; g.beginPath(); for (let x = f.w; x < d.w; x += f.w) { g.moveTo(S.ox + x * z + .5, S.oy); g.lineTo(S.ox + x * z + .5, S.oy + H); } for (let y = f.h; y < d.h; y += f.h) { g.moveTo(S.ox, S.oy + y * z + .5); g.lineTo(S.ox + W, S.oy + y * z + .5); } g.stroke(); }
+      g.strokeStyle = 'rgba(185,140,255,.55)'; g.lineWidth = 1; g.strokeRect(S.ox - .5, S.oy - .5, W + 1, H + 1);
+      g.strokeStyle = 'rgba(224,140,255,.75)';
+      if (S.mx) { g.beginPath(); g.moveTo(S.ox + W / 2, S.oy); g.lineTo(S.ox + W / 2, S.oy + H); g.stroke(); }
+      if (S.my) { g.beginPath(); g.moveTo(S.ox, S.oy + H / 2); g.lineTo(S.ox + W, S.oy + H / 2); g.stroke(); }
+      if (S.sel) { /* marching ants, without the marching */
+        const r = [S.ox + S.sel.x * z + .5, S.oy + S.sel.y * z + .5, S.sel.w * z - 1, S.sel.h * z - 1];
+        g.setLineDash([4, 4]); g.strokeStyle = '#000'; g.strokeRect(...r); g.lineDashOffset = 4; g.strokeStyle = '#fff'; g.strokeRect(...r); g.setLineDash([]); g.lineDashOffset = 0;
+      }
+      const hv = S.hover;
+      if (hv && !drag && (S.tool === 'pen' || S.tool === 'erase' || S.tool === 'shade') && z >= 3) { /* brush footprint */
+        g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1;
+        for (const [ox, oy] of brushOffsets(S.size, S.shape)) { const c = cell(d, hv.x + ox, hv.y + oy); if (c) g.strokeRect(S.ox + c[0] * z + .5, S.oy + c[1] * z + .5, z - 1, z - 1); }
+      }
     }
     function status() {
       const d = doc();
       $('.pf-s-name').innerHTML = d ? `<b>${esc(d.path)}</b>${d.unsaved ? ' · <span class="pf-bad">unsaved</span>' : d.changed ? ' · saved, not yet in a PR' : ''}` : 'No sprite open';
       $('.pf-s-info').innerHTML = d ? `${d.w}×${d.h} · zoom ${S.zoom}×${S.notice ? ' · ' + esc(S.notice) : ''}` : esc(S.notice);
+      $('.pf-zl').textContent = S.zoom + '×'; $('.pf-s-sel').textContent = S.sel ? `selection ${S.sel.w}×${S.sel.h}${S.float ? ' · floating' : ''}` : '';
       $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d;
       $('.pf-prbtn').hidden = !O.pr; $('.pf-prbtn').disabled = ![...S.docs.values()].some((x) => x.changed);
     }
 
     /* ---------- editing ---------- */
-    const setTool = (t) => { S.tool = t; $$('.pf-tools button').forEach((b) => b.classList.toggle('on', b.dataset.t === t)); };
-    $('.pf-tools').innerHTML = TOOLS.map(([k, n, key]) => `<button data-t="${k}" title="${n} (${key})">${n.replace('Colour picker', 'Pick').replace('Filled rectangle', 'Rect ■').replace('Rectangle', 'Rect □')}</button>`).join('');
-    setTool('pen');
+    function setTool(t) {
+      if (t !== S.tool && S.float) commitFloat();
+      S.tool = t; const rail = railOf(t);
+      $$('.pf-tools button').forEach((b) => b.classList.toggle('on', b.dataset.t === rail));
+      $$('.pf-opt').forEach((o) => { const f = o.dataset.for.split(' '); o.hidden = !(f.includes('*') || f.includes(t)); });
+      $$('.pf-filled button').forEach((b) => b.classList.toggle('on', (b.dataset.filled === '1') === (t === 'rectf' || t === 'ellipsef')));
+      view.style.cursor = t === 'select' ? 'default' : 'crosshair'; render();
+    }
+    $('.pf-tools').innerHTML = TOOLS.filter((x) => !x[3]).map(([k, n, key]) => `<button data-t="${k}" title="${n} (${key})" aria-label="${n}">${icon(k)}</button>`).join('');
+    $('.pf-keys').innerHTML = KEYS.map(([k, v]) => `<div class="pf-key"><kbd>${esc(k)}</kbd><span>${esc(v)}</span></div>`).join('');
     const changedUi = () => { renderColors(); status(); renderListSoon(); drawPreview(); render(); };
     let listTimer = 0; const renderListSoon = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 120); };
-    function put(d, x, y, v, rec) { // paint with mirror, recording the previous value once per stroke
-      const set = (X, Y) => { if (X < 0 || Y < 0 || X >= d.w || Y >= d.h) return; const i = Y * d.w + X; if (rec && !rec.has(i)) rec.set(i, d.px[i]); d.px[i] = v; };
-      set(x, y); if (S.mx) set(d.w - 1 - x, y); if (S.my) set(x, d.h - 1 - y); if (S.mx && S.my) set(d.w - 1 - x, d.h - 1 - y);
+    /** Where a pixel lands: wrapped around the edges in tile mode, else null when outside the image. */
+    const cell = (d, x, y) => { if (S.tile) return [((x % d.w) + d.w) % d.w, ((y % d.h) + d.h) % d.h]; return x >= 0 && y >= 0 && x < d.w && y < d.h ? [x, y] : null; };
+    /** A position plus its mirror images. */
+    const mirrored = (d, x, y) => { const out = [[x, y]]; if (S.mx) out.push([d.w - 1 - x, y]); if (S.my) out.push([x, d.h - 1 - y]); if (S.mx && S.my) out.push([d.w - 1 - x, d.h - 1 - y]); return out; };
+    const mirrorPts = (d, pts) => pts.flatMap(([x, y]) => mirrored(d, x, y));
+    /** Set one pixel (with mirrors and tile wrap), remembering the old value once per stroke. */
+    function put(d, x, y, v, rec) {
+      for (const [mx, my] of mirrored(d, x, y)) { const c = cell(d, mx, my); if (!c) continue; const i = c[1] * d.w + c[0]; if (rec && !rec.has(i)) rec.set(i, d.px[i]); d.px[i] = v; }
     }
-    const mirrorPts = (d, pts) => { const out = []; for (const [x, y] of pts) { out.push([x, y]); if (S.mx) out.push([d.w - 1 - x, y]); if (S.my) out.push([x, d.h - 1 - y]); if (S.mx && S.my) out.push([d.w - 1 - x, d.h - 1 - y]); } return out; };
-    let drag = null, pan = null, space = false; const pointers = new Map(); let pinch = null;
+    /** One brush dab at (x,y): size, tip shape, dither pattern and the shade tool all go through here. */
+    function dab(d, x, y, drag) {
+      for (const [ox, oy] of brushOffsets(drag.tool === 'pen' || drag.tool === 'erase' || drag.tool === 'shade' ? S.size : 1, S.shape)) {
+        const X = x + ox, Y = y + oy;
+        if (drag.tool === 'shade') {
+          for (const [mx, my] of mirrored(d, X, Y)) { const c = cell(d, mx, my); if (!c) continue; const i = c[1] * d.w + c[0]; if (drag.rec.has(i)) continue; drag.rec.set(i, d.px[i]); d.px[i] = shadeColor(d.px[i], drag.dir, S.palette); }
+        } else if (drag.tool === 'pen' && S.pattern === 'dither') { const c = cell(d, X, Y); if (c && ditherOn(c[0], c[1])) put(d, X, Y, drag.value, drag.rec); }
+        else put(d, X, Y, drag.value, drag.rec);
+      }
+    }
+    const shapePts = (tool, a, b) => tool === 'line' ? linePoints(a.x, a.y, b.x, b.y) : tool === 'rect' || tool === 'rectf' ? rectPoints(a.x, a.y, b.x, b.y, tool === 'rectf') : ellipsePoints(a.x, a.y, b.x, b.y, tool === 'ellipsef');
+    const isShape = (t) => t === 'line' || t === 'rect' || t === 'rectf' || t === 'ellipse' || t === 'ellipsef';
+    function fillAt(d, x, y, value, other) {
+      const tmp = d.px.slice(), seeds = mirrored(d, x, y).map(([a, b]) => cell(d, a, b)).filter(Boolean), region = new Set();
+      for (const [sx, sy] of seeds) { const probe = d.px.slice(), mark = (probe[sy * d.w + sx] ^ 0x5a5a5a5a) >>> 0; for (const i of S.fillMode === 'same' ? fillSame(probe, sx, sy, d.w, mark) : floodFill(probe, d.w, d.h, sx, sy, mark)) region.add(i); }
+      for (const i of region) { const on = S.pattern !== 'dither' || ditherOn(i % d.w, (i / d.w) | 0); if (on) tmp[i] = value; else if (other != null && !isClear(other)) tmp[i] = other; }
+      if (countDiff(tmp, d.px) === 0) return false; d.px = tmp; return true;
+    }
+    function pickAt(d, c, secondary) {
+      const p = cell(d, c.x, c.y); if (!p) return; const v = d.px[p[1] * d.w + p[0]];
+      if (secondary) { S.color2 = isClear(v) ? 0 : v; renderColors(); return; }
+      if (isClear(v)) setTool('erase'); else { setColor(v); setTool('pen'); }
+    }
 
+    /* selection: S.sel is the selected rectangle; S.float holds lifted or pasted pixels that move with it until they are applied */
+    function liftSelection() {
+      const d = doc(); if (!d || !S.sel || S.float) return;
+      d.snapshot(); const px = copyRect(d.px, d.w, d.h, S.sel);
+      for (let y = 0; y < S.sel.h; y++) for (let x = 0; x < S.sel.w; x++) d.px[(S.sel.y + y) * d.w + S.sel.x + x] = 0;
+      S.float = { px, w: S.sel.w, h: S.sel.h, x: S.sel.x, y: S.sel.y };
+    }
+    function commitFloat() {
+      const d = doc(), f = S.float; if (!f) return; S.float = null;
+      if (d) { pasteRect(d.px, d.w, d.h, f.px, f.w, f.h, f.x, f.y, false); S.sel = rectBetween({ x: f.x, y: f.y }, { x: f.x + f.w - 1, y: f.y + f.h - 1 }, d.w, d.h); changedUi(); }
+    }
+    function dropSelection() { commitFloat(); S.sel = null; render(); status(); }
+    function selectAll() { const d = doc(); if (!d) return; commitFloat(); S.sel = { x: 0, y: 0, w: d.w, h: d.h }; if (S.tool !== 'select') setTool('select'); render(); status(); }
+    function copySel(cut) {
+      const d = doc(); if (!d || !S.sel && !S.float) return false;
+      S.clip = S.float ? { px: S.float.px.slice(), w: S.float.w, h: S.float.h } : { px: copyRect(d.px, d.w, d.h, S.sel), w: S.sel.w, h: S.sel.h };
+      if (cut) { if (S.float) { S.float = null; S.sel = null; changedUi(); } else { d.snapshot(); for (let y = 0; y < S.sel.h; y++) for (let x = 0; x < S.sel.w; x++) d.px[(S.sel.y + y) * d.w + S.sel.x + x] = 0; S.sel = null; changedUi(); } }
+      note((cut ? 'cut ' : 'copied ') + S.clip.w + '×' + S.clip.h); return true;
+    }
+    function pastePx(px, w, h) {
+      const d = doc(); if (!d) return; commitFloat(); d.snapshot();
+      const x = S.sel ? S.sel.x : 0, y = S.sel ? S.sel.y : 0;
+      S.float = { px: px.slice(), w, h, x, y }; S.sel = { x, y, w, h }; if (S.tool !== 'select') { S.tool = 'select'; setTool('select'); } changedUi(); note('pasted ' + w + '×' + h + ': drag to place, Enter to apply');
+    }
+    function deleteSel() { const d = doc(); if (!d) return; if (S.float) { S.float = null; S.sel = null; changedUi(); return; } if (!S.sel) return; edit((dd) => { for (let y = 0; y < S.sel.h; y++) for (let x = 0; x < S.sel.w; x++) dd.px[(S.sel.y + y) * dd.w + S.sel.x + x] = 0; }); }
+    function nudge(dx, dy) { if (!S.sel) return false; liftSelection(); S.float.x += dx; S.float.y += dy; S.sel = { ...S.sel, x: S.float.x, y: S.float.y }; render(); status(); return true; }
+    /** Flip or rotate the selection instead of the whole image when there is one. */
+    function transformSel(fn) { if (!S.sel) return false; liftSelection(); const f = S.float, r = fn(f.px, f.w, f.h); f.px = r.px; f.w = r.w; f.h = r.h; S.sel = { x: f.x, y: f.y, w: f.w, h: f.h }; changedUi(); return true; }
+    const inSel = (c) => S.sel && c.x >= S.sel.x && c.y >= S.sel.y && c.x < S.sel.x + S.sel.w && c.y < S.sel.y + S.sel.h;
+
+    let drag = null, pan = null, space = false; const pointers = new Map(); let pinch = null;
     view.addEventListener('contextmenu', (e) => e.preventDefault());
     view.addEventListener('pointerdown', (e) => {
       const d = doc(); if (!d) return; view.setPointerCapture(e.pointerId); pointers.set(e.pointerId, e);
-      if (pointers.size === 2) { drag = null; const [a, b] = [...pointers.values()]; pinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: S.zoom, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; return; }
+      if (pointers.size === 2) { drag = null; overlay = null; const [a, b] = [...pointers.values()]; pinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: S.zoom, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; return; }
       if (e.button === 1 || space || (e.button === 0 && e.shiftKey && e.altKey)) { pan = { x: e.clientX, y: e.clientY, ox: S.ox, oy: S.oy }; return; }
-      const c = toCell(e), inb = c.x >= 0 && c.y >= 0 && c.x < d.w && c.y < d.h;
-      let tool = S.tool, value = S.color; if (e.button === 2) { tool = tool === 'pick' ? 'pick' : 'erase'; }
-      if (tool === 'erase') value = 0;
-      if (tool === 'pick') { if (inb) { const v = d.px[c.y * d.w + c.x]; if (isClear(v)) setTool('erase'); else { setColor(v); setTool('pen'); } } return; }
-      if (!inb && tool !== 'line' && tool !== 'rect' && tool !== 'rectf') return;
-      d.snapshot(); drag = { tool, value, start: c, last: c, rec: new Map(), trail: [c], moved: false };
-      if (tool === 'pen' || tool === 'erase') { put(d, c.x, c.y, value, drag.rec); changedUi(); }
-      else if (tool === 'fill') { if (inb) { const tmp = d.px.slice(); const ch = floodFill(tmp, d.w, d.h, c.x, c.y, value); if (ch.length) { d.px = tmp; if (S.mx || S.my) { /* mirrored fill: also fill the mirror point's region */ for (const [mx, my] of mirrorPts(d, [[c.x, c.y]]).slice(1)) floodFill(d.px, d.w, d.h, mx, my, value); } } else d.undo.pop(); } drag = null; changedUi(); }
+      const c = toCell(e), right = e.button === 2, inb = !!cell(d, c.x, c.y);
+      let tool = S.tool;
+      if (e.altKey && tool !== 'select') tool = 'pick';
+      if (tool === 'pick') { pickAt(d, c, right); return; }
+      if (tool === 'select') {
+        if (inSel(c)) { liftSelection(); drag = { tool, move: true, start: c, fx: S.float.x, fy: S.float.y }; }
+        else { commitFloat(); drag = { tool, start: c }; S.sel = rectBetween(c, c, d.w, d.h); render(); }
+        status(); return;
+      }
+      let value = right ? S.color2 : S.color; if (tool === 'erase') value = 0;
+      if (!inb && !isShape(tool)) return;
+      d.snapshot(); drag = { tool, value, dir: right ? -1 : 1, start: c, last: c, rec: new Map(), trail: [c], moved: false };
+      if (tool === 'fill') { if (!fillAt(d, c.x, c.y, value, right ? S.color : S.color2)) d.undo.pop(); drag = null; changedUi(); return; }
+      if (tool === 'pen' && e.shiftKey && S.lastPt) { for (const [x, y] of linePoints(S.lastPt.x, S.lastPt.y, c.x, c.y)) dab(d, x, y, drag); }
+      else if (!isShape(tool)) dab(d, c.x, c.y, drag);
+      changedUi();
     });
     view.addEventListener('pointermove', (e) => {
       const d = doc(); if (!d) return;
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, e);
       if (pinch && pointers.size === 2) { const [a, b] = [...pointers.values()]; const nd = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); const r = view.getBoundingClientRect(), dpr = view.width / r.width; const z = Math.max(1, Math.min(64, Math.round(pinch.zoom * nd / pinch.dist))); if (z !== S.zoom) { const cx = (pinch.cx - r.left) * dpr, cy = (pinch.cy - r.top) * dpr, px = (cx - S.ox) / S.zoom, py = (cy - S.oy) / S.zoom; S.zoom = z; S.ox = Math.round(cx - px * z); S.oy = Math.round(cy - py * z); render(); status(); } return; }
       if (pan) { S.touched = true; const r = view.getBoundingClientRect(), dpr = view.width / r.width; S.ox = Math.round(pan.ox + (e.clientX - pan.x) * dpr); S.oy = Math.round(pan.oy + (e.clientY - pan.y) * dpr); render(); return; }
-      const c = toCell(e); $('.pf-s-pos').textContent = c.x >= 0 && c.y >= 0 && c.x < d.w && c.y < d.h ? `x ${c.x}  y ${c.y}  ${toHex(d.px[c.y * d.w + c.x])}${isClear(d.px[c.y * d.w + c.x]) ? ' (clear)' : ''}` : '';
-      if (!drag) return;
-      if (drag.tool === 'pen' || drag.tool === 'erase') {
+      const c = toCell(e), p = cell(d, c.x, c.y);
+      $('.pf-s-pos').textContent = p ? `x ${p[0]}  y ${p[1]}  ${toHex(d.px[p[1] * d.w + p[0]])}${isClear(d.px[p[1] * d.w + p[0]]) ? ' (clear)' : ''}` : '';
+      const hovered = !S.hover || S.hover.x !== c.x || S.hover.y !== c.y; S.hover = c;
+      if (!drag) { if (hovered && (S.tool === 'pen' || S.tool === 'erase' || S.tool === 'shade')) render(); return; }
+      if (drag.tool === 'select') {
+        if (drag.move) { S.float.x = drag.fx + c.x - drag.start.x; S.float.y = drag.fy + c.y - drag.start.y; S.sel = { x: S.float.x, y: S.float.y, w: S.float.w, h: S.float.h }; }
+        else S.sel = rectBetween(drag.start, c, d.w, d.h);
+        render(); status(); return;
+      }
+      if (drag.tool === 'pen' || drag.tool === 'erase' || drag.tool === 'shade') {
         for (const [x, y] of linePoints(drag.last.x, drag.last.y, c.x, c.y).slice(1)) {
-          put(d, x, y, drag.value, drag.rec); drag.trail.push({ x, y });
-          if (S.pp && drag.tool === 'pen' && drag.trail.length >= 3) { /* pixel-perfect: drop the middle pixel of an L-shaped corner */
+          dab(d, x, y, drag); drag.trail.push({ x, y });
+          if (S.pp && drag.tool === 'pen' && S.size === 1 && S.pattern === 'solid' && drag.trail.length >= 3) { /* pixel-perfect: drop the middle pixel of an L-shaped corner */
             const [p1, p2, p3] = drag.trail.slice(-3);
-            if (Math.abs(p3.x - p1.x) === 1 && Math.abs(p3.y - p1.y) === 1 && (p2.x === p1.x || p2.y === p1.y) && !(S.mx || S.my)) { const i = p2.y * d.w + p2.x; if (drag.rec.has(i)) d.px[i] = drag.rec.get(i); drag.trail.splice(-2, 1); }
+            if (Math.abs(p3.x - p1.x) === 1 && Math.abs(p3.y - p1.y) === 1 && (p2.x === p1.x || p2.y === p1.y) && !(S.mx || S.my || S.tile)) { const i = p2.y * d.w + p2.x; if (drag.rec.has(i)) d.px[i] = drag.rec.get(i); drag.trail.splice(-2, 1); }
           }
         }
         drag.last = c; changedUi();
-      } else { // shapes: preview only until release
-        const pts = drag.tool === 'line' ? linePoints(drag.start.x, drag.start.y, c.x, c.y) : rectPoints(drag.start.x, drag.start.y, c.x, c.y, drag.tool === 'rectf');
-        overlay = { pts: mirrorPts(d, pts), value: drag.value }; drag.last = c; drag.moved = true; render();
+      } else if (isShape(drag.tool)) { // shapes: preview only until release
+        const b = e.shiftKey ? constrain(drag.start, c, drag.tool === 'line' ? 'line' : 'box') : c;
+        let pts = mirrorPts(d, shapePts(drag.tool, drag.start, b)).map(([x, y]) => cell(d, x, y)).filter(Boolean);
+        if (S.pattern === 'dither') pts = pts.filter(([x, y]) => ditherOn(x, y));
+        overlay = { pts, value: drag.value }; drag.last = c; drag.moved = true; render();
       }
     });
     const end = (e) => {
       pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null; pan = null;
-      const d = doc(); if (drag && d) {
-        if (overlay) { for (const [x, y] of overlay.pts) if (x >= 0 && y >= 0 && x < d.w && y < d.h) d.px[y * d.w + x] = overlay.value; overlay = null; }
-        else if ((drag.tool === 'line' || drag.tool === 'rect' || drag.tool === 'rectf') && !drag.moved) { const c = drag.start; if (c.x >= 0 && c.y >= 0 && c.x < d.w && c.y < d.h) d.px[c.y * d.w + c.x] = drag.value; }
-        const same = !d.undo.length || countDiff(d.undo[d.undo.length - 1].px, d.px) === 0 && d.undo[d.undo.length - 1].w === d.w; if (same) d.undo.pop();
-        drag = null; changedUi();
-      }
+      const d = doc(); if (!drag || !d) return;
+      if (drag.tool === 'select') { if (!drag.move && S.sel && S.sel.w * S.sel.h <= 1 && drag.start.x === (S.hover || drag.start).x && drag.start.y === (S.hover || drag.start).y) S.sel = null; drag = null; render(); status(); return; }
+      if (overlay) { for (const [x, y] of overlay.pts) d.px[y * d.w + x] = overlay.value; overlay = null; }
+      else if (isShape(drag.tool) && !drag.moved) { const c = cell(d, drag.start.x, drag.start.y); if (c) d.px[c[1] * d.w + c[0]] = drag.value; }
+      if (drag.tool === 'pen' || drag.tool === 'erase') S.lastPt = drag.last;
+      const same = !d.undo.length || countDiff(d.undo[d.undo.length - 1].px, d.px) === 0 && d.undo[d.undo.length - 1].w === d.w; if (same) d.undo.pop();
+      drag = null; changedUi();
     };
     view.addEventListener('pointerup', end); view.addEventListener('pointercancel', end);
+    view.addEventListener('pointerleave', () => { if (!drag && S.hover) { S.hover = null; render(); } });
     view.addEventListener('wheel', (e) => { e.preventDefault(); const r = view.getBoundingClientRect(), dpr = view.width / r.width; zoomAt(e.deltaY < 0 ? 1.25 : 0.8, (e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr); status(); }, { passive: false });
+    setTool('pen');
 
     /* ---------- operations ---------- */
     function edit(fn) { const d = doc(); if (!d) return; d.snapshot(); fn(d); changedUi(); }
-    const undo = () => { const d = doc(); if (d && d.undoOnce()) { fit(); changedUi(); } };
-    const redo = () => { const d = doc(); if (d && d.redoOnce()) { fit(); changedUi(); } };
+    const undo = () => { const d = doc(); if (!d) return; S.float = null; S.sel = null; if (d.undoOnce()) { if (!S.touched) fit(); changedUi(); } else render(); };
+    const redo = () => { const d = doc(); if (!d) return; commitFloat(); S.sel = null; if (d.redoOnce()) { if (!S.touched) fit(); changedUi(); } };
 
     /* ---------- saving & exporting ---------- */
     async function pngOf(d, scale = 1) {
@@ -847,7 +1150,7 @@
       const c = document.createElement('canvas'); drawPx(c, d, scale); return toBlob(c);
     }
     async function save() {
-      const d = doc(); if (!d) return;
+      const d = doc(); if (!d) return; commitFloat();
       try {
         const blob = await pngOf(d);
         if (O.save) await O.save(d, blob);
@@ -888,7 +1191,7 @@
 
     /* ---------- pull request dialog ---------- */
     function openPr() {
-      const changed = [...S.docs.values()].filter((d) => d.changed); if (!changed.length) return;
+      commitFloat(); const changed = [...S.docs.values()].filter((d) => d.changed); if (!changed.length) return;
       const gh = S.meta.repo || {}, dlg = $('.pf-dlg-pr');
       $('.pf-pr-repo').value = $('.pf-pr-repo').value || gh.slug || gh.repo || ''; $('.pf-pr-base').value = $('.pf-pr-base').value || gh.base || gh.branch || '';
       $('.pf-pr-title').value = $('.pf-pr-title').value || (changed.length === 1 ? 'Update ' + changed[0].path.split('/').pop() : 'Update ' + changed.length + ' sprites');
@@ -920,10 +1223,30 @@
       const t = e.target.closest('button'); if (!t) return;
       if (t.dataset.t) return setTool(t.dataset.t);
       if (t.classList.contains('pf-item')) return openSprite(t.dataset.path);
-      if (t.dataset.c !== undefined && t.closest('.pf-sw')) return setColor(+t.dataset.c);
+      if (t.dataset.c !== undefined && t.closest('.pf-sw')) return e.shiftKey ? setColor2(+t.dataset.c) : setColor(+t.dataset.c);
       if (t.dataset.d) { const [dx, dy] = t.dataset.d.split(',').map(Number); return edit((d) => { d.px = shiftWrap(d.px, d.w, d.h, dx, dy); }); }
     });
+    root.addEventListener('contextmenu', (e) => { const t = e.target.closest('.pf-sw button[data-c]'); if (t) { e.preventDefault(); setColor2(+t.dataset.c); } });
     $('.pf-q').oninput = renderList;
+    /* tool options */
+    const segOn = (box, b) => $$(box + ' button').forEach((x) => x.classList.toggle('on', x === b));
+    const setSize = (n) => { S.size = Math.max(1, Math.min(8, n | 0)); $('.pf-size').value = S.size; $('.pf-sizev').textContent = S.size; render(); };
+    $('.pf-size').oninput = (e) => setSize(+e.target.value);
+    $$('.pf-shape button').forEach((b) => (b.onclick = () => { S.shape = b.dataset.shape; segOn('.pf-shape', b); render(); }));
+    $$('.pf-pattern button').forEach((b) => (b.onclick = () => { S.pattern = b.dataset.pattern; segOn('.pf-pattern', b); }));
+    $$('.pf-fillmode button').forEach((b) => (b.onclick = () => { S.fillMode = b.dataset.fill; segOn('.pf-fillmode', b); }));
+    $$('.pf-filled button').forEach((b) => (b.onclick = () => { const base = railOf(S.tool); setTool(b.dataset.filled === '1' ? base + 'f' : base); }));
+    $('.pf-tile').onclick = (e) => { S.tile = !S.tile; e.currentTarget.classList.toggle('on', S.tile); if (S.tile && !S.touched && doc()) { const d = doc(), r = stage.getBoundingClientRect(), dpr = window.devicePixelRatio || 1; S.zoom = Math.max(1, Math.min(64, Math.floor(Math.min((r.width * dpr - 40) / (d.w * 3), (r.height * dpr - 40) / (d.h * 3))))); S.ox = Math.round((view.width - d.w * S.zoom) / 2); S.oy = Math.round((view.height - d.h * S.zoom) / 2); } else if (!S.tile && !S.touched) fit(); render(); status(); };
+    $('.pf-onion').onclick = (e) => { S.onion = !S.onion; e.currentTarget.classList.toggle('on', S.onion); const d = doc(), f = frameSize(d); if (S.onion && d && !(f.w < d.w || f.h < d.h)) note('Onion skin needs a sprite sheet: set the frame size under Preview.'); render(); };
+    $('.pf-help').onclick = () => $('.pf-dlg-keys').showModal();
+    $('.pf-swap').onclick = () => { [S.color, S.color2] = [S.color2, S.color]; if (isClear(S.color) && S.tool === 'pen') setTool('erase'); else if (!isClear(S.color) && S.tool === 'erase') setTool('pen'); renderColors(); swatches(); };
+    $('.pf-prim').onclick = () => $('.pf-cpick').click();
+    $('.pf-sec').onclick = () => $('.pf-swap').click();
+    $('.pf-ramp-btn').onclick = () => { if (isClear(S.color)) return note('Pick a colour first.'); const r = hueRamp(S.color, 5); $('.pf-ramp').hidden = false; $('.pf-ramp-colors').innerHTML = r.map((c) => `<button data-c="${c}" title="${toHex(c)}" style="background:${toHex(c)}"></button>`).join(''); S.ramp = r; renderColors(); };
+    $('.pf-ramp-add').onclick = () => { const add = (S.ramp || []).filter((c) => !S.palette.includes(c)); S.palette = S.palette.concat(add); renderPalette(); renderColors(); note('added ' + add.length + ' colours to the palette'); };
+    $('.pf-pal-add').onclick = () => { if (isClear(S.color) || S.palette.includes(S.color)) return; S.palette = S.palette.concat([S.color]); renderPalette(); renderColors(); };
+    $('.pf-sel-copy').onclick = () => copySel(false); $('.pf-sel-cut').onclick = () => copySel(true); $('.pf-sel-paste').onclick = () => { if (S.clip) pastePx(S.clip.px, S.clip.w, S.clip.h); else note('Nothing copied yet.'); };
+    $('.pf-sel-del').onclick = deleteSel; $('.pf-sel-all').onclick = selectAll; $('.pf-sel-none').onclick = dropSelection;
     $('.pf-undo').onclick = undo; $('.pf-redo').onclick = redo;
     $('.pf-zin').onclick = () => { S.zoom = Math.min(64, S.zoom + 1); S.touched = true; fit2(); }; $('.pf-zout').onclick = () => { S.zoom = Math.max(1, S.zoom - 1); S.touched = true; fit2(); };
     function fit2() { const d = doc(); if (d) { S.ox = Math.round((view.width - d.w * S.zoom) / 2); S.oy = Math.round((view.height - d.h * S.zoom) / 2); } render(); status(); }
@@ -939,8 +1262,10 @@
     { let session = null;
       $('.pf-recolor-in').oninput = (e) => { const d = doc(), to = fromHex(e.target.value); if (!d || to == null) return; if (!session) { if (!d.px.includes(S.color)) { note('That colour is not in this image.'); return; } d.snapshot(); session = { from: S.color }; } for (let i = 0; i < d.px.length; i++) if (d.px[i] === session.from) d.px[i] = to; session.from = to; S.color = to; changedUi(); };
       $('.pf-recolor-in').onchange = () => { session = null; }; }
-    $('.pf-fliph').onclick = () => edit((d) => { d.px = flipH(d.px, d.w, d.h); }); $('.pf-flipv').onclick = () => edit((d) => { d.px = flipV(d.px, d.w, d.h); });
-    $('.pf-rot').onclick = () => edit((d) => { d.px = rotateCW(d.px, d.w, d.h); [d.w, d.h] = [d.h, d.w]; fit(); });
+    $('.pf-fliph').onclick = () => transformSel((px, w, h) => ({ px: flipH(px, w, h), w, h })) || edit((d) => { d.px = flipH(d.px, d.w, d.h); });
+    $('.pf-flipv').onclick = () => transformSel((px, w, h) => ({ px: flipV(px, w, h), w, h })) || edit((d) => { d.px = flipV(d.px, d.w, d.h); });
+    $('.pf-rot').onclick = () => transformSel((px, w, h) => ({ px: rotateCW(px, w, h), w: h, h: w })) || edit((d) => { d.px = rotateCW(d.px, d.w, d.h); [d.w, d.h] = [d.h, d.w]; fit(); });
+    $('.pf-outline').onclick = () => { if (isClear(S.color)) return note('Pick an opaque primary colour for the outline.'); commitFloat(); edit((d) => { d.px = outlinePx(d.px, d.w, d.h, S.color, $('.pf-outline-c').checked); }); };
     $('.pf-clear').onclick = () => edit((d) => { d.px = new Uint32Array(d.w * d.h); });
     $('.pf-resize').onclick = () => { const d = doc(); if (!d) return; $('.pf-sz-w').value = d.w; $('.pf-sz-h').value = d.h; $('.pf-dlg-size').showModal(); };
     $('.pf-sz-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-sz-w').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-sz-h').value | 0)); edit((d) => { d.px = resizePx(d.px, d.w, d.h, w, h, $('.pf-sz-a').value); d.w = w; d.h = h; fit(); }); $('.pf-dlg-size').close(); };
@@ -994,26 +1319,43 @@
       if (root.querySelector('dialog[open]')) return;
       const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
       if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); } else if (mod && k === 'y') { e.preventDefault(); redo(); } else if (mod && k === 's') { e.preventDefault(); save(); }
+      else if (mod && k === 'c') { if (copySel(false)) e.preventDefault(); } else if (mod && k === 'x') { if (copySel(true)) e.preventDefault(); }
+      else if (mod && k === 'a') { e.preventDefault(); selectAll(); }
+      else if (mod && k === 'v') { pasteSoon = setTimeout(() => { if (S.clip) pastePx(S.clip.px, S.clip.w, S.clip.h); }, 60); } // the paste event below wins when the clipboard holds an image from another app
+      else if (k === 'escape' && (S.sel || S.float)) { e.preventDefault(); dropSelection(); }
+      else if (k === 'enter' && S.float) { e.preventDefault(); commitFloat(); render(); status(); }
+      else if ((k === 'delete' || k === 'backspace') && (S.sel || S.float)) { e.preventDefault(); deleteSel(); }
+      else if (k.startsWith('arrow') && S.sel && !mod) { e.preventDefault(); const n = e.shiftKey ? 8 : 1; nudge(k === 'arrowleft' ? -n : k === 'arrowright' ? n : 0, k === 'arrowup' ? -n : k === 'arrowdown' ? n : 0); }
       else if (!mod && !e.altKey) {
         const t = TOOLS.find((x) => x[2].toLowerCase() === k); if (t) setTool(t[0]);
         else if (k === 'm') $('.pf-mx').click(); else if (k === '+' || k === '=') $('.pf-zin').click(); else if (k === '-') $('.pf-zout').click(); else if (k === '0') $('.pf-fit').click(); else if (k === '#') $('.pf-grid').click();
+        else if (k === 'x') $('.pf-swap').click(); else if (k === '[') setSize(S.size - 1); else if (k === ']') setSize(S.size + 1);
+        else if (k === 't') $('.pf-tile').click(); else if (k === 'n') $('.pf-onion').click(); else if (e.key === '?') $('.pf-help').click();
         else if (k === ' ') { space = true; e.preventDefault(); }
       }
     }
     const keyup = (e) => { if (e.key === ' ') space = false; };
-    document.addEventListener('keydown', keydown); document.addEventListener('keyup', keyup);
+    let pasteSoon = 0;
+    async function onPaste(e) {
+      if (!root.isConnected || root.querySelector('dialog[open]') || !doc()) return;
+      const tag = (e.target.tagName || '').toLowerCase(); if (tag === 'input' || tag === 'textarea') return;
+      const file = [...((e.clipboardData && e.clipboardData.files) || [])].find((f) => /^image\//.test(f.type)); if (!file) return;
+      e.preventDefault(); clearTimeout(pasteSoon);
+      try { const img = await decodePng(file); pastePx(img.px, img.w, img.h); } catch (err) { note('Could not paste that image: ' + err.message); }
+    }
+    document.addEventListener('keydown', keydown); document.addEventListener('keyup', keyup); document.addEventListener('paste', onPaste);
     const leaveGuard = (e) => { if ([...S.docs.values()].some((d) => d.unsaved && d.changed)) { e.preventDefault(); e.returnValue = ''; } }; /* unsaved work would be lost: ask first */
     window.addEventListener('beforeunload', leaveGuard);
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const had = doc(); resizeView(); if (had && !S.touched) fit(); render(); }) : null; if (ro) ro.observe(stage);
     resizeView(); renderAuth(); init();
 
     const ctrl = {
-      get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setTool, undo, redo, state: S,
-      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); window.removeEventListener('beforeunload', leaveGuard); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
+      get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setColor2, setTool, undo, redo, selectAll, state: S,
+      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); window.removeEventListener('beforeunload', leaveGuard); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
     };
     host.__pf = ctrl;
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, floodFill, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
 });
