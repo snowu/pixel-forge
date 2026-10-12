@@ -2113,7 +2113,7 @@
       if (sel) sel.innerHTML = names.map((b) => `<option value="${esc(b)}">⎇ ${esc(b)}</option>`).join('') + '<option value="">＋ New branch…</option>';
       const dl = $('#pf-c-branchlist');
       if (dl && gh.slug && token && names.length) dl.innerHTML = names.map((b) => `<option value="${esc(b)}">`).join('');
-      if (commitBranchWant) setCommitBranch(commitBranchWant);
+      setCommitBranch(commitBranchWant || (sel && sel.value) || '');
     }
     async function submitCommit() {
       commitFloat();
