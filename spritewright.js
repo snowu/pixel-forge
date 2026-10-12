@@ -416,6 +416,7 @@
   const palFromText = (t) => parsePalette(t).map(toHex);
   /** Keep the paths a project config wants (dirs, exclude, ignore) and attach frame sizes. */
   function applyConfig(items, cfg = {}) {
+    if (!cfg.dirs && !cfg.exclude && !cfg.keepDocs) items = skipNonArt(items);
     const dirs = (cfg.dirs && cfg.dirs.length ? cfg.dirs : ['']).map((d) => (d === '.' ? '' : d.replace(/\/+$/, '')));
     const ign = new Set([...IGNORE, ...(cfg.ignore || [])]), exc = (cfg.exclude || []).map(globRe);
     return items.filter((it) => {
@@ -425,6 +426,41 @@
       return !exc.some((r) => r.test(it.path));
     }).map((it) => { const fr = cfg.frames && (cfg.frames[it.path] || Object.entries(cfg.frames).find(([k]) => k.includes('*') && globRe(k).test(it.path))?.[1]); return fr ? { ...it, frames: fr } : it; });
   }
+
+  /* =====================================================================================================
+     Families: games name related images alike (archer_0, archer_atk, archer_block; flame_0, flame_1, flame_2;
+     floor_crypt, floor_crypt_grave). Grouping by the longest shared name prefix (cut at _ or -) folds a folder of hundreds
+     of files into a short list, and a family with numbered members is an animation.
+     ===================================================================================================== */
+  const NON_ART = /^(docs?|documentation|screenshots?|previews?|tests?|e2e|coverage|examples?|samples?|marketing|promo|store)$/i;
+  const stem = (p) => p.split('/').pop().replace(/\.png$/i, '');
+  /** Group sprite paths: [{ dir, families: [{ key, members: [path], animated }] }], folders and families in name order. */
+  function groupSprites(paths) {
+    const byDir = new Map();
+    for (const p of paths) { const d = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''; if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(p); }
+    const out = [];
+    for (const [dir, list] of [...byDir.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const names = list.map(stem), fam = new Map();
+      list.forEach((p, i) => {
+        const n = names[i], cuts = [n]; for (let k = n.length - 1; k > 0; k--) if (n[k] === '_' || n[k] === '-') cuts.push(n.slice(0, k));
+        // a real family has a base image (floor_crypt.png next to floor_crypt_grave.png) or numbered members (archer_0, flame_1);
+        // a shared prefix alone (ic_gem, ic_ring) is just a naming category, not a family
+        const key = cuts.find((c) => { const m = names.filter((x) => x === c || x.startsWith(c + '_') || x.startsWith(c + '-')); return m.length >= 2 && (names.includes(c) || m.some((x) => /^[_-]\d+$/.test(x.slice(c.length)))); }) || n;
+        if (!fam.has(key)) fam.set(key, []); fam.get(key).push(p);
+      });
+      const rank = (key, p) => { const rest = stem(p).slice(key.length).replace(/^[_-]/, ''); return rest === '' ? [0, 0, ''] : /^\d+$/.test(rest) ? [1, +rest, ''] : [2, 0, rest]; };
+      const families = [...fam.entries()].map(([key, members]) => {
+        members.sort((a, b) => { const x = rank(key, a), y = rank(key, b); return x[0] - y[0] || x[1] - y[1] || x[2].localeCompare(y[2]); });
+        // an animation is a run of numbered frames: 0,1,2 or 1,2,3 (icon-192 / icon-512 are sizes, not frames)
+        const nums = members.map((p) => rank(key, p)).filter((r) => r[0] === 1).map((r) => r[1]);
+        return { key, members, animated: nums.length >= 2 && nums[0] <= 1 && nums.every((v, i) => !i || v === nums[i - 1] + 1) };
+      }).sort((a, b) => a.key.localeCompare(b.key));
+      out.push({ dir, families });
+    }
+    return out;
+  }
+  /** With no project config, leave out folders that are clearly not game art (docs, screenshots, previews, tests...). */
+  const skipNonArt = (items) => items.filter((it) => !it.path.split('/').slice(0, -1).some((seg) => NON_ART.test(seg)));
 
   /** Sprites listed in a manifest and fetched over HTTP relative to baseUrl. Read-only (Save downloads). */
   function staticSource(mf, baseUrl) {
@@ -585,6 +621,23 @@
 .pf-item canvas{width:36px;height:36px;image-rendering:pixelated;background:repeating-conic-gradient(#1c1530 0 25%,#130e22 0 50%) 0 0/8px 8px;flex:none}
 .pf-item .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}.pf-item small{display:block;color:var(--pf-muted);overflow:hidden;text-overflow:ellipsis}
 .pf-item .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-item .dot.base{background:var(--pf-warn)}
+.pf-list:not(.pf-flat){display:block}
+.pf .pf-dir{display:flex;width:100%;justify-content:flex-start;gap:6px;background:none;border:0;border-bottom:1px solid var(--pf-line);padding:7px 2px 5px;min-height:0;margin-top:6px;color:var(--pf-muted);font-size:11px;letter-spacing:.04em;position:sticky;top:0;z-index:1;background:var(--pf-panel)}
+.pf .pf-dir:hover:not(:disabled){box-shadow:none;color:var(--pf-accent)}
+.pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:10.5px}
+.pf-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(60px,1fr));gap:4px;padding:6px 0 4px}
+.pf .pf-cell{flex-direction:column;gap:3px;padding:5px 3px 4px;min-height:0;position:relative;justify-content:flex-start;border:1px solid transparent}
+.pf .pf-cell canvas{width:44px;height:44px;object-fit:contain}
+.pf .pf-cell .n{width:100%;text-align:center;font-size:10.5px;line-height:1.25}.pf .pf-cell small{font-size:9.5px;text-align:center;color:var(--pf-faint)}
+.pf .pf-cell.on,.pf .pf-cell.on:hover:not(:disabled){box-shadow:inset 0 0 0 1px var(--pf-accent),0 0 12px rgba(185,140,255,.18)}
+.pf-fam{display:flex;flex-direction:column;gap:6px}.pf-fam-h{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.pf-fam-h b{color:var(--pf-ink)}
+.pf-fam-strip{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
+.pf .pf-fam-m{flex-direction:column;gap:2px;padding:3px;min-height:0;flex:none;font-size:9.5px;color:var(--pf-muted);background:var(--pf-bg)}
+.pf .pf-fam-m canvas{width:40px;height:40px;image-rendering:pixelated;object-fit:contain;background:repeating-conic-gradient(#1c1530 0 25%,#130e22 0 50%) 0 0/8px 8px}
+.pf .pf-fam-m.on{border-color:var(--pf-accent);color:var(--pf-accent);background:var(--pf-panel2);font-weight:400}.pf .pf-fam-m.playing{box-shadow:0 0 0 1px var(--pf-accent2)}
+.pf-badge{position:absolute;top:2px;right:2px;font-style:normal;font-size:9.5px;line-height:1;padding:2px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted)}
+.pf-badge.anim{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent);font-weight:700}
+.pf .pf-cell .dot{position:absolute;top:4px;left:4px}
 .pf-main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .pf-bar,.pf-opts{display:flex;flex-wrap:wrap;gap:6px 14px;padding:7px 10px;border-bottom:1px solid var(--pf-line);background:var(--pf-panel);align-items:center}
 .pf-opts{background:var(--pf-bg);height:46px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;font-size:12px;scrollbar-width:thin}.pf-opt{flex-wrap:nowrap;white-space:nowrap;flex:none}
@@ -600,7 +653,7 @@
 .pf-rail{display:flex;flex-direction:column;gap:4px;padding:8px 6px;border-right:1px solid var(--pf-line);background:var(--pf-panel);align-items:center;overflow:auto}
 .pf-tools{display:flex;flex-direction:column;gap:4px}
 .pf .pf-tools button{width:38px;height:38px;padding:0;background:transparent;border-color:transparent}
-.pf .pf-tools button .pf-ic{width:20px;height:20px}
+.pf .pf-tools button .pf-ic{width:21px;height:21px}
 .pf .pf-tools button.on{background:var(--pf-accent);border-color:var(--pf-accent);color:var(--pf-on);box-shadow:0 0 16px rgba(185,140,255,.35)}
 .pf-swatch{position:relative;width:40px;height:44px;margin-top:10px;flex:none}
 .pf .pf-prim,.pf .pf-sec{position:absolute;width:26px;height:26px;min-height:0;padding:0;border:2px solid var(--pf-ink);background:var(--pf-c,#000)}
@@ -646,7 +699,7 @@
 @media (max-width:1100px){.pf{grid-template-columns:200px minmax(0,1fr) 220px}.pf-bar button span,.pf-opt-end button span{display:none}}
 @media (max-width:900px){
   .pf{grid-template-columns:1fr;grid-template-rows:auto minmax(420px,1fr) auto;height:auto}
-  .pf-side{flex-direction:column;border-right:0;border-bottom:1px solid var(--pf-line);max-height:none}.pf-list{flex-direction:row;overflow-x:auto;overflow-y:hidden;flex:none;min-height:0}.pf-item{width:150px;flex:none}
+  .pf-side{flex-direction:column;border-right:0;border-bottom:1px solid var(--pf-line);max-height:none}.pf-list.pf-flat{flex-direction:row;overflow-x:auto;overflow-y:hidden;flex:none;min-height:0}.pf-flat .pf-item{width:150px;flex:none}.pf-list:not(.pf-flat){max-height:300px;flex:none}.pf-tiles{grid-template-columns:repeat(auto-fill,minmax(64px,1fr))}
   .pf-right{border-left:0;border-top:1px solid var(--pf-line)}
   .pf-work{flex-direction:column}
   .pf-rail{flex-direction:row;border-right:0;border-bottom:1px solid var(--pf-line);overflow-x:auto;padding:6px}
@@ -660,33 +713,28 @@
 
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  /* Tool icons are pixel art too: 12x12 grids turned into crisp SVG paths (currentColor, so they follow the theme). */
+  /* Interface icons: simple 24-unit line drawings (currentColor, so they follow the theme). */
   const ICONS = {
-    pen: ['.........##.', '........#..#', '.......#..#.', '......#..#..', '.....#..#...', '....#..#....', '...#..#.....', '..#..#......', '.#.##.......', '.#.#........', '.##.........', '............'],
-    erase: ['............', '......####..', '.....#...##.', '....#...#.#.', '...#...#..#.', '..#...#..#..', '.#####..#...', '.#...#.#....', '.#...##.....', '.#####......', '............', '###########.'],
-    fill: ['....#.......', '...#.#......', '..#...#.....', '.#.....#....', '#.......#...', '.#.....####.', '..#...#.####', '...#.#..####', '....#....##.', '..........#.', '..........#.', '............'],
-    pick: ['.........##.', '........####', '.......#####', '......####..', '.....#.##...', '....#.#.....', '...#.#......', '..#.#.......', '.#.#........', '.##.........', '#...........', '............'],
-    line: ['............', '..........##', '.........##.', '........##..', '.......##...', '......##....', '.....##.....', '....##......', '...##.......', '..##........', '.##.........', '............'],
-    rect: ['............', '.##########.', '.#........#.', '.#........#.', '.#........#.', '.#........#.', '.#........#.', '.#........#.', '.#........#.', '.##########.', '............', '............'],
-    ellipse: ['............', '....####....', '..##....##..', '.#........#.', '.#........#.', '#..........#', '#..........#', '.#........#.', '.#........#.', '..##....##..', '....####....', '............'],
-    select: ['............', '##.##.##.##.', '#.........#.', '............', '#.........#.', '#.........#.', '............', '#.........#.', '#.........#.', '##.##.##.##.', '............', '............'],
-    shade: ['............', '....####....', '..##.####...', '.#...#####..', '.#...#####..', '#....######.', '#....######.', '.#...#####..', '.#...#####..', '..##.####...', '....####....', '............'],
-    undo: ['............', '...#........', '..##........', '.#######....', '..##....#...', '...#.....#..', '..........#.', '..........#.', '.........#..', '......###...', '............', '............'],
-    redo: ['............', '........#...', '........##..', '....#######.', '...#....##..', '..#.....#...', '.#..........', '.#..........', '..#.........', '...###......', '............', '............'],
-    grid: ['............', '.#..#..#..#.', '############', '.#..#..#..#.', '.#..#..#..#.', '############', '.#..#..#..#.', '.#..#..#..#.', '############', '.#..#..#..#.', '............', '............'],
-    tile: ['............', '.####..####.', '.#..#..#..#.', '.#..#..#..#.', '.####..####.', '............', '............', '.####..####.', '.#..#..#..#.', '.#..#..#..#.', '.####..####.', '............'],
-    onion: ['............', '.......#####', '.......#...#', '....####...#', '....#..#...#', '.####..#####', '.#..#...#...', '.#..#####...', '.#.....#....', '.#######....', '............', '............'],
-    mx: ['.....##.....', '.#...##...#.', '.##..##..##.', '.###.##.###.', '.##..##..##.', '.#...##...#.', '.....##.....', '.....##.....', '.....##.....', '.....##.....', '............', '............'],
-    my: ['............', '.#######....', '..#####.....', '...###......', '....#.......', '############', '############', '....#.......', '...###......', '..#####.....', '.#######....', '............'],
-    sq: ['............', '............', '..########..', '..########..', '..########..', '..########..', '..########..', '..########..', '..########..', '..########..', '............', '............'],
-    circ: ['............', '............', '....####....', '..########..', '..########..', '.##########.', '.##########.', '..########..', '..########..', '....####....', '............', '............'],
+    pen: '<path d="M4 20l1.2-4.2L16.4 4.6a2.1 2.1 0 0 1 3 3L8.2 18.8z"/><path d="M14.4 6.6l3 3"/>',
+    erase: '<path d="M9 20h11"/><path d="M5.7 15.3l8.8-8.8a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 19H8.4l-2.7-2.7a1 1 0 0 1 0-1z"/><path d="M9.6 11.4l5 5"/>',
+    fill: '<path d="M10.5 3.5l8.4 8.4-6.7 6.7a2 2 0 0 1-2.8 0l-5.6-5.6a2 2 0 0 1 0-2.8z"/><path d="M4.2 11.9H17"/><path d="M20 15.2s1.9 2.3 1.9 3.6a1.9 1.9 0 0 1-3.8 0c0-1.3 1.9-3.6 1.9-3.6z"/>',
+    pick: '<circle cx="17.4" cy="6.6" r="3" fill="currentColor" stroke="none"/><path d="M13 7.6l3.4 3.4"/><path d="M14.6 9.4L6 18l-1.5 2.5 2.5-1.5 8.6-8.6"/>',
+    line: '<path d="M6 18L18 6"/><circle cx="5.2" cy="18.8" r="1.7" fill="currentColor" stroke="none"/><circle cx="18.8" cy="5.2" r="1.7" fill="currentColor" stroke="none"/>',
+    rect: '<rect x="4.5" y="5.5" width="15" height="13"/>',
+    ellipse: '<ellipse cx="12" cy="12" rx="8.2" ry="6.6"/>',
+    select: '<path d="M4.5 8V4.5H8M11 4.5h2M16 4.5h3.5V8M19.5 11v2M19.5 16v3.5H16M13 19.5h-2M8 19.5H4.5V16M4.5 13v-2"/>',
+    shade: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
+    undo: '<path d="M9 13.5L4.5 9 9 4.5"/><path d="M4.5 9H15a5 5 0 0 1 0 10h-3.5"/>',
+    redo: '<path d="M15 13.5L19.5 9 15 4.5"/><path d="M19.5 9H9a5 5 0 0 0 0 10h3.5"/>',
+    grid: '<rect x="4" y="4" width="16" height="16"/><path d="M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16"/>',
+    tile: '<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/>',
+    onion: '<rect x="3.5" y="8.5" width="10" height="11" stroke-dasharray="2 2"/><rect x="10.5" y="4.5" width="10" height="11"/>',
+    mx: '<path d="M12 3v18" stroke-dasharray="1.5 2.5"/><path d="M9 7.5L4.5 12 9 16.5z"/><path d="M15 7.5l4.5 4.5-4.5 4.5z"/>',
+    my: '<path d="M3 12h18" stroke-dasharray="1.5 2.5"/><path d="M7.5 9L12 4.5 16.5 9z"/><path d="M7.5 15l4.5 4.5 4.5-4.5z"/>',
+    sq: '<rect x="6.5" y="6.5" width="11" height="11" fill="currentColor"/>',
+    circ: '<circle cx="12" cy="12" r="6" fill="currentColor"/>',
   };
-  const iconCache = {};
-  function icon(name) {
-    if (iconCache[name]) return iconCache[name];
-    let d = ''; (ICONS[name] || []).forEach((row, y) => { for (let x = 0; x < row.length; x++) if (row[x] === '#') { let n = 1; while (row[x + n] === '#') n++; d += `M${x} ${y}h${n}v1h-${n}z`; x += n - 1; } });
-    return (iconCache[name] = `<svg class="pf-ic" viewBox="0 0 12 12" aria-hidden="true" shape-rendering="crispEdges"><path fill="currentColor" d="${d}"/></svg>`);
-  }
+  const icon = (name) => `<svg class="pf-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   // [id, name, key, rail icon or the rail tool it belongs to]
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
@@ -751,8 +799,10 @@
         <div class="pf-panel"><h4>In this image</h4><div class="pf-sw pf-img-colors"></div></div>
         <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load a .hex (Lospec), or add colours with +.</div><div class="pf-note pf-off"></div></div>
           <div class="pf-row"><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><button class="pf-palload">Load…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div></div>
-        <div class="pf-panel pf-prev"><h4>Preview</h4><canvas class="pf-p1"></canvas>
-          <div class="pf-row"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
+        <div class="pf-panel pf-prev"><h4>Preview</h4>
+          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note"><kbd>,</kbd> <kbd>.</kbd> previous / next · Play flips through them</div></div>
+          <canvas class="pf-p1"></canvas>
+          <div class="pf-row pf-sheet-row"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
           <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
           <canvas class="pf-p2"></canvas></div>
         <div class="pf-panel"><h4>Image</h4><div class="pf-row"><button class="pf-fliph" title="Flip the image, or the selection">Flip ↔</button><button class="pf-flipv">Flip ↕</button><button class="pf-rot" title="Rotate the image, or the selection">Rotate ↻</button></div>
@@ -884,7 +934,7 @@
     /** Make `src` the project being edited. Returns false if the user chose to keep their unsaved session. */
     async function useSource(src) {
       if ([...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
-      play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
+      play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; folded = null; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
       $('.pf-src').textContent = src.note || '';
@@ -918,7 +968,7 @@
           S.docs.set(path, new Doc(path, img.w, img.h, img.px, { frames: meta && meta.frames }));
         } catch (e) { note('Could not open ' + path + ': ' + e.message); return; }
       }
-      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); renderList(); renderColors(); status(); render(); drawPreview();
+      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); renderList(); renderColors(); status(); render(); drawPreview(); renderFamily();
     }
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject) {
@@ -930,13 +980,45 @@
     /* ---------- list ---------- */
     const thumbs = new Map();
     const io = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); paintThumb(e.target, e.target.__s); } }), { root: $('.pf-list') }) : null;
+    /* The sprite list: folders you can fold, one tile per family (archer_0 + archer_atk + archer_block), animations marked ▶.
+       Typing in the filter shows a flat list of matching files instead. */
+    const famOf = new Map(); // path -> { key, dir, members, animated }
+    const collapsedKey = () => 'pf:folded:' + ((S.meta.repo && S.meta.repo.slug) || (S.src && S.src.name) || location.pathname);
+    let folded = null;
+    const loadFolded = () => { try { folded = new Set(JSON.parse(localStorage.getItem(collapsedKey()) || '[]')); } catch { folded = new Set(); } };
+    const saveFolded = () => { try { localStorage.setItem(collapsedKey(), JSON.stringify([...folded])); } catch { /* ignore */ } };
+    function regroup() {
+      famOf.clear(); const groups = groupSprites(S.sprites.map((s) => s.path));
+      for (const g of groups) for (const f of g.families) { const fam = { ...f, dir: g.dir }; for (const m of f.members) famOf.set(m, fam); }
+      return groups;
+    }
+    const spriteOf = (path) => S.sprites.find((x) => x.path === path);
+    function tileHtml(s, label, fam, flat) {
+      const d = S.docs.get(s.path), members = fam ? fam.members : [s.path], dirty = members.some((p) => { const x = S.docs.get(p); return x && x.unsaved; }), changed = members.some((p) => { const x = S.docs.get(p); return x && x.changed; });
+      const size = d ? d.w + '×' + d.h : (s.w || '?') + '×' + (s.h || '?'), dir = s.path.split('/').slice(0, -1).join('/') || '.';
+      const badge = fam && fam.members.length > 1 ? `<i class="pf-badge${fam.animated ? ' anim' : ''}" title="${fam.animated ? 'animation: ' + fam.members.length + ' frames' : fam.members.length + ' images in this family'}">${fam.animated ? '▶' : ''}${fam.members.length}</i>` : '';
+      const on = members.includes(S.cur);
+      return `<button class="pf-item${flat ? '' : ' pf-cell'}${on ? ' on' : ''}" role="option" data-path="${esc(s.path)}" title="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(label)}<small>${flat ? esc(dir) + ' · ' : ''}${size}</small></span>${badge}${dirty ? '<i class="dot" title="unsaved"></i>' : changed ? '<i class="dot base" title="saved, not yet proposed"></i>' : ''}</button>`;
+    }
     function renderList() {
-      const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'); list.innerHTML = '';
-      for (const s of S.sprites.filter((x) => x.path.toLowerCase().includes(q))) {
-        const d = S.docs.get(s.path), b = el(`<button class="pf-item${s.path === S.cur ? ' on' : ''}" role="option" data-path="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(s.path.split('/').pop())}<small>${esc(s.path.split('/').slice(0, -1).join('/') || '.')} · ${d ? d.w + '×' + d.h : (s.w || '?') + '×' + (s.h || '?')}</small></span>${d && d.unsaved ? '<i class="dot" title="unsaved"></i>' : d && d.changed ? '<i class="dot base" title="saved, not yet proposed"></i>' : ''}</button>`);
-        list.appendChild(b); const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s);
+      const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'), groups = regroup(); list.innerHTML = '';
+      if (!folded) loadFolded();
+      const add = (html, s) => { const b = el(html); list.appendChild(b); const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s); return b; };
+      list.classList.toggle('pf-flat', !!q);
+      if (q) { for (const s of S.sprites.filter((x) => x.path.toLowerCase().includes(q))) add(tileHtml(s, s.path.split('/').pop(), famOf.get(s.path), true), s); return; }
+      for (const g of groups) {
+        const n = g.families.reduce((k, f) => k + f.members.length, 0), shut = folded.has(g.dir) && !g.families.some((f) => f.members.includes(S.cur));
+        if (groups.length > 1 || g.dir) list.appendChild(el(`<button class="pf-dir${shut ? ' shut' : ''}" data-dir="${esc(g.dir)}" aria-expanded="${!shut}"><span class="pf-caret">${shut ? '▸' : '▾'}</span><span class="pf-dirname">${esc(g.dir || '.')}</span><span class="pf-dircount">${n}</span></button>`));
+        if (shut) continue;
+        const grid = el('<div class="pf-tiles"></div>'); list.appendChild(grid);
+        for (const f of g.families) {
+          const shown = f.members.includes(S.cur) ? S.cur : f.members[0], s = spriteOf(shown);
+          const b = el(tileHtml(s, f.members.length > 1 ? f.key : shown.split('/').pop(), famOf.get(shown), false)); grid.appendChild(b);
+          const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s);
+        }
       }
     }
+    function toggleDir(dir) { if (!folded) loadFolded(); folded.has(dir) ? folded.delete(dir) : folded.add(dir); saveFolded(); renderList(); }
     /* Thumbnails load as their rows come into view, a few at a time, so a big project starts drawing at once without flooding the network. */
     let thumbBusy = 0; const thumbQueue = [];
     const thumbSlot = () => new Promise((res) => { if (thumbBusy < 6) { thumbBusy++; res(); } else thumbQueue.push(res); });
@@ -1010,6 +1092,8 @@
         for (let k = 1; k < cols * rows; k++) { const sx = ((k - 1) % cols) * f.w, sy = Math.floor((k - 1) / cols) * f.h, dx = (k % cols) * f.w, dy = Math.floor(k / cols) * f.h; g.drawImage(offscreen, sx, sy, f.w, f.h, S.ox + dx * z, S.oy + dy * z, f.w * z, f.h * z); }
         g.globalAlpha = 1;
       }
+      const fam = !multi && S.onion ? famFor(d) : null, fi = fam ? fam.members.indexOf(d.path) : -1;
+      if (fi > 0) { const prev = memberImage(fam.members[fi - 1]); if (prev) { g.globalAlpha = 0.28; g.drawImage(prev, S.ox, S.oy, prev.width * z, prev.height * z); g.globalAlpha = 1; offscreen.width = d.w; offscreen.height = d.h; offscreen.getContext('2d').putImageData(d.imageData(), 0, 0); } }
       g.drawImage(offscreen, S.ox, S.oy, W, H);
       g.restore();
       const fl = S.float;
@@ -1056,7 +1140,8 @@
     }
     $('.pf-tools').innerHTML = TOOLS.filter((x) => !x[3]).map(([k, n, key]) => `<button data-t="${k}" title="${n} (${key})" aria-label="${n}">${icon(k)}</button>`).join('');
     $('.pf-keys').innerHTML = KEYS.map(([k, v]) => `<div class="pf-key"><kbd>${esc(k)}</kbd><span>${esc(v)}</span></div>`).join('');
-    const changedUi = () => { renderColors(); status(); renderListSoon(); drawPreview(); render(); };
+    const changedUi = () => { renderColors(); status(); renderListSoon(); drawPreview(); render(); renderFamilySoon(); };
+    let famTimer = 0; const renderFamilySoon = () => { clearTimeout(famTimer); famTimer = setTimeout(renderFamily, 150); };
     let listTimer = 0; const renderListSoon = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 120); };
     /** Where a pixel lands: wrapped around the edges in tile mode, else null when outside the image. */
     const cell = (d, x, y) => { if (S.tile) return [((x % d.w) + d.w) % d.w, ((y % d.h) + d.h) % d.h]; return x >= 0 && y >= 0 && x < d.w && y < d.h ? [x, y] : null; };
@@ -1220,10 +1305,46 @@
       d.frames = f; $('.pf-fw').value = f.w; $('.pf-fh').value = f.h; $('.pf-fps').value = f.fps || 8;
     }
     const frameSize = (d) => (d && d.frames ? { w: Math.max(1, Math.min(d.w, d.frames.w | 0)), h: Math.max(1, Math.min(d.h, d.frames.h | 0)) } : null);
+    /* Families (poses, variants, numbered animation frames in separate files): any member as something drawable.
+       An open document wins, so edits show up in the strip, the flipbook and the onion skin straight away. */
+    const famFor = (d) => { const f = d && famOf.get(d.path); return f && f.members.length > 1 ? f : null; };
+    const pending = new Set();
+    function memberImage(path) {
+      const d = S.docs.get(path);
+      if (d) { const c = document.createElement('canvas'); c.width = d.w; c.height = d.h; c.getContext('2d').putImageData(d.imageData(), 0, 0); return c; }
+      const bm = thumbs.get(path); if (bm) return bm;
+      if (S.src && !pending.has(path)) {
+        pending.add(path); const src = S.src;
+        src.read(path).then((b) => createImageBitmap(new Blob([b], { type: 'image/png' }))).then((bm2) => { if (S.src !== src) return; thumbs.set(path, bm2); renderFamily(); drawPreview(); render(); }).catch(() => {}).finally(() => pending.delete(path));
+      }
+      return null;
+    }
+    const memberLabel = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length).replace(/^[_-]/, ''); return r || 'base'; };
+    function renderFamily() {
+      const d = doc(), fam = famFor(d), box = $('.pf-fam'); box.hidden = !fam; if (!fam) return;
+      $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`;
+      const strip = $('.pf-fam-strip'); strip.innerHTML = '';
+      for (const p of fam.members) {
+        const b = el(`<button class="pf-fam-m${p === S.cur ? ' on' : ''}" data-path="${esc(p)}" role="option" title="${esc(p)}"><canvas></canvas><span>${esc(memberLabel(fam, p))}</span></button>`);
+        strip.appendChild(b); const img = memberImage(p), c = b.querySelector('canvas');
+        if (img) { c.width = img.width; c.height = img.height; const k = c.getContext('2d'); k.imageSmoothingEnabled = false; k.drawImage(img, 0, 0); }
+      }
+    }
+    function stepMember(dir) { const d = doc(), fam = famFor(d); if (!fam) return; const i = fam.members.indexOf(d.path); openSprite(fam.members[(i + dir + fam.members.length) % fam.members.length]); }
     function drawPreview() {
       const d = doc(); if (!d) return; const p1 = $('.pf-p1'), p2 = $('.pf-p2');
       drawPx(p1, d, d.w <= 32 ? 2 : 1);
-      const f = frameSize(d), cols = Math.max(1, Math.floor(d.w / f.w)), rows = Math.max(1, Math.floor(d.h / f.h)), n = cols * rows, i = S.anim.t % n;
+      const sheet = frameSize(d), fam = famFor(d);
+      const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h); p1.hidden = flip; $('.pf-sheet-row').hidden = flip;
+      if (flip) { // flipbook through the family's images
+        const i = S.anim.timer ? S.anim.t % fam.members.length : fam.members.indexOf(d.path), img = memberImage(fam.members[i]);
+        $$('.pf-fam-m').forEach((b, k) => b.classList.toggle('playing', !!S.anim.timer && k === i));
+        const w = img ? img.width : d.w, h = img ? img.height : d.h, sc = Math.max(1, Math.min(8, Math.floor(190 / Math.max(w, h))));
+        p2.width = w * sc; p2.height = h * sc; const k = p2.getContext('2d'); k.imageSmoothingEnabled = false; k.clearRect(0, 0, p2.width, p2.height);
+        if (img) k.drawImage(img, 0, 0, w * sc, h * sc);
+        return;
+      }
+      const f = sheet, cols = Math.max(1, Math.floor(d.w / f.w)), rows = Math.max(1, Math.floor(d.h / f.h)), n = cols * rows, i = S.anim.t % n;
       const sc = Math.max(1, Math.min(8, Math.floor(190 / f.w)));
       p2.width = f.w * sc; p2.height = f.h * sc; const k = p2.getContext('2d'); k.imageSmoothingEnabled = false; k.clearRect(0, 0, p2.width, p2.height);
       offscreen.width = d.w; offscreen.height = d.h; offscreen.getContext('2d').putImageData(d.imageData(), 0, 0);
@@ -1278,6 +1399,8 @@
       const t = e.target.closest('button'); if (!t) return;
       if (t.dataset.t) return setTool(t.dataset.t);
       if (t.classList.contains('pf-item')) return openSprite(t.dataset.path);
+      if (t.classList.contains('pf-dir')) return toggleDir(t.dataset.dir);
+      if (t.classList.contains('pf-fam-m')) return openSprite(t.dataset.path);
       if (t.dataset.c !== undefined && t.closest('.pf-sw')) return e.shiftKey ? setColor2(+t.dataset.c) : setColor(+t.dataset.c);
       if (t.dataset.d) { const [dx, dy] = t.dataset.d.split(',').map(Number); return edit((d) => { d.px = shiftWrap(d.px, d.w, d.h, dx, dy); }); }
     });
@@ -1292,7 +1415,7 @@
     $$('.pf-fillmode button').forEach((b) => (b.onclick = () => { S.fillMode = b.dataset.fill; segOn('.pf-fillmode', b); }));
     $$('.pf-filled button').forEach((b) => (b.onclick = () => { const base = railOf(S.tool); setTool(b.dataset.filled === '1' ? base + 'f' : base); }));
     $('.pf-tile').onclick = (e) => { S.tile = !S.tile; e.currentTarget.classList.toggle('on', S.tile); if (S.tile && !S.touched && doc()) { const d = doc(), r = stage.getBoundingClientRect(), dpr = window.devicePixelRatio || 1; S.zoom = Math.max(1, Math.min(64, Math.floor(Math.min((r.width * dpr - 40) / (d.w * 3), (r.height * dpr - 40) / (d.h * 3))))); S.ox = Math.round((view.width - d.w * S.zoom) / 2); S.oy = Math.round((view.height - d.h * S.zoom) / 2); } else if (!S.tile && !S.touched) fit(); render(); status(); };
-    $('.pf-onion').onclick = (e) => { S.onion = !S.onion; e.currentTarget.classList.toggle('on', S.onion); const d = doc(), f = frameSize(d); if (S.onion && d && !(f.w < d.w || f.h < d.h)) note('Onion skin needs a sprite sheet: set the frame size under Preview.'); render(); };
+    $('.pf-onion').onclick = (e) => { S.onion = !S.onion; e.currentTarget.classList.toggle('on', S.onion); const d = doc(), f = frameSize(d); if (S.onion && d && !(f.w < d.w || f.h < d.h) && !famFor(d)) note('Onion skin needs animation frames: a sprite sheet (set the frame size under Preview) or numbered files like walk_0, walk_1.'); render(); };
     $('.pf-help').onclick = () => $('.pf-dlg-keys').showModal();
     $('.pf-swap').onclick = () => { [S.color, S.color2] = [S.color2, S.color]; if (isClear(S.color) && S.tool === 'pen') setTool('erase'); else if (!isClear(S.color) && S.tool === 'erase') setTool('pen'); renderColors(); swatches(); };
     $('.pf-prim').onclick = () => $('.pf-cpick').click();
@@ -1385,6 +1508,7 @@
         const t = TOOLS.find((x) => x[2].toLowerCase() === k); if (t) setTool(t[0]);
         else if (k === 'm') $('.pf-mx').click(); else if (k === '+' || k === '=') $('.pf-zin').click(); else if (k === '-') $('.pf-zout').click(); else if (k === '0') $('.pf-fit').click(); else if (k === '#') $('.pf-grid').click();
         else if (k === 'x') $('.pf-swap').click(); else if (k === '[') setSize(S.size - 1); else if (k === ']') setSize(S.size + 1);
+        else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
         else if (k === 't') $('.pf-tile').click(); else if (k === 'n') $('.pf-onion').click(); else if (e.key === '?') $('.pf-help').click();
         else if (k === ' ') { space = true; e.preventDefault(); }
       }
@@ -1412,5 +1536,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
 });

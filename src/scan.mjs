@@ -60,7 +60,9 @@ export function globToRegExp(g) {
 
 export function scan(root, userConfig) {
   root = path.resolve(root);
-  const cfg = { ...DEFAULTS, ...loadConfig(root), ...(userConfig || {}) };
+  const own = { ...loadConfig(root), ...(userConfig || {}) }, cfg = { ...DEFAULTS, ...own };
+  // with no config of its own, a project's docs/screenshots/previews/tests folders are not game art: leave them out
+  const smart = !own.dirs && !own.exclude && !own.keepDocs;
   const ignore = new Set(cfg.ignore);
   const dirs = cfg.dirs && cfg.dirs.length ? cfg.dirs : ['.'];
   const exclude = (cfg.exclude || []).map(globToRegExp);
@@ -77,6 +79,7 @@ export function scan(root, userConfig) {
       if (!e.isFile() || !/\.png$/i.test(e.name)) continue;
       const rel = path.relative(root, p).split(path.sep).join('/');
       if (exclude.some((r) => r.test(rel))) continue;
+      if (smart && rel.split('/').slice(0, -1).some((seg) => NON_ART.test(seg))) continue;
       const size = readPngSize(p);
       if (!size || size.w > cfg.maxSize || size.h > cfg.maxSize || size.w < 1 || size.h < 1) continue;
       const s = { path: rel, w: size.w, h: size.h, bytes: fs.statSync(p).size };
