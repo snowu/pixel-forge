@@ -947,6 +947,9 @@
 .pf-acct button{font:inherit;background:#150e24;color:#e6dcf7;border:1px solid #2a1b45;padding:2px 8px;cursor:pointer}.pf-acct button:hover{border-color:var(--pf-accent,#b98cff);color:var(--pf-accent,#b98cff)}
 .pf-side-auth{justify-content:space-between;flex-wrap:nowrap}.pf-side-auth .pf-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pf-side-auth .pf-who:empty{display:none}.pf-side-auth .pf-signin{width:100%}
 .pf .pf-source{width:100%;justify-content:flex-start;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-color:var(--pf-line2);display:block}
+.pf-source .pf-branch{color:var(--pf-accent)}
+.pf-brmenu{min-width:210px;max-width:290px}
+.pf-brmenu .pf-note{white-space:normal}
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
 .pf .pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-tokenbox summary{cursor:pointer;color:var(--pf-muted);font-size:12.5px}.pf-tokenbox>label,.pf-tokenbox>.pf-note{display:block;margin-top:8px}.pf-tokenbox[hidden]{display:none}
@@ -1091,7 +1094,7 @@
           <div class="pf-row"><button type="button" class="pf-commit-go primary">Commit</button></div>
           <div class="pf-note pf-commit-note" aria-live="polite"></div></details>
         <div class="pf-row"><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
-        <div class="pf-note pf-src"></div><input type="file" class="pf-file" accept="image/png,image/*" multiple hidden></aside>
+        <input type="file" class="pf-file" accept="image/png,image/*" multiple hidden></aside>
       <section class="pf-main">
         <div class="pf-bar">
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
@@ -1286,7 +1289,6 @@
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       loadWork(); // the branch this repository was being committed to, if any
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
-      $('.pf-src').textContent = src.note || '';
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
       const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src); sourceButton();
       renderList(); renderPalette(); applyBg();
@@ -1343,10 +1345,53 @@
     const canWrite = () => !!(S.src && S.src.write);
     /** The project button names what is open: a repository, a folder, or a project in this browser (once it has sprites). */
     function sourceButton() {
-      const src = S.src || {}, label = src.kind === 'github' ? src.repo.slug : src.kind === 'folder' ? src.name : src.kind === 'browser' && (src.id || S.sprites.length) ? src.name : '';
-      $('.pf-source').textContent = label ? label + ' ▾' : 'Open project…';
-      $('.pf-source').title = (label ? label + (src.kind === 'browser' ? ' (in this browser)' : '') + ': ' : '') + 'switch project: a GitHub repository, a folder on this computer, or a project in this browser';
+      const src = S.src || {}, btn = $('.pf-source');
+      if (src.kind === 'github' && src.repo.slug) {
+        // A zsh prompt, not a sentence: owner/repo, then the branch. Clicking switches branches.
+        btn.innerHTML = `<span>${esc(src.repo.slug)}</span> <span class="pf-branch">⎇ ${esc(src.branch)}</span>`;
+        btn.title = `${src.repo.slug} @ ${src.branch}: switch branch, or open another project`;
+      } else {
+        const label = src.kind === 'folder' ? src.name : src.kind === 'browser' && (src.id || S.sprites.length) ? src.name : '';
+        btn.textContent = label || 'Open project…';
+        btn.title = (label ? label + (src.kind === 'browser' ? ' (in this browser)' : '') + ': ' : '') + 'switch project: a GitHub repository, a folder on this computer, or a project in this browser';
+      }
     }
+    /** Switch to another branch of the open GitHub repository. Drafts are kept per branch, so nothing follows you. */
+    function closeBrMenu() { const m = root.querySelector('.pf-brmenu'); if (m) m.remove(); }
+    async function switchBranch(branch) {
+      const src = S.src;
+      if (!src || src.kind !== 'github' || branch === src.branch) return;
+      try {
+        await useSource(await githubSource({ repo: src.repo.slug, branch, token: await commitToken(), apiBase: O.apiBase }));
+      } catch (e) { note(e.message); }
+    }
+    async function openBranchMenu() {
+      closeBrMenu();
+      const gh = S.meta.repo || {}, cur = S.src && S.src.branch;
+      const menu = el(`<div class="pf-bgmenu pf-brmenu" role="menu"><div class="pf-note" style="padding:4px 9px">Loading branches…</div></div>`);
+      root.appendChild(menu);
+      const b = $('.pf-source').getBoundingClientRect(), r = root.getBoundingClientRect();
+      menu.style.left = Math.max(4, Math.min(b.left - r.left, r.width - menu.offsetWidth - 4)) + 'px'; menu.style.top = (b.bottom - r.top + 4) + 'px';
+      menu.onclick = async (e) => {
+        const other = e.target.closest('.pf-br-other');
+        if (other) { closeBrMenu(); return openConnect(); }
+        const t = e.target.closest('[data-branch]');
+        if (!t || t.disabled) return;
+        closeBrMenu(); switchBranch(t.dataset.branch);
+      };
+      try {
+        const token = await commitToken();
+        const names = token ? await listBranches({ token, repo: gh.slug, apiBase: O.apiBase }) : [];
+        const all = names.includes(cur) ? names : [cur, ...names];
+        menu.innerHTML = all.map((n) => `<button role="menuitemradio" data-branch="${esc(n)}"${n === cur ? ' class="on" disabled aria-checked="true"' : ''}>⎇ ${esc(n)}</button>`).join('') +
+          `<button type="button" class="pf-br-other">Open another project…</button>` +
+          (token ? '' : '<div class="pf-note" style="padding:4px 9px">Sign in to list every branch.</div>');
+      } catch {
+        menu.innerHTML = `<button role="menuitemradio" data-branch="${esc(cur)}" class="on" disabled>⎇ ${esc(cur)}</button><button type="button" class="pf-br-other">Open another project…</button>`;
+      }
+    }
+    const brOutside = (e) => { const m = root.querySelector('.pf-brmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-source')) closeBrMenu(); };
+    document.addEventListener('pointerdown', brOutside);
 
     /* ---------- projects in this browser: nothing linked, sprites kept in IndexedDB; the list of them lives in localStorage ---------- */
     const LOCAL_KEY = 'pf:local-projects';
@@ -2409,7 +2454,7 @@
       if (b.classList.contains('pf-c-lren')) { const n = (prompt('Project name:', localName(id)) || '').trim(); if (!n) return; const l = localProjects(); const x = l.find((p) => p.id === id); if (x) x.name = n; else l.push({ id, name: n, at: Date.now() }); saveLocalProjects(l); if (S.src && S.src.kind === 'browser' && (S.src.id || '') === id) { S.src.name = n; sourceButton(); } return renderLocals(); }
       if (await useSource(browserSource(id, localName(id)))) $('.pf-dlg-connect').close();
     };
-    $('.pf-source').onclick = () => openConnect();
+    $('.pf-source').onclick = (e) => { e.stopPropagation(); if (S.src && S.src.kind === 'github' && S.src.repo.slug) { root.querySelector('.pf-brmenu') ? closeBrMenu() : openBranchMenu(); } else openConnect(); };
     authRows('.pf-signin').forEach((b) => (b.onclick = () => { const d = b.closest('dialog'); doSignIn(d && d.querySelector('.pf-c-msg, .pf-log')); }));
     authRows('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
     $('.pf-c-repolist').onclick = (e) => { const b = e.target.closest('.pf-c-pick'); if (!b) return; $('.pf-c-repo').value = b.dataset.repo; $('.pf-c-branch').value = b.dataset.branch; $('.pf-c-gh').click(); };
@@ -2484,7 +2529,7 @@
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setColor2, setTool, undo, redo, selectAll, state: S,
-      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); document.removeEventListener('visibilitychange', hideFlush); document.removeEventListener('pointerdown', dlOutside); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
+      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); document.removeEventListener('pointerdown', brOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); document.removeEventListener('visibilitychange', hideFlush); document.removeEventListener('pointerdown', dlOutside); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
     };
     host.__pf = ctrl;
     return ctrl;

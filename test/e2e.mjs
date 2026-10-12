@@ -428,7 +428,9 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
     if (p === '/user') return j(200, { login: 'artist' });
     if (p === '/repos/me/game' && m === 'GET') return tokenOnly && !r.headers().authorization ? j(404, { message: 'Not Found' }) : j(200, { name: 'game', default_branch: 'main', permissions: { push: canPush }, ...(isPublic ? { private: false } : {}) });
     if (p === '/repos/nope/x') return j(404, { message: 'Not Found' });
+    if (p === '/repos/me/game/branches') return j(200, [{ name: 'main', protected: true }, { name: 'art/test', protected: false }]);
     if (p === '/repos/me/game/git/ref/heads/main') return j(200, { object: { sha: 'c1' } });
+    if (p === '/repos/me/game/git/ref/heads/art/test') return j(200, { object: { sha: 'c1' } });
     if (p === '/repos/me/game/git/commits/c1') return j(200, { tree: { sha: 't1' } });
     if (p === '/repos/me/game/git/trees/t1') return j(200, { tree, truncated: false });
     const bm = /\/git\/blobs\/sha(\d+)$/.exec(p); if (bm && m === 'GET') return j(200, { encoding: 'base64', content: Buffer.from(Object.values(REPO)[+bm[1]]).toString('base64') });
@@ -455,7 +457,14 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   { let th = []; await until(async () => (th = await thumbsPainted(gp)).every((t) => t.on > 0));
     ok(th.length === 2 && th.every((t) => t.on > 0 && !/\?/.test(t.size)), 'every sprite\'s thumbnail and size load straight away, without clicking: ' + th.map((t) => t.on + 'px ' + t.size).join(' | ')); }
   ok(await gp.locator('.pf-pal-colors button').count() === 4, 'the repository palette is loaded');
-  ok(/GitHub me\/game @ main/.test(await gp.locator('.pf-src').innerText()), 'the sidebar says where the art comes from');
+  ok(/me\/game/.test(await gp.locator('.pf-source').innerText()) && /⎇ main/.test(await gp.locator('.pf-source').innerText()), 'the sidebar names the repo and branch, zsh style: ' + await gp.locator('.pf-source').innerText());
+  await gp.locator('.pf-source').click(); await gp.waitForSelector('.pf-brmenu');
+  ok((await gp.locator('.pf-brmenu [data-branch]').allInnerTexts()).join() === '⎇ main,⎇ art/test', 'clicking it lists the branches');
+  await gp.locator('.pf-brmenu [data-branch="art/test"]').click(); await gp.waitForSelector('.pf-item');
+  ok(/⎇ art\/test/.test(await gp.locator('.pf-source').innerText()) && (await gp.locator('.pf-item').count()) === 2, 'switching branches reopens the repo there: ' + await gp.locator('.pf-source').innerText());
+  await gp.locator('.pf-source').click(); await gp.waitForSelector('.pf-brmenu');
+  await gp.locator('.pf-brmenu [data-branch="main"]').click(); await gp.waitForSelector('.pf-item');
+  ok(/⎇ main/.test(await gp.locator('.pf-source').innerText()), 'and back again');
   ok((await gp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.w + 'x' + d.h; })) === '16x4' || true, 'opened the first sprite');
   await gp.locator('.pf-item', { hasText: 'hero.png' }).click(); await gp.waitForTimeout(250);
   const gview = await gp.locator('.pf-view').boundingBox();
@@ -550,16 +559,16 @@ section('hosted page, fully in the session: upload, edit, download');
   // blank sprite path, next to the kept one
   const bp = await sctx.newPage(); await bp.goto(hbase); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; });
   ok((await bp.evaluate(() => document.getElementById('app').__pf.current.px[1 * 4 + 1])) === lastPx && lastPx !== (0xfa0000ff >>> 0), 'a new tab shows the latest edit too');
-  ok((await bp.locator('.pf-source').innerText()) === 'Sketches ▾', 'what was drawn without a project shows as "Sketches", a project in this browser');
+  ok((await bp.locator('.pf-source').innerText()) === 'Sketches', 'what was drawn without a project shows as "Sketches", a project in this browser');
   await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-dlg-connect[open]'); await bp.waitForSelector('.pf-c-lp');
   ok((await bp.locator('.pf-c-lp').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()).join('|').startsWith('Sketches 1 sprite · open'), 'the dialog lists the projects in this browser: ' + (await bp.locator('.pf-c-lp').allInnerTexts()).join('|').replace(/\s+/g, ' '));
   await bp.locator('.pf-c-blank').click(); await bp.waitForSelector('.pf-dlg-new[open]');
-  ok((await bp.locator('.pf-source').innerText()) === 'Untitled 1 ▾' && await bp.locator('.pf-item').count() === 0, 'New blank project starts an empty project in this browser, nothing linked, and asks for the first sprite');
+  ok((await bp.locator('.pf-source').innerText()) === 'Untitled 1' && await bp.locator('.pf-item').count() === 0, 'New blank project starts an empty project in this browser, nothing linked, and asks for the first sprite');
   await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
   ok((await bp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.path + ' ' + d.w + 'x' + d.h; })) === 'gem.png 8x8', 'a blank sprite starts a new document of the chosen size');
   await bp.locator('.pf-new').click(); await bp.locator('.pf-nn').fill('scrap.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
   await bp.reload(); await bp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current; }); await bp.waitForTimeout(300);
-  { const names = (await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).sort(); ok(names.join() === 'gem.png,scrap.png' && (await bp.locator('.pf-source').innerText()) === 'Untitled 1 ▾', 'after a reload the same project reopens with its sprites: ' + names); }
+  { const names = (await bp.locator('.pf-item .n').allInnerTexts()).map((n) => n.split('\n')[0]).sort(); ok(names.join() === 'gem.png,scrap.png' && (await bp.locator('.pf-source').innerText()) === 'Untitled 1', 'after a reload the same project reopens with its sprites: ' + names); }
   // delete a sprite that only exists here
   await bp.evaluate(() => document.getElementById('app').__pf.open('scrap.png')); await bp.waitForTimeout(200);
   ok(await bp.locator('.pf-delete').isVisible(), 'Delete sprite is offered for a sprite that only exists in this browser');
@@ -569,7 +578,7 @@ section('hosted page, fully in the session: upload, edit, download');
   ok(await bp.locator('.pf-item').count() === 1, 'and it stays deleted after a reload');
   // switch between projects in this browser, rename, delete
   await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-c-lp');
-  await bp.locator('.pf-c-lp', { hasText: 'Sketches' }).locator('.pf-c-lopen').click(); await bp.waitForFunction(() => document.querySelector('.pf-source').textContent === 'Sketches ▾');
+  await bp.locator('.pf-c-lp', { hasText: 'Sketches' }).locator('.pf-c-lopen').click(); await bp.waitForFunction(() => document.querySelector('.pf-source').textContent === 'Sketches');
   ok((await bp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'my-heart.png', 'one click switches to another project in this browser, with its own sprites');
   await bp.locator('.pf-source').click(); await bp.waitForSelector('.pf-c-lp');
   bp.once('dialog', (d) => d.accept('Dungeon tiles')); await bp.locator('.pf-c-lp', { hasText: 'Untitled 1' }).locator('.pf-c-lren').click(); await bp.waitForTimeout(300);
