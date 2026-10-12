@@ -645,6 +645,7 @@
 .pf .pf-bgmenu button{justify-content:flex-start;background:none;border-color:transparent;min-height:30px;width:100%}
 .pf .pf-bgmenu button.on{background:var(--pf-panel2);color:var(--pf-accent);border-color:var(--pf-line2);font-weight:400}
 .pf-bgmenu .pf-bg-sw{width:16px;height:16px}.pf-bgmenu label{padding:4px 8px;font-size:11.5px}.pf-bgmenu input[type=color]{width:34px;height:24px;padding:0;border:1px solid var(--pf-line2);background:none}
+.pf-s-peek{color:var(--pf-accent2);cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:none}.pf-arrow{color:var(--pf-faint);font-style:normal}
 .pf-badge{position:absolute;top:2px;right:2px;font-style:normal;font-size:9.5px;line-height:1;padding:2px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted)}
 .pf-badge.anim{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent);font-weight:700}
 .pf .pf-cell .dot{position:absolute;top:4px;left:4px}
@@ -750,6 +751,7 @@
     redo: '<path d="M15 13.5L19.5 9 15 4.5"/><path d="M19.5 9H9a5 5 0 0 0 0 10h3.5"/>',
     grid: '<rect x="4" y="4" width="16" height="16"/><path d="M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16"/>',
     tile: '<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/>',
+    changes: '<rect x="3.5" y="3.5" width="17" height="17"/><path d="M12 3.5v17"/><path d="M5.5 9.5h4M7.5 7.5v4"/><path d="M14.5 9.5h4"/><path d="M14.5 15.5h4" stroke-dasharray="1 1.6"/>',
     onion: '<rect x="3.5" y="8.5" width="10" height="11" stroke-dasharray="2 2"/><rect x="10.5" y="4.5" width="10" height="11"/>',
     mx: '<path d="M12 3v18" stroke-dasharray="1.5 2.5"/><path d="M9 7.5L4.5 12 9 16.5z"/><path d="M15 7.5l4.5 4.5-4.5 4.5z"/>',
     my: '<path d="M3 12h18" stroke-dasharray="1.5 2.5"/><path d="M7.5 9L12 4.5 16.5 9z"/><path d="M7.5 15l4.5 4.5 4.5-4.5z"/>',
@@ -761,7 +763,7 @@
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
   const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D', 'select & move · shade'], ['[ ]', 'brush size'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
-    ['M', 'mirror left-right'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
+    ['M', 'mirror left-right'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
   /* What shows behind transparent pixels. No single background suits all art (dark details vanish on the dark checker, pale
      ones on the light one), so like Aseprite, Pixelorama and Piskel the editor offers a few and remembers the choice.
      "project" is the game's own background colour from spritewright.config.json ("background": "#1a1426"). */
@@ -796,7 +798,7 @@
         <div class="pf-bar">
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
-          <span class="pf-grp"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
+          <span class="pf-grp"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
           <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-export" title="Download a PNG, optionally scaled up">Export</button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
         <div class="pf-opts">
@@ -887,11 +889,11 @@
 
     /* ---------- state ---------- */
     const S = { sprites: [], docs: new Map(), cur: null, tool: 'pen', color: pack(185, 140, 255), mx: false, my: false, pp: false, grid: true, zoom: 8, ox: 0, oy: 0,
-      color2: 0, bg: 'auto', bgCustom: '#3a5a40', size: 1, shape: 'square', pattern: 'solid', fillMode: 'area', tile: false, onion: false, sel: null, float: null, clip: null, hover: null, lastPt: null,
+      color2: 0, changes: false, peek: false, bg: 'auto', bgCustom: '#3a5a40', size: 1, shape: 'square', pattern: 'solid', fillMode: 'area', tile: false, onion: false, sel: null, float: null, clip: null, hover: null, lastPt: null,
       palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], src: null, meta: {}, auth: { token: '', login: '' }, anim: { timer: 0, t: 0 }, notice: '' };
     const doc = () => S.docs.get(S.cur);
     const view = $('.pf-view'), stage = $('.pf-stage'), g = view.getContext('2d');
-    const offscreen = document.createElement('canvas');
+    const offscreen = document.createElement('canvas'), diffCanvas = document.createElement('canvas');
     let overlay = null; // preview pixels while dragging a shape: { pts, value }
     const note = (t) => { S.notice = t; status(); };
 
@@ -1109,8 +1111,10 @@
     function render() {
       const d = doc(); g.clearRect(0, 0, view.width, view.height); g.imageSmoothingEnabled = false;
       if (!d) return;
-      const z = S.zoom, W = d.w * z, H = d.h * z;
-      offscreen.width = d.w; offscreen.height = d.h; offscreen.getContext('2d').putImageData(d.imageData(), 0, 0);
+      // holding \ shows the image as it was when this session opened it (what a pull request compares against)
+      const shown = S.peek ? { w: d.base.w, h: d.base.h, img: new ImageData(new Uint8ClampedArray(d.base.px.buffer.slice(0)), d.base.w, d.base.h) } : { w: d.w, h: d.h, img: d.imageData() };
+      const z = S.zoom, W = shown.w * z, H = shown.h * z;
+      offscreen.width = shown.w; offscreen.height = shown.h; offscreen.getContext('2d').putImageData(shown.img, 0, 0);
       if (S.tile) { /* the eight neighbours, dimmed, so seams show */
         g.globalAlpha = 0.45; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (i || j) g.drawImage(offscreen, S.ox + i * W, S.oy + j * H, W, H); g.globalAlpha = 1;
       }
@@ -1125,9 +1129,17 @@
         g.globalAlpha = 1;
       }
       const fam = !multi && S.onion ? famFor(d) : null, fi = fam ? fam.members.indexOf(d.path) : -1;
-      if (fi > 0) { const prev = memberImage(fam.members[fi - 1]); if (prev) { g.globalAlpha = 0.28; g.drawImage(prev, S.ox, S.oy, prev.width * z, prev.height * z); g.globalAlpha = 1; offscreen.width = d.w; offscreen.height = d.h; offscreen.getContext('2d').putImageData(d.imageData(), 0, 0); } }
+      if (fi > 0) { const prev = memberImage(fam.members[fi - 1]); if (prev) { g.globalAlpha = 0.28; g.drawImage(prev, S.ox, S.oy, prev.width * z, prev.height * z); g.globalAlpha = 1; offscreen.width = shown.w; offscreen.height = shown.h; offscreen.getContext('2d').putImageData(shown.img, 0, 0); } }
       g.drawImage(offscreen, S.ox, S.oy, W, H);
       g.restore();
+      if (S.changes && !S.peek && d.base.w === d.w && d.base.h === d.h) { /* dim what is untouched, outline what changed */
+        const base = d.base.px, mask = new Uint32Array(d.w * d.h), dim = pack(7, 4, 13, 175), cells = [];
+        for (let i = 0; i < mask.length; i++) if (d.px[i] === base[i]) mask[i] = dim; else cells.push(i);
+        diffCanvas.width = d.w; diffCanvas.height = d.h; diffCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(mask.buffer), d.w, d.h), 0, 0);
+        g.drawImage(diffCanvas, S.ox, S.oy, W, H);
+        if (z >= 3 && cells.length < 20000) { g.strokeStyle = '#e08cff'; g.lineWidth = Math.max(1, Math.floor(z / 8)); for (const i of cells) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1); g.lineWidth = 1; }
+      }
+      if (S.peek) { g.fillStyle = 'rgba(224,140,255,.9)'; g.font = `${Math.round(12 * (window.devicePixelRatio || 1))}px ${getComputedStyle(root).getPropertyValue('--pf-mono') || 'monospace'}`; g.fillText('BEFORE', S.ox, S.oy - 8); }
       const fl = S.float;
       if (fl) { const t = document.createElement('canvas'); t.width = fl.w; t.height = fl.h; t.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(fl.px.buffer.slice(0)), fl.w, fl.h), 0, 0); g.drawImage(t, S.ox + fl.x * z, S.oy + fl.y * z, fl.w * z, fl.h * z); }
       if (overlay) { g.globalAlpha = 0.9; for (const [x, y] of overlay.pts) { g.fillStyle = isClear(overlay.value) ? 'rgba(255,255,255,.35)' : toHex(overlay.value); g.fillRect(S.ox + x * z, S.oy + y * z, z, z); } g.globalAlpha = 1; }
@@ -1154,7 +1166,7 @@
     }
     function status() {
       const d = doc();
-      $('.pf-s-name').innerHTML = d ? `<b>${esc(d.path)}</b>${d.unsaved ? ' · <span class="pf-bad">unsaved</span>' : d.changed ? ' · saved, not yet in a PR' : ''}` : 'No sprite open';
+      $('.pf-s-name').innerHTML = d ? `<b>${esc(d.path)}</b>${d.unsaved ? ' · <span class="pf-bad">unsaved</span>' : d.changed ? ' · saved, not yet in a PR' : ''}${d.changed ? ` · <span class="pf-s-peek" title="Press and hold (or hold \\) to see the original">${d.changedPixels()} px changed · hold \\ for before</span>` : ''}` : 'No sprite open';
       $('.pf-s-info').innerHTML = d ? `${d.w}×${d.h} · zoom ${S.zoom}×${S.notice ? ' · ' + esc(S.notice) : ''}` : esc(S.notice);
       $('.pf-zl').textContent = S.zoom + '×'; $('.pf-s-sel').textContent = S.sel ? `selection ${S.sel.w}×${S.sel.h}${S.float ? ' · floating' : ''}` : '';
       $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d;
@@ -1400,8 +1412,9 @@
       $('.pf-pr-repo').value = $('.pf-pr-repo').value || gh.slug || gh.repo || ''; $('.pf-pr-base').value = $('.pf-pr-base').value || gh.base || gh.branch || '';
       $('.pf-pr-title').value = $('.pf-pr-title').value || (changed.length === 1 ? 'Update ' + changed[0].path.split('/').pop() : 'Update ' + changed.length + ' sprites');
       if (!S.auth.token) try { $('.pf-pr-token').value = $('.pf-pr-token').value || sessionStorage.getItem('pf:token') || localStorage.getItem('pf:token') || ''; } catch { /* storage blocked */ }
-      $('.pf-chg-list').innerHTML = changed.map((d) => `<div class="pf-chg"><canvas data-p="${esc(d.path)}"></canvas><span>${esc(d.path)}<br><span class="pf-note">${d.w}×${d.h} · ${d.changedPixels()} px changed</span></span></div>`).join('');
-      $$('.pf-chg canvas').forEach((c) => drawPx(c, S.docs.get(c.dataset.p)));
+      $('.pf-chg-list').innerHTML = changed.map((d) => `<div class="pf-chg"><canvas data-b="${esc(d.path)}" title="before"></canvas><i class="pf-arrow">→</i><canvas data-p="${esc(d.path)}" title="after"></canvas><span>${esc(d.path)}<br><span class="pf-note">${d.w}×${d.h} · ${d.changedPixels()} px changed</span></span></div>`).join('');
+      $$('.pf-chg canvas[data-p]').forEach((c) => drawPx(c, S.docs.get(c.dataset.p)));
+      $$('.pf-chg canvas[data-b]').forEach((c) => { const b = S.docs.get(c.dataset.b).base; drawPx(c, { w: b.w, h: b.h, imageData: () => new ImageData(new Uint8ClampedArray(b.px.buffer.slice(0)), b.w, b.h) }); });
       $('.pf-log').textContent = ''; dlg.showModal();
     }
     async function submitPr() {
@@ -1487,6 +1500,10 @@
     $('.pf-tile').onclick = (e) => { S.tile = !S.tile; e.currentTarget.classList.toggle('on', S.tile); if (S.tile && !S.touched && doc()) { const d = doc(), r = stage.getBoundingClientRect(), dpr = window.devicePixelRatio || 1; S.zoom = Math.max(1, Math.min(64, Math.floor(Math.min((r.width * dpr - 40) / (d.w * 3), (r.height * dpr - 40) / (d.h * 3))))); S.ox = Math.round((view.width - d.w * S.zoom) / 2); S.oy = Math.round((view.height - d.h * S.zoom) / 2); } else if (!S.tile && !S.touched) fit(); render(); status(); };
     $('.pf-onion').onclick = (e) => { S.onion = !S.onion; e.currentTarget.classList.toggle('on', S.onion); const d = doc(), f = frameSize(d); if (S.onion && d && !(f.w < d.w || f.h < d.h) && !famFor(d)) note('Onion skin needs animation frames: a sprite sheet (set the frame size under Preview) or numbered files like walk_0, walk_1.'); render(); };
     $('.pf-help').onclick = () => $('.pf-dlg-keys').showModal();
+    $('.pf-changes').onclick = (e) => { S.changes = !S.changes; e.currentTarget.classList.toggle('on', S.changes); render(); };
+    const peek = (on) => { if (S.peek === on || !doc()) return; S.peek = on; render(); };
+    $('.pf-status').addEventListener('pointerdown', (e) => { if (e.target.closest('.pf-s-peek')) { e.preventDefault(); peek(true); } });
+    const peekOff = () => peek(false); window.addEventListener('pointerup', peekOff);
     $('.pf-swap').onclick = () => { [S.color, S.color2] = [S.color2, S.color]; if (isClear(S.color) && S.tool === 'pen') setTool('erase'); else if (!isClear(S.color) && S.tool === 'erase') setTool('pen'); renderColors(); swatches(); };
     $('.pf-prim').onclick = () => $('.pf-cpick').click();
     $('.pf-sec').onclick = () => $('.pf-swap').click();
@@ -1580,12 +1597,12 @@
         const t = TOOLS.find((x) => x[2].toLowerCase() === k); if (t) setTool(t[0]);
         else if (k === 'm') $('.pf-mx').click(); else if (k === '+' || k === '=') $('.pf-zin').click(); else if (k === '-') $('.pf-zout').click(); else if (k === '0') $('.pf-fit').click(); else if (k === '#') $('.pf-grid').click();
         else if (k === 'x') $('.pf-swap').click(); else if (k === '[') setSize(S.size - 1); else if (k === ']') setSize(S.size + 1);
-        else if (k === 'k') cycleBg(); else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
+        else if (k === 'k') cycleBg(); else if (k === 'c') $('.pf-changes').click(); else if (e.key === '\\') { e.preventDefault(); peek(true); } else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
         else if (k === 't') $('.pf-tile').click(); else if (k === 'n') $('.pf-onion').click(); else if (e.key === '?') $('.pf-help').click();
         else if (k === ' ') { space = true; e.preventDefault(); }
       }
     }
-    const keyup = (e) => { if (e.key === ' ') space = false; };
+    const keyup = (e) => { if (e.key === ' ') space = false; if (e.key === '\\') peek(false); };
     let pasteSoon = 0;
     async function onPaste(e) {
       if (!root.isConnected || root.querySelector('dialog[open]') || !doc()) return;
@@ -1602,7 +1619,7 @@
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setColor2, setTool, undo, redo, selectAll, state: S,
-      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); window.removeEventListener('beforeunload', leaveGuard); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
+      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
     };
     host.__pf = ctrl;
     return ctrl;

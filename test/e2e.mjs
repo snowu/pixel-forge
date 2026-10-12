@@ -696,6 +696,35 @@ section('background behind transparent pixels');
   await bp.close(); await s3.close();
 }
 
+section('changes view: what you changed since opening, and the original on demand');
+{
+  const cp = await ctx.newPage(); const cerr = []; cp.on('pageerror', (e) => cerr.push(e.message));
+  await cp.goto(base + '?auth=off'); await cp.waitForSelector('.pf-item'); await cp.locator('.pf-item', { hasText: 'slime.png' }).click(); await cp.waitForTimeout(250);
+  const at = (x, y, dx = 0.5) => cp.evaluate(([x, y, dx]) => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), d = c.getContext('2d').getImageData(Math.round(S.ox + (x + dx) * S.zoom), Math.round(S.oy + (y + 0.5) * S.zoom), 1, 1).data; return [...d.slice(0, 3)]; }, [x, y, dx]);
+  const pos = async (x, y) => { const b = await cp.locator('.pf-view').boundingBox(); const s = await cp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { zoom: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); return { x: b.x + (s.ox + (x + 0.5) * s.zoom) / s.k, y: b.y + (s.oy + (y + 0.5) * s.zoom) / s.k }; };
+  await cp.locator('.pf-chex').fill('#00ff00'); await cp.locator('.pf-chex').press('Tab'); await cp.keyboard.press('b');
+  const p0 = await pos(5, 5); await cp.mouse.click(p0.x, p0.y); await cp.waitForTimeout(100);
+  ok(/1 px changed · hold \\ for before/.test(await cp.locator('.pf-s-name').innerText()), 'the status bar counts the changed pixels and says how to see the original');
+  const plainBody = await at(4, 4), plainNew = await at(5, 5);
+  await cp.keyboard.press('c');
+  const dimBody = await at(4, 4), keptNew = await at(5, 5), edge = await at(5, 5, 0.02);
+  ok(await cp.locator('.pf-changes').evaluate((b) => b.classList.contains('on')), 'C turns the changes view on');
+  ok(dimBody.every((v, i) => v < plainBody[i] * 0.6 + 2), `untouched pixels are dimmed (${plainBody} → ${dimBody})`);
+  ok(JSON.stringify(keptNew) === JSON.stringify(plainNew), 'the changed pixel keeps its colour');
+  ok(edge[0] > 200 && edge[2] > 200 && edge[1] < 180, 'and is outlined in pink: ' + edge);
+  await cp.keyboard.down('\\'); const before = await at(5, 5); await cp.keyboard.up('\\'); const after = await at(5, 5);
+  ok(JSON.stringify(before) !== JSON.stringify(plainNew) && JSON.stringify(after) === JSON.stringify(keptNew), 'holding \\ shows the original pixel, letting go shows the edit again');
+  const hint = await cp.locator('.pf-s-peek').boundingBox(); await cp.mouse.move(hint.x + 5, hint.y + 5); await cp.mouse.down(); const held = await at(5, 5); await cp.mouse.up();
+  ok(JSON.stringify(held) === JSON.stringify(before) && JSON.stringify(await at(5, 5)) === JSON.stringify(after), 'pressing and holding the status-bar hint does the same (touch screens)');
+  await cp.keyboard.press('c');
+  ok(JSON.stringify(await at(4, 4)) === JSON.stringify(plainBody), 'C again turns it off');
+  await cp.locator('.pf-prbtn').click(); await cp.waitForSelector('.pf-dlg-pr[open]');
+  ok((await cp.locator('.pf-chg canvas[data-b]').count()) === 1 && (await cp.locator('.pf-chg canvas[data-p]').count()) === 1, 'the pull request dialog shows each changed sprite before → after');
+  await cp.locator('.pf-dlg-pr button[value=cancel]').click();
+  cp.on('dialog', (d) => d.accept()); ok(cerr.length === 0, 'no page errors ' + cerr.join('|'));
+  await cp.close();
+}
+
 section('mobile');
 const phone = await browser.newContext({ viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 const mp = await phone.newPage(); const merrors = []; mp.on('pageerror', (e) => merrors.push(e.message));
