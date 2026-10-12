@@ -730,8 +730,8 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   ok((await fp.locator('.pf-cell').count()) === 1 && /▸/.test(await fp.locator('.pf-dir', { hasText: 'chars' }).innerText()), 'the folder with the open sprite folds too');
   await fp.locator('.pf-unfold-all').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'unfold all brings every folder back');
   await fp.locator('.pf-fold-all').click(); ok((await fp.locator('.pf-cell').count()) === 0, 'fold all folds every folder, including the open sprite’s');
-  await fp.locator('.pf-q').fill('hero_1'); await fp.locator('.pf-item').first().click(); await fp.waitForTimeout(250); await fp.locator('.pf-q').fill('');
-  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_1.png' && (await fp.locator('.pf-cell').count()) === 2, 'opening a sprite reveals its folder and leaves the other folded');
+  await fp.locator('.pf-q').fill('hero_0'); await fp.locator('.pf-item').first().click(); await fp.waitForTimeout(250); await fp.locator('.pf-q').fill('');
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png' && (await fp.locator('.pf-cell').count()) === 2, 'opening a sprite reveals its folder and leaves the other folded');
   await fp.locator('.pf-unfold-all').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'and unfold all restores the rest');
   // family strip
   await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(250);
