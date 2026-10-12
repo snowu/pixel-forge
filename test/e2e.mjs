@@ -346,6 +346,7 @@ ok(!(await page.locator('.pf-prbtn').isDisabled()), 'Propose PR is enabled becau
 await page.locator('.pf-prbtn').click(); await page.waitForSelector('.pf-dlg-pr[open]');
 ok((await page.locator('.pf-pr-repo').inputValue()) === 'me/game', 'the repository is filled in from the project');
 const changedNames = await page.locator('.pf-chg > span').allInnerTexts(); ok(changedNames.length === 2 && changedNames.some((t) => t.includes('slime.png')) && changedNames.some((t) => t.includes('gem.png')), 'the dialog lists exactly the changed sprites (' + changedNames.map((t) => t.split('\n')[0]).join(', ') + ')');
+ok((await page.locator('.pf-dirchg').allInnerTexts()).join() === '1 changed,1 changed', 'folder headers count the changed sprites, folded or not');
 await page.locator('.pf-pr-token').fill('ghp_testtoken'); await page.locator('.pf-pr-title').fill('Improve slime'); await page.locator('.pf-pr-desc').fill('Redder eyes');
 await page.locator('.pf-pr-go').click();
 try { await page.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 8000 }); } catch { console.log('   PR log:', JSON.stringify(await page.locator('.pf-log').innerText()), calls.map((c) => c.m + ' ' + c.p).join(' | ')); }
@@ -733,6 +734,9 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.locator('.pf-q').fill('hero_0'); await fp.locator('.pf-item').first().click(); await fp.waitForTimeout(250); await fp.locator('.pf-q').fill('');
   ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png' && (await fp.locator('.pf-cell').count()) === 2, 'opening a sprite reveals its folder and leaves the other folded');
   await fp.locator('.pf-unfold-all').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'and unfold all restores the rest');
+  await fp.locator('.pf-dir', { hasText: 'chars' }).click();
+  ok((await fp.locator('.pf-cur .n').innerText()) === 'hero_0.png', 'a folded folder still shows the sprite being edited');
+  await fp.locator('.pf-cur').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'clicking it unfolds the folder');
   // family strip
   await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(250);
   ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png', 'clicking a family opens its first frame');

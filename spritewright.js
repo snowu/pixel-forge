@@ -727,9 +727,13 @@
 .pf-list:not(.pf-flat){display:block}
 .pf .pf-dir{display:flex;width:100%;justify-content:flex-start;gap:6px;background:none;border:0;border-bottom:1px solid var(--pf-line);padding:7px 2px 5px;min-height:0;margin-top:6px;color:var(--pf-muted);font-size:11.5px;letter-spacing:.04em;position:sticky;top:0;z-index:1;background:var(--pf-panel)}
 .pf .pf-dir:hover:not(:disabled){box-shadow:none;color:var(--pf-accent)}
-.pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}
+.pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}.pf-dirchg{color:var(--pf-accent);font-size:11.5px;flex:none}
 .pf-foldrow{display:flex;gap:6px;margin-top:6px}
 .pf-foldrow button{flex:1;min-height:24px;font-size:11.5px;color:var(--pf-muted);background:none;border-color:transparent}
+.pf .pf-cur{display:flex;width:100%;align-items:center;gap:8px;background:none;border:1px solid var(--pf-line2);border-top:0;padding:4px 6px;min-height:0;color:var(--pf-ink);font-size:11.5px}
+.pf-cur canvas{width:24px;height:24px;image-rendering:pixelated;background:var(--pf-ckbg);flex:none}
+.pf-cur .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.pf-cur .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-cur .dot.base{background:var(--pf-warn)}
 .pf-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(60px,1fr));gap:4px;padding:6px 0 4px}
 .pf .pf-cell{flex-direction:column;gap:3px;padding:5px 3px 4px;min-height:0;position:relative;justify-content:flex-start;border:1px solid transparent}
 .pf .pf-cell canvas{width:44px;height:44px;object-fit:contain}
@@ -1375,8 +1379,20 @@
       }
       for (const g of groups) {
         const n = g.families.reduce((k, f) => k + f.members.length, 0), shut = folded.has(g.dir);
-        if (groups.length > 1 || g.dir) list.appendChild(el(`<button class="pf-dir${shut ? ' shut' : ''}" data-dir="${esc(g.dir)}" aria-expanded="${!shut}"><span class="pf-caret">${shut ? '▸' : '▾'}</span><span class="pf-dirname">${esc(g.dir || '.')}</span><span class="pf-dircount">${n}</span></button>`));
-        if (shut) continue;
+        const chg = g.families.reduce((k, f) => k + f.members.filter((m) => { const x = S.docs.get(m); return x && x.changed; }).length, 0);
+        if (groups.length > 1 || g.dir) list.appendChild(el(`<button class="pf-dir${shut ? ' shut' : ''}" data-dir="${esc(g.dir)}" aria-expanded="${!shut}"><span class="pf-caret">${shut ? '▸' : '▾'}</span><span class="pf-dirname">${esc(g.dir || '.')}</span>${chg ? `<span class="pf-dirchg" title="${chg} changed sprite${chg > 1 ? 's' : ''} in this folder, not in a pull request yet">${chg} changed</span>` : ''}<span class="pf-dircount">${n}</span></button>`));
+        if (shut) {
+          // A shut folder still shows the sprite being edited, so the list never loses your place. Clicking it unfolds.
+          const open = S.cur && g.families.some((f) => f.members.includes(S.cur)) ? spriteOf(S.cur) : null;
+          if (open) {
+            const dd = S.docs.get(S.cur), label = S.cur.split('/').pop();
+            const dirty = dd && (savesOut(dd) ? dd.unsaved : atRisk(dd)), changed = dd && (dd.changed || dd.local || dd.isNew);
+            const b = el(`<button class="pf-cur" data-dir="${esc(g.dir)}" title="${esc(S.cur)} — unfold this folder"><canvas width="${open.w || 16}" height="${open.h || 16}"></canvas><span class="n">${esc(label)}</span>${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? '<i class="dot base" title="changed, not in a pull request yet"></i>' : ''}</button>`);
+            list.appendChild(b);
+            const cv = b.querySelector('canvas'); cv.__s = open; if (io) io.observe(cv); else paintThumb(cv, open);
+          }
+          continue;
+        }
         const grid = el('<div class="pf-tiles"></div>'); list.appendChild(grid);
         for (const f of g.families) {
           const shown = f.members.includes(S.cur) ? S.cur : f.members[0], s = spriteOf(shown);
@@ -1851,6 +1867,7 @@
       if (t.dataset.t) return setTool(t.dataset.t);
       if (t.classList.contains('pf-item')) return openSprite(t.dataset.path);
       if (t.classList.contains('pf-dir')) return toggleDir(t.dataset.dir);
+      if (t.classList.contains('pf-cur')) return toggleDir(t.dataset.dir);
       if (t.classList.contains('pf-fold-all')) return setAllFolded(true);
       if (t.classList.contains('pf-unfold-all')) return setAllFolded(false);
       if (t.classList.contains('pf-hidden-toggle')) { const hid = S.src.hidden || []; if (S.sprites.some((x) => x.hiddenByDefault)) S.sprites = S.sprites.filter((x) => !x.hiddenByDefault); else S.sprites = S.sprites.concat(hid.map((x) => ({ ...x, hiddenByDefault: true }))); return renderList(); }
