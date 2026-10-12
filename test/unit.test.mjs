@@ -570,7 +570,7 @@ test('GitHub source: lists PNGs, applies the repo config, skips junk, and reads 
   assert.deepEqual(src.sprites.map((s) => s.path), ['art/hero.png']);
   assert.deepEqual(src.sprites[0].frames, { w: 2, h: 4, fps: 6 });
   assert.deepEqual(src.palette, ['#1a1c2c', '#5d275d']);
-  assert.deepEqual(src.repo, { slug: 'me/game', base: 'main', prefix: '', canPush: true });
+  assert.deepEqual(src.repo, { slug: 'me/game', base: 'main', defaultBranch: 'main', prefix: '', canPush: true });
   assert.ok(Buffer.from(await src.read('art/hero.png')).equals(SLIME.png), 'the PNG survives the base64 transport byte for byte (even with line breaks in the base64)');
   await assert.rejects(src.read('nope.png'), /not in the repository/);
 });
