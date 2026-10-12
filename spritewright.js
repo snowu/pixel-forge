@@ -692,7 +692,18 @@
 .pf-note{color:var(--pf-muted);font-size:11.5px}.pf-bad{color:var(--pf-bad)}
 .pf-pal-empty[hidden]{display:none}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
-.pf-signed-in .pf-gh-box{order:-1}.pf-dlg-connect h4{order:-2}.pf .pf-c-pick.on{border-color:var(--pf-accent)}
+.pf .pf-c-pick.on{border-color:var(--pf-accent)}
+.pf dialog.pf-dlg-connect{width:min(640px,94vw)}
+.pf-dlg-head{display:flex;justify-content:space-between;align-items:center}.pf-dlg-head h4{margin:0}
+.pf .pf-x{min-height:0;width:30px;height:30px;padding:0;background:none;border-color:transparent;color:var(--pf-muted);font-size:14px}
+.pf-c-sec{border:1px solid var(--pf-line);background:var(--pf-bg);padding:14px;display:flex;flex-direction:column;gap:10px}
+.pf-c-sechead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;min-height:30px}
+.pf-c-title{font-weight:700;color:var(--pf-ink)}
+.pf-c-other{display:grid;grid-template-columns:minmax(0,1fr) 140px auto;gap:6px}
+.pf-c-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pf-c-tile{border:1px solid var(--pf-line);background:var(--pf-bg);padding:12px 14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.pf-c-tile .pf-note{min-height:2.6em}
+.pf-c-foot{text-align:center}.pf-auth-help:empty,.pf-c-addrepo:empty{display:none}
 .pf-auth-row[hidden]{display:none}
 .pf-acct{display:inline-flex;gap:8px;align-items:center;font:12px var(--pf-mono,'JetBrains Mono',ui-monospace,monospace);color:#9a86c4}.pf-acct .pf-who{color:#9a86c4;font-size:12px}
 .pf-acct button{font:inherit;font-size:12px;background:#150e24;color:#e6dcf7;border:1px solid #2a1b45;padding:2px 8px;cursor:pointer}.pf-acct button:hover{border-color:var(--pf-accent,#b98cff);color:var(--pf-accent,#b98cff)}
@@ -708,6 +719,7 @@
 .pf-keys{display:grid;grid-template-columns:1fr;gap:6px}.pf-key{display:grid;grid-template-columns:minmax(150px,auto) 1fr;gap:12px;align-items:baseline;padding:3px 0;border-bottom:1px dashed var(--pf-line)}.pf-key span{color:var(--pf-muted)}.pf-key kbd{justify-self:start}
 @media (max-width:1100px){.pf{grid-template-columns:200px minmax(0,1fr) 220px}.pf-bar button span,.pf-opt-end button span{display:none}}
 @media (max-width:900px){
+  .pf-c-grid{grid-template-columns:1fr}.pf-c-other{grid-template-columns:1fr}
   .pf{grid-template-columns:1fr;grid-template-rows:auto minmax(420px,1fr) auto;height:auto}
   .pf-side{flex-direction:column;border-right:0;border-bottom:1px solid var(--pf-line);max-height:none}.pf-list.pf-flat{flex-direction:row;overflow-x:auto;overflow-y:hidden;flex:none;min-height:0}.pf-flat .pf-item{width:150px;flex:none}.pf-list:not(.pf-flat){max-height:300px;flex:none}.pf-tiles{grid-template-columns:repeat(auto-fill,minmax(64px,1fr))}
   .pf-right{border-left:0;border-top:1px solid var(--pf-line)}
@@ -836,24 +848,24 @@
           <div class="pf-note">The token is only sent to GitHub. Without write access to the repository your fork is used automatically.</div></details>
         <div class="pf-log" aria-live="polite"></div>
         <div class="pf-row"><button type="button" class="primary pf-pr-go">Create pull request</button><button value="cancel">Close</button></div></form></dialog>
-      <dialog class="pf-dlg-connect"><form method="dialog" class="pf-form"><h4>Open a project</h4>
-        <div class="pf-box"><b>Just draw</b><div class="pf-note">Upload a PNG, or start a blank sprite. You work on it in this browser tab and download the result. Nothing is sent anywhere.</div>
-          <div class="pf-row"><button type="button" class="primary pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></div></div>
-        <div class="pf-note pf-conn-intro">Or work on a whole project: a GitHub repository (changes go back as a pull request) or a folder on this computer (saves in place).</div>
-        <div class="pf-box pf-gh-box"><b>GitHub repository</b>
-          <div class="pf-row pf-auth-row"><button type="button" class="primary pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div class="pf-note pf-auth-help"></div>
+      <dialog class="pf-dlg-connect"><form method="dialog" class="pf-form">
+        <div class="pf-dlg-head"><h4>Open a project</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <section class="pf-c-sec pf-gh-box">
+          <div class="pf-c-sechead"><span class="pf-c-title">GitHub repository</span>
+            <span class="pf-row pf-auth-row"><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button><button type="button" class="primary pf-signin">Sign in with GitHub</button></span></div>
+          <div class="pf-note pf-auth-help"></div>
           <div class="pf-c-mine" hidden><div class="pf-c-repolist"></div><div class="pf-note pf-c-addrepo"></div></div>
-          <label>Repository <input type="text" class="pf-c-repo" list="pf-repos" placeholder="owner/name" autocomplete="off"></label><datalist id="pf-repos"></datalist>
-          <label>Branch <input type="text" class="pf-c-branch" placeholder="default branch"></label>
+          <div class="pf-c-other"><input type="text" class="pf-c-repo" list="pf-repos" placeholder="owner/name" autocomplete="off" aria-label="Repository (owner/name)"><datalist id="pf-repos"></datalist><input type="text" class="pf-c-branch" placeholder="branch" aria-label="Branch (default branch if empty)"><button type="button" class="pf-c-gh">Open</button></div>
           <details class="pf-tokenbox"><summary>Use a token instead</summary>
             <label>Token <input type="password" class="pf-c-token" autocomplete="off" placeholder="optional for public repos; needed for private repos and pull requests"></label>
             <label><input type="checkbox" class="pf-c-remember"> remember the token in this browser</label></details>
-          <div class="pf-row"><button type="button" class="primary pf-c-gh">Open repository</button></div></div>
-        <div class="pf-box pf-c-folderbox"><b>Folder on this computer</b><div class="pf-note pf-c-foldernote">Pick the game project's folder. Works in Chrome, Edge and Opera.</div>
-          <div class="pf-row"><button type="button" class="primary pf-c-folder">Choose folder…</button></div></div>
-        <div class="pf-note">You can also drop PNG files onto the canvas at any time.</div>
+        </section>
+        <div class="pf-c-grid">
+          <section class="pf-c-tile pf-c-folderbox"><span class="pf-c-title">Folder on this computer</span><span class="pf-note pf-c-foldernote"></span><button type="button" class="pf-c-folder">Choose folder…</button></section>
+          <section class="pf-c-tile"><span class="pf-c-title">Just draw</span><span class="pf-note">Stays in this tab. Download when done.</span><span class="pf-row"><button type="button" class="pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></span></section>
+        </div>
         <div class="pf-log pf-c-msg" aria-live="polite"></div>
-        <div class="pf-row"><button value="cancel">Close</button></div></form></dialog>
+        <div class="pf-note pf-c-foot">Tip: drop PNG files onto the canvas at any time.</div></form></dialog>
       <dialog class="pf-dlg-size"><form method="dialog" class="pf-form"><h4>Canvas size</h4>
         <div class="pf-row"><label>width <input type="number" class="pf-sz-w" min="1" max="1024"></label><label>height <input type="number" class="pf-sz-h" min="1" max="1024"></label></div>
         <label>keep <select class="pf-sz-a"><option value="tl">top-left</option><option value="c">centre</option></select></label>
@@ -910,7 +922,7 @@
     function renderAuth() {
       const on = !!S.auth.token;
       authRows().forEach((r) => { r.hidden = !on && !authBase; r.querySelector('.pf-signin').hidden = on || !authBase; r.querySelector('.pf-signout').hidden = !on; r.querySelector('.pf-who').textContent = on ? 'Signed in as ' + (S.auth.login || 'GitHub user') : ''; });
-      $$('.pf-auth-help').forEach((h) => { h.innerHTML = authBase ? (on ? '' : 'Sign in once and pick a repository you own or collaborate on. Edits go back as a pull request, no tokens to paste.') : `Sign-in is not set up on this page. Paste a token instead: <a href="${PAT_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">create one with the right permissions</a> (Contents and Pull requests: read and write, only for your repository).`; });
+      $$('.pf-auth-help').forEach((h) => { h.innerHTML = authBase ? (on ? '' : 'Sign in to list your repositories. Edits go back as a pull request.') : `Sign-in is not set up on this page. Paste a token instead: <a href="${PAT_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">create one with the right permissions</a> (Contents and Pull requests: read and write, only for your repository).`; });
       $$('.pf-tokenbox').forEach((d) => { d.open = !authBase; d.hidden = on; });
       $('.pf-c-mine').hidden = !on; $('.pf-dlg-connect .pf-form').classList.toggle('pf-signed-in', on);
       if (!on) { S.repos = null; $('#pf-repos').innerHTML = ''; }
@@ -922,7 +934,7 @@
         ? repos.map((r) => `<button type="button" class="pf-c-pick${S.src && S.src.kind === 'github' && S.src.repo.slug === r.name ? ' on' : ''}" data-repo="${esc(r.name)}" data-branch="${esc(r.branch || '')}"><b>${esc(r.name)}</b><span class="pf-note">${S.src && S.src.kind === 'github' && S.src.repo.slug === r.name ? 'open now · ' : ''}${r.private ? 'private · ' : ''}${r.push ? 'pull requests' : 'read only'}</span></button>`).join('')
         : '<div class="pf-note">No repositories yet.</div>';
       $('#pf-repos').innerHTML = repos.map((r) => `<option value="${esc(r.name)}">`).join('');
-      add.innerHTML = link ? `Missing one? <a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">Install the app on it</a> (you, or the repository's owner), then reopen this dialog.` : '';
+      add.innerHTML = link ? `Missing a repository? <a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">Install the app on it</a>, then reopen this.` : '';
     }
     async function loadRepos() {
       if (!S.auth.token) return; S.repos = null; renderRepos();
@@ -1517,7 +1529,7 @@
       const dlg = $('.pf-dlg-connect'), gh = O.github || {};
       $('.pf-c-repo').value = $('.pf-c-repo').value || gh.slug || ''; $('.pf-c-branch').value = $('.pf-c-branch').value || gh.base || ''; if (!S.auth.token) $('.pf-c-token').value = $('.pf-c-token').value || storedToken();
       if (S.auth.token) loadRepos();
-      const canFolder = typeof window.showDirectoryPicker === 'function'; $('.pf-c-folder').disabled = !canFolder; $('.pf-c-foldernote').textContent = canFolder ? 'Pick the game project\'s folder. Saving writes the PNGs in place. Works in Chrome, Edge and Opera.' : 'This browser cannot open folders (use Chrome, Edge or Opera), but GitHub and Open PNG work everywhere.';
+      const canFolder = typeof window.showDirectoryPicker === 'function'; $('.pf-c-folder').disabled = !canFolder; $('.pf-c-foldernote').textContent = canFolder ? 'Saves the PNGs in place. Chrome, Edge and Opera.' : 'Needs Chrome, Edge or Opera.';
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
     }
     $('.pf-source').onclick = () => openConnect();
