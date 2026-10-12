@@ -274,28 +274,38 @@
       log('Uploading ' + f.path + '…');
       tree.push({ path: (o.prefix || '') + f.path, mode: '100644', type: 'blob', sha: await upload(f.blob) });
     }
-    log('Creating the commit…');
-    const newTree = await call('POST', '/repos/' + headRepo + '/git/trees', { base_tree: baseCommit.tree.sha, tree });
-    const commit = await call('POST', '/repos/' + headRepo + '/git/commits', { message: o.message || o.title, tree: newTree.sha, parents: [baseSha] });
     const branch = o.branch || 'art/update-' + Date.now().toString(36);
-    await call('POST', '/repos/' + headRepo + '/git/refs', { ref: 'refs/heads/' + branch, sha: commit.sha });
-    /* Upscaled previews for the description live in a commit of their own that is on no branch (so they never show up in the
-       pull request's files or history), kept alive by a hidden ref. GitHub smooths small images it scales up; these need no scaling. */
-    let previewSha = null;
+    /* Upscaled previews for the description (GitHub smooths small images it scales up; these need no scaling).
+       Preferred: a commit on no branch kept alive by a hidden ref, so they never touch the pull request at all.
+       If the token may not create that ref (some GitHub App setups), they go in a commit under the change instead, which the
+       change itself deletes again: the pull request's files are still only the sprites. */
+    let previewSha = null, previewDir = '', parent = baseSha;
     if (o.previews && o.previews.length) {
       try {
         log('Uploading previews…');
         const ptree = [];
-        for (const [i, p] of o.previews.entries()) for (const side of ['before', 'after']) if (p[side]) ptree.push({ path: `${i}-${side}.png`, mode: '100644', type: 'blob', sha: await upload(p[side]) });
-        const pt = await call('POST', '/repos/' + headRepo + '/git/trees', { tree: ptree });
-        const pc = await call('POST', '/repos/' + headRepo + '/git/commits', { message: 'spritewright: previews for the pull request description (on no branch)', tree: pt.sha, parents: [] });
-        await call('POST', '/repos/' + headRepo + '/git/refs', { ref: 'refs/spritewright/previews/' + branch, sha: pc.sha });
-        previewSha = pc.sha;
-      } catch (e) { log('Previews skipped (' + e.message + '); the description links the files instead.'); }
+        for (const [i, p] of o.previews.entries()) for (const side of ['before', 'after']) if (p[side]) ptree.push({ name: `${i}-${side}.png`, sha: await upload(p[side]) });
+        const entry = (dir) => ptree.map((t) => ({ path: dir + t.name, mode: '100644', type: 'blob', sha: t.sha }));
+        try {
+          const pt = await call('POST', '/repos/' + headRepo + '/git/trees', { tree: entry('') });
+          const pc = await call('POST', '/repos/' + headRepo + '/git/commits', { message: 'spritewright: previews for the pull request description (on no branch)', tree: pt.sha, parents: [] });
+          await call('POST', '/repos/' + headRepo + '/git/refs', { ref: 'refs/spritewright/previews/' + branch, sha: pc.sha });
+          previewSha = pc.sha;
+        } catch {
+          previewDir = '.spritewright-previews/';
+          const pt = await call('POST', '/repos/' + headRepo + '/git/trees', { base_tree: baseCommit.tree.sha, tree: entry(previewDir) });
+          const pc = await call('POST', '/repos/' + headRepo + '/git/commits', { message: 'spritewright: previews for the pull request description (removed by the next commit)', tree: pt.sha, parents: [baseSha] });
+          previewSha = pc.sha; parent = pc.sha;
+        }
+      } catch (e) { previewSha = null; previewDir = ''; parent = baseSha; log('Previews skipped (' + e.message + '); the description links the files instead.'); }
     }
+    log('Creating the commit…');
+    const newTree = await call('POST', '/repos/' + headRepo + '/git/trees', { base_tree: baseCommit.tree.sha, tree });
+    const commit = await call('POST', '/repos/' + headRepo + '/git/commits', { message: o.message || o.title, tree: newTree.sha, parents: [parent] });
+    await call('POST', '/repos/' + headRepo + '/git/refs', { ref: 'refs/heads/' + branch, sha: commit.sha });
     log('Opening the pull request…');
-    const pr = await call('POST', '/repos/' + o.repo + '/pulls', { title: o.title, body: typeof o.body === 'function' ? o.body({ baseSha, commit: commit.sha, headRepo, previewSha }) : (o.body || ''), head: headOwner ? headOwner + ':' + branch : branch, base, maintainer_can_modify: true });
-    return { url: pr.html_url, number: pr.number, branch, forked: !!headOwner, commit: commit.sha, headRepo, previewSha };
+    const pr = await call('POST', '/repos/' + o.repo + '/pulls', { title: o.title, body: typeof o.body === 'function' ? o.body({ baseSha, commit: commit.sha, headRepo, previewSha, previewDir }) : (o.body || ''), head: headOwner ? headOwner + ':' + branch : branch, base, maintainer_can_modify: true });
+    return { url: pr.html_url, number: pr.number, branch, forked: !!headOwner, commit: commit.sha, headRepo, previewSha, previewDir };
   }
   /** How much to blow a sprite up for the pull request description: about 256 px on the long side, 1× to 16×. */
   const previewScale = (w, h) => Math.max(1, Math.min(16, Math.floor(256 / Math.max(w, h, 1))));
@@ -307,7 +317,7 @@
     const raw = (repo, sha, file) => `https://raw.githubusercontent.com/${repo}/${sha}/${file}`;
     const imgs = o.files.map((f, i) => {
       if (o.previewSha) { // pre-scaled, nearest-neighbour copies shown at their real size, so GitHub never smooths them
-        const sc = f.scale || 1, wpx = f.w * sc, bw = (f.baseW || f.w) * sc, prev = (side) => raw(o.headRepo || o.repo, o.previewSha, `${i}-${side}.png`);
+        const sc = f.scale || 1, wpx = f.w * sc, bw = (f.baseW || f.w) * sc, prev = (side) => raw(o.headRepo || o.repo, o.previewSha, `${o.previewDir || ''}${i}-${side}.png`);
         return `**${f.path}** (shown ${sc}×)\n\nBefore | After\n--- | ---\n${f.isNew ? '_new file_' : `<img src="${prev('before')}" width="${bw}">`} | <img src="${prev('after')}" width="${wpx}">`;
       }
       return o.repo && o.baseSha && o.commit ? `**${f.path}**\n\nBefore | After\n--- | ---\n<img src="${raw(o.repo, o.baseSha, (o.prefix || '') + f.path)}" width="128"> | <img src="${raw(o.headRepo || o.repo, o.commit, (o.prefix || '') + f.path)}" width="128">` : '';
@@ -448,13 +458,22 @@
     const commit = await call('/repos/' + o.repo + '/git/commits/' + ref.object.sha);
     const tree = await call('/repos/' + o.repo + '/git/trees/' + commit.tree.sha + '?recursive=1');
     const entries = new Map((tree.tree || []).filter((e) => e.type === 'blob').map((e) => [e.path, e]));
-    const blob = async (path) => { const e = entries.get(path); if (!e) throw new Error('not in the repository: ' + path); const b = await call('/repos/' + o.repo + '/git/blobs/' + e.sha); return b.encoding === 'base64' ? b64ToBytes(b.content) : new TextEncoder().encode(b.content); };
+    const apiBlob = async (path) => { const e = entries.get(path); if (!e) throw new Error('not in the repository: ' + path); const b = await call('/repos/' + o.repo + '/git/blobs/' + e.sha); return b.encoding === 'base64' ? b64ToBytes(b.content) : new TextEncoder().encode(b.content); };
+    /* Public repositories: read files from GitHub's file CDN at this exact commit. Same bytes, and it does not use up the API
+       rate limit (60 calls an hour without sign-in), so every thumbnail can load. Private ones (or a failure) go through the API. */
+    const rawBase = o.rawBase || (o.apiBase ? null : 'https://raw.githubusercontent.com');
+    const rawUrl = info.private === false && rawBase ? (path) => `${rawBase.replace(/\/$/, '')}/${o.repo}/${ref.object.sha}/${path.split('/').map(encodeURIComponent).join('/')}` : null;
+    const blob = async (path) => {
+      if (!entries.has(path)) throw new Error('not in the repository: ' + path);
+      if (rawUrl) { try { const r = await doFetch(rawUrl(path)); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* fall back to the API */ } }
+      return apiBlob(path);
+    };
     let cfg = {}, palette = null;
     if (entries.has('spritewright.config.json')) { try { cfg = JSON.parse(new TextDecoder().decode(await blob('spritewright.config.json'))); } catch { /* ignore a broken config */ } }
     if (cfg.palette && entries.has(cfg.palette)) { try { palette = palFromText(new TextDecoder().decode(await blob(cfg.palette))); } catch { /* none */ } }
     const png = [...entries.values()].filter((e) => /\.png$/i.test(e.path) && e.size <= (cfg.maxBytes || maxBytes)).map((e) => ({ path: e.path, bytes: e.size }));
     const sprites = applyConfig(png, cfg);
-    return { kind: 'github', thumbs: false, sprites, palette, branch,
+    return { kind: 'github', thumbs: true, sprites, palette, branch,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Save downloads; Propose PR sends changes back.',
       repo: { slug: o.repo, base: branch, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
@@ -918,14 +937,20 @@
         list.appendChild(b); const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s);
       }
     }
+    /* Thumbnails load as their rows come into view, a few at a time, so a big project starts drawing at once without flooding the network. */
+    let thumbBusy = 0; const thumbQueue = [];
+    const thumbSlot = () => new Promise((res) => { if (thumbBusy < 6) { thumbBusy++; res(); } else thumbQueue.push(res); });
+    const thumbDone = () => { const next = thumbQueue.shift(); if (next) next(); else thumbBusy--; };
     async function paintThumb(canvas, s) {
       const d = S.docs.get(s.path);
       if (d) return drawPx(canvas, d);
       if (!S.src || !S.src.thumbs) return;
+      const src = S.src;
       try {
         let bm = thumbs.get(s.path);
-        if (!bm) { bm = await createImageBitmap(new Blob([await S.src.read(s.path)], { type: 'image/png' })); thumbs.set(s.path, bm); }
+        if (!bm) { await thumbSlot(); try { if (S.src !== src) return; bm = await createImageBitmap(new Blob([await src.read(s.path)], { type: 'image/png' })); thumbs.set(s.path, bm); } finally { thumbDone(); } }
         canvas.width = bm.width; canvas.height = bm.height; const c = canvas.getContext('2d'); c.imageSmoothingEnabled = false; c.drawImage(bm, 0, 0);
+        if (!s.w || !s.h) { s.w = bm.width; s.h = bm.height; const small = canvas.parentElement && canvas.parentElement.querySelector('small'); if (small) small.textContent = small.textContent.replace(/\?×\?$/, s.w + '×' + s.h); }
       } catch { /* leave blank */ }
     }
 
@@ -1241,7 +1266,7 @@
         }
         const prefix = (S.meta.repo && S.meta.repo.prefix) || '';
         const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
-          body: (ctx) => prBody({ files, repo, prefix, description: $('.pf-pr-desc').value.trim(), baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
+          body: (ctx) => prBody({ files, repo, prefix, description: $('.pf-pr-desc').value.trim(), baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha, previewDir: ctx.previewDir }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
         log.innerHTML = `${esc(log.textContent)}Done${res.forked ? ' (from your fork)' : ''}: <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">${esc(res.url)}</a>`;
         for (const d of changed) d.base = { w: d.w, h: d.h, px: d.px.slice() };
         status(); renderList();

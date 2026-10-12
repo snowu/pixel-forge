@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: mkdir site && cp index.html spritewright.js site/
+      # Pages lets browsers cache files for 10 minutes; a versioned script URL makes every deploy load the new editor at once.
+      - run: sed -i "s#<script src=\"spritewright.js\"></script>#<script src=\"spritewright.js?v=${GITHUB_SHA::12}\"></script>#" site/index.html && grep -q "spritewright.js?v=" site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with: { path: site }

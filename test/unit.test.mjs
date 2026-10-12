@@ -288,15 +288,33 @@ test('PR: previews go in a commit on no branch, kept by a hidden ref; the PR fil
   const gh = fakeGithub(); let ctxSeen;
   const r = await PF.createPullRequest({ token: 'good', repo: 'me/game', title: 't', files: FILES.slice(0, 1), previews: [{ before: new Uint8Array([9]), after: new Uint8Array([8]) }], branch: 'art/x', fetch: gh.fetch, body: (ctx) => { ctxSeen = ctx; return 'b'; } });
   const trees = gh.calls.filter((c) => c.p.endsWith('/trees')).map((c) => c.body), commits = gh.calls.filter((c) => c.method === 'POST' && c.p.endsWith('/commits')).map((c) => c.body), refs = gh.calls.filter((c) => c.p.endsWith('/refs')).map((c) => c.body);
-  assert.deepEqual(trees[0].tree.map((t) => t.path), ['art/slime.png'], 'the branch commit only has the sprite');
-  assert.deepEqual(trees[1].tree.map((t) => t.path), ['0-before.png', '0-after.png']); assert.equal(trees[1].base_tree, undefined, 'the preview tree is standalone');
-  assert.deepEqual(commits[0].parents, ['base123']); assert.deepEqual(commits[1].parents, [], 'the preview commit is not part of the branch history');
-  assert.deepEqual(refs.map((x) => x.ref), ['refs/heads/art/x', 'refs/spritewright/previews/art/x']);
-  assert.equal(ctxSeen.previewSha, 'commit1'); assert.equal(r.previewSha, 'commit1');
-  // a failure while making previews still opens the PR, with the old links
-  const gh2 = fakeGithub(), f2 = async (url, init = {}) => (String(url).includes('/refs') && init.body && init.body.includes('refs/spritewright') ? { ok: false, status: 422, text: async () => '{"message":"nope"}' } : gh2.fetch(url, init)), log = [];
-  const r2 = await PF.createPullRequest({ token: 'good', repo: 'me/game', title: 't', files: FILES.slice(0, 1), previews: [{ after: new Uint8Array([8]) }], branch: 'art/y', fetch: f2, body: (ctx) => 'p=' + ctx.previewSha, onProgress: (m) => log.push(m) });
-  assert.equal(r2.previewSha, null); assert.equal(gh2.calls.find((c) => c.p.endsWith('/pulls')).body.body, 'p=null'); assert.ok(log.some((m) => /Previews skipped/.test(m)));
+  assert.deepEqual(trees[0].tree.map((t) => t.path), ['0-before.png', '0-after.png']); assert.equal(trees[0].base_tree, undefined, 'the preview tree is standalone');
+  assert.deepEqual(commits[0].parents, [], 'the preview commit is not part of any branch');
+  assert.deepEqual(trees[1].tree.map((t) => t.path), ['art/slime.png'], 'the branch commit only has the sprite'); assert.deepEqual(commits[1].parents, ['base123']);
+  assert.deepEqual(refs.map((x) => x.ref), ['refs/spritewright/previews/art/x', 'refs/heads/art/x']);
+  assert.equal(ctxSeen.previewSha, 'commit1'); assert.equal(ctxSeen.previewDir, ''); assert.equal(r.previewSha, 'commit1');
+});
+test('PR: if the hidden ref is refused, previews go in a commit under the change, which removes them again', async () => {
+  const gh = fakeGithub(); let n = 0;
+  const f = async (url, init = {}) => {
+    if (String(url).endsWith('/git/refs') && init.body && init.body.includes('refs/spritewright')) return { ok: false, status: 403, text: async () => '{"message":"Resource not accessible by integration"}' };
+    const res = await gh.fetch(url, init); if (String(url).endsWith('/git/commits') && init.method === 'POST') { n++; return { ok: true, status: 201, text: async () => JSON.stringify({ sha: 'c' + n }) }; } return res;
+  };
+  let ctx; const r = await PF.createPullRequest({ token: 'good', repo: 'me/game', title: 't', files: FILES.slice(0, 1), previews: [{ before: new Uint8Array([9]), after: new Uint8Array([8]) }], branch: 'art/z', fetch: f, body: (c) => { ctx = c; return 'b'; } });
+  const trees = gh.calls.filter((c) => c.p.endsWith('/trees')).map((c) => c.body), commits = gh.calls.filter((c) => c.method === 'POST' && c.p.endsWith('/commits')).map((c) => c.body);
+  assert.equal(trees.length, 3, 'standalone preview tree (refused), preview tree on the base, sprite tree');
+  assert.deepEqual(trees[1].tree.map((t) => t.path), ['.spritewright-previews/0-before.png', '.spritewright-previews/0-after.png']); assert.equal(trees[1].base_tree, 'tree0');
+  assert.deepEqual(commits[1].parents, ['base123']); assert.deepEqual(commits[2].parents, ['c2'], 'the change sits on top of the preview commit');
+  assert.equal(trees[2].base_tree, 'tree0', 'the change is built from the base tree, so the previews are gone again and the PR diff is only the sprite');
+  assert.equal(ctx.previewSha, 'c2'); assert.equal(ctx.previewDir, '.spritewright-previews/'); assert.equal(r.commit, 'c3');
+  assert.match(PF.prBody({ files: [{ path: 'a.png', w: 32, h: 32, pixels: 1, scale: 8 }], repo: 'me/game', previewSha: 'c2', previewDir: ctx.previewDir }), /me\/game\/c2\/\.spritewright-previews\/0-after\.png" width="256"/);
+});
+test('PR: if previews fail altogether the PR still opens, with plain links', async () => {
+  const gh = fakeGithub(), log = [];
+  const f = async (url, init = {}) => (String(url).endsWith('/git/trees') && init.body && init.body.includes('-after.png') ? { ok: false, status: 500, text: async () => '{"message":"boom"}' } : gh.fetch(url, init));
+  const r = await PF.createPullRequest({ token: 'good', repo: 'me/game', title: 't', files: FILES.slice(0, 1), previews: [{ after: new Uint8Array([8]) }], branch: 'art/y', fetch: f, body: (ctx) => 'p=' + ctx.previewSha, onProgress: (m) => log.push(m) });
+  assert.equal(r.previewSha, null); assert.equal(gh.calls.find((c) => c.p.endsWith('/pulls')).body.body, 'p=null'); assert.ok(log.some((m) => /Previews skipped/.test(m)));
+  assert.deepEqual(gh.calls.filter((c) => c.method === 'POST' && c.p.endsWith('/commits')).map((c) => c.body.parents), [['base123']]);
 });
 
 /* ---------- lossless PNG codec ---------- */

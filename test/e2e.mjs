@@ -295,11 +295,11 @@ await page.locator('.pf-pr-go').click();
 try { await page.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 8000 }); } catch { console.log('   PR log:', JSON.stringify(await page.locator('.pf-log').innerText()), calls.map((c) => c.m + ' ' + c.p).join(' | ')); }
 ok(await page.locator('.pf-log a').getAttribute('href') === 'https://github.com/me/game/pull/3', 'a link to the new pull request appears');
 ok([...authSeen].join() === 'Bearer ghp_testtoken', 'the token is sent as a bearer header and nowhere else');
-const blobs = calls.filter((c) => c.p.endsWith('/blobs')); const tree = calls.find((c) => c.p.endsWith('/trees')).body;
+const blobs = calls.filter((c) => c.p.endsWith('/blobs')); const tree = calls.find((c) => c.p.endsWith('/trees') && c.body.base_tree).body;
 ok(blobs.length === 6 && tree.tree.map((t) => t.path).sort().join() === 'art/items/gem.png,art/slime.png', 'the branch tree has just the two sprites, with repo-relative paths: ' + tree.tree.map((t) => t.path).join(','));
-{ const trees = calls.filter((c) => c.p.endsWith('/trees')).map((c) => c.body), pcommit = calls.filter((c) => c.m === 'POST' && c.p.endsWith('/commits'))[1].body;
-  ok(trees[1].tree.map((t) => t.path).join() === '0-before.png,0-after.png,1-before.png,1-after.png' && pcommit.parents.length === 0 && calls.some((c) => c.p.endsWith('/refs') && /^refs\/spritewright\/previews\/art\/improve-slime-/.test(c.body.ref)), 'upscaled before/after previews go in a separate commit on no branch, kept by a hidden ref');
-  const iAfter = trees[1].tree.findIndex((t) => t.path.endsWith('-after.png') && t.path.startsWith(String(tree.tree.findIndex((x) => x.path === 'art/slime.png'))));
+{ const trees = [calls.find((c) => c.p.endsWith('/trees') && !c.body.base_tree).body], pcommit = calls.filter((c) => c.m === 'POST' && c.p.endsWith('/commits'))[0].body;
+  ok(trees[0].tree.map((t) => t.path).join() === '0-before.png,0-after.png,1-before.png,1-after.png' && pcommit.parents.length === 0 && calls.some((c) => c.p.endsWith('/refs') && /^refs\/spritewright\/previews\/art\/improve-slime-/.test(c.body.ref)), 'upscaled before/after previews go in a separate commit on no branch, kept by a hidden ref');
+  const iAfter = trees[0].tree.findIndex((t) => t.path.endsWith('-after.png') && t.path.startsWith(String(tree.tree.findIndex((x) => x.path === 'art/slime.png'))));
   const prev = decodePng(Buffer.from(blobs[2 + iAfter].body.content, 'base64'));
   ok(prev.w === 256 && prev.h === 256 && prev.rgba[0] === 255 && prev.rgba[(15 * 256 + 15) * 4] === 255, 'the slime preview is 16× nearest-neighbour (256 px, crisp blocks): ' + prev.w + 'x' + prev.h); }
 const slimeBlob = decodePng(Buffer.from(blobs[tree.tree.findIndex((t) => t.path === 'art/slime.png')].body.content, 'base64'));
@@ -318,14 +318,14 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const sbase = `http://127.0.0.1:${stat.address().port}/`;
   const REPO = { 'art/hero.png': slime.png, 'art/enemies/walk.png': sheet.png, 'docs/shot.png': slime.png, 'spritewright.config.json': Buffer.from(JSON.stringify({ dirs: ['art'], palette: 'palette.hex' })), 'palette.hex': Buffer.from('1a1c2c\n3cb450\n78e682\nff0000\n') };
   const tree = Object.entries(REPO).map(([p, b], i) => ({ path: p, type: 'blob', sha: 'sha' + i, size: b.length }));
-  const gcalls = []; let canPush = true, tokenOnly = false;
+  const gcalls = [], rawSeen = []; let canPush = true, tokenOnly = false, isPublic = false;
   const gctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, colorScheme: 'dark' });
   await gctx.route('https://api.github.com/**', async (route) => {
     const r = route.request(), u = new URL(r.url()), p = u.pathname, m = r.method(), body = r.postData() ? JSON.parse(r.postData()) : null; gcalls.push({ m, p, body, auth: r.headers().authorization });
     const j = (st, o) => route.fulfill({ status: st, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(o) });
     if (m === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,accept,x-github-api-version', 'access-control-allow-methods': '*' } });
     if (p === '/user') return j(200, { login: 'artist' });
-    if (p === '/repos/me/game' && m === 'GET') return tokenOnly && !r.headers().authorization ? j(404, { message: 'Not Found' }) : j(200, { name: 'game', default_branch: 'main', permissions: { push: canPush } });
+    if (p === '/repos/me/game' && m === 'GET') return tokenOnly && !r.headers().authorization ? j(404, { message: 'Not Found' }) : j(200, { name: 'game', default_branch: 'main', permissions: { push: canPush }, ...(isPublic ? { private: false } : {}) });
     if (p === '/repos/nope/x') return j(404, { message: 'Not Found' });
     if (p === '/repos/me/game/git/ref/heads/main') return j(200, { object: { sha: 'c1' } });
     if (p === '/repos/me/game/git/commits/c1') return j(200, { tree: { sha: 't1' } });
@@ -338,6 +338,8 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
     if (p === '/repos/me/game/pulls') return j(201, { html_url: 'https://github.com/me/game/pull/9', number: 9 });
     return j(404, { message: 'unexpected ' + m + ' ' + p });
   });
+  await gctx.route('https://raw.githubusercontent.com/**', (route) => { const u = new URL(route.request().url()), m = /^\/me\/game\/c1\/(.+)$/.exec(u.pathname), f = m && REPO[decodeURIComponent(m[1])]; rawSeen.push(u.pathname); return f ? route.fulfill({ status: 200, contentType: 'image/png', headers: { 'access-control-allow-origin': '*' }, body: f }) : route.fulfill({ status: 404, body: '' }); });
+  const thumbsPainted = (pg) => pg.evaluate(() => [...document.querySelectorAll('.pf-item')].map((b) => { const c = b.querySelector('canvas'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let on = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) on++; return { on, size: b.querySelector('small').textContent }; }));
   const gp = await gctx.newPage(); const gerr = []; gp.on('pageerror', (e) => gerr.push(e.message)); gp.on('dialog', (d) => d.dismiss());
   await gp.goto(sbase + '?auth=off'); await gp.waitForSelector('.pf-dlg-connect[open]');
   ok(true, 'with no server and no manifest the page asks which project to open');
@@ -349,6 +351,8 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   const names = await gp.locator('.pf-item .n').allInnerTexts();
   ok(names.length === 2 && names.some((n) => n.startsWith('hero.png')) && names.some((n) => n.startsWith('walk.png')), 'the repository\'s sprites are listed, honouring its spritewright.config.json (docs/ excluded): ' + names.map((n) => n.split('\n')[0]).join(', '));
   ok(!(await gp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'the connect dialog closes');
+  { let th = []; await until(async () => (th = await thumbsPainted(gp)).every((t) => t.on > 0));
+    ok(th.length === 2 && th.every((t) => t.on > 0 && !/\?/.test(t.size)), 'every sprite\'s thumbnail and size load straight away, without clicking: ' + th.map((t) => t.on + 'px ' + t.size).join(' | ')); }
   ok(await gp.locator('.pf-pal-colors button').count() === 4, 'the repository palette is loaded');
   ok(/GitHub me\/game @ main/.test(await gp.locator('.pf-src').innerText()), 'the sidebar says where the art comes from');
   ok((await gp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.w + 'x' + d.h; })) === '16x4' || true, 'opened the first sprite');
@@ -363,7 +367,7 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.locator('.pf-prbtn').click(); await gp.waitForSelector('.pf-dlg-pr[open]');
   ok((await gp.locator('.pf-pr-repo').inputValue()) === 'me/game' && (await gp.locator('.pf-pr-base').inputValue()) === 'main' && (await gp.locator('.pf-pr-token').inputValue()) === 'ghp_standalone', 'the PR dialog is prefilled from the connection (repo, branch, token)');
   await gp.locator('.pf-pr-title').fill('Hero update'); await gp.locator('.pf-pr-go').click(); await gp.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 8000 });
-  const gtree = gcalls.find((c) => c.p.endsWith('/git/trees') && c.m === 'POST').body;
+  const gtree = gcalls.find((c) => c.p.endsWith('/git/trees') && c.m === 'POST' && c.body.base_tree).body;
   ok(gtree.tree.length === 1 && gtree.tree[0].path === 'art/hero.png', 'the commit touches only the edited sprite, at its repository path (' + gtree.tree.map((t) => t.path) + ')');
   ok(gcalls.some((c) => c.p === '/repos/me/game/pulls') && !gcalls.some((c) => c.p.endsWith('/forks')), 'a PR was opened directly on the repo (the token can push)');
   await gp.locator('.pf-dlg-pr button[value=cancel]').click();
@@ -374,6 +378,14 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.locator('.pf-pr-go').click(); await gp.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 12000 });
   ok(gcalls.some((c) => c.p.endsWith('/forks')) && gcalls.find((c) => c.p === '/repos/me/game/pulls').body.head.startsWith('artist:'), 'without push access it forks and opens the PR from the fork');
   await gp.close();
+  // public repository: files come from GitHub's file CDN (no API rate limit), the API is only used to list them
+  { isPublic = true; const before = gcalls.filter((c) => /\/git\/blobs\/sha/.test(c.p)).length, rawBefore = rawSeen.length;
+    const pp = await gctx.newPage(); pp.on('pageerror', (e) => gerr.push(e.message)); await pp.goto(sbase + '?auth=off&repo=me/game'); await pp.waitForSelector('.pf-item');
+    let th = []; await until(async () => (th = await thumbsPainted(pp)).every((t) => t.on > 0));
+    const apiBlobs = gcalls.filter((c) => /\/git\/blobs\/sha/.test(c.p)).length - before;
+    ok(th.every((t) => t.on > 0) && rawSeen.length - rawBefore >= 4 && apiBlobs === 0, `public repository: thumbnails, config and palette come from raw.githubusercontent.com (${rawSeen.length - rawBefore} files), with no API blob calls (${apiBlobs})`);
+    ok(rawSeen.slice(rawBefore).every((p) => p.startsWith('/me/game/c1/')), 'pinned to the exact commit that was listed');
+    await pp.close(); isPublic = false; }
   // deep link
   const dp = await gctx.newPage(); canPush = true; await dp.goto(sbase + '?repo=me/game'); await dp.waitForSelector('.pf-item'); ok(await dp.locator('.pf-item').count() === 2, '?repo=owner/name opens the repository directly (token remembered for this tab from before is reused)');
   await dp.close();
