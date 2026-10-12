@@ -7,7 +7,9 @@ What the person using spritewright gets: click **Sign in with GitHub**, sign in 
 ## One-time setup (about 10 minutes)
 
 ### 1. Create a GitHub App
-GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
+**Fast path:** after deploying the Worker once (step 3), run `node worker/create-app.mjs --worker https://<your-worker-url>` and open http://localhost:8737/. It sends GitHub a pre-filled app definition; you press **Create GitHub App**, and the script writes the Client ID into `wrangler.toml`, stores the client secret as a Worker secret (never printed), and redeploys. Then do step 2.
+
+By hand: GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
 
 | Field | Value |
 | --- | --- |
