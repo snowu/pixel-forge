@@ -2101,7 +2101,7 @@
       commitSig = sig;
       if (S.commitSel) S.commitSel = new Set([...S.commitSel].filter((p) => changed.some((d) => d.path === p)));
       $('.pf-commit-list').innerHTML = changed.length ? changed.map((d) => `<label title="${esc(d.path)}"><input type="checkbox" data-path="${esc(d.path)}"${!S.commitSel || S.commitSel.has(d.path) ? ' checked' : ''}><span class="n">${esc(d.path)}<br><small>${d.w}×${d.h} · ${d.changedPixels()} px changed</small></span></label>`).join('')
-        : '<div class="pf-note">No changes. Draw something first.</div>';
+        : '<div class="pf-note">No changes.</div>';
     }
     /** Branch names for the panel picker and the connect datalist, fetched once per project. Quiet when signed out or offline. */
     async function fillBranches() {
@@ -2120,7 +2120,7 @@
       const all = [...S.docs.values()].filter((d) => d.changed);
       const sel = !S.commitSel ? all : all.filter((d) => S.commitSel.has(d.path));
       const note = $('.pf-commit-note'), go = $('.pf-commit-go');
-      if (!sel.length) { note.textContent = all.length ? 'Tick at least one sprite to commit.' : 'No changes. Draw something first.'; return; }
+      if (!sel.length) { note.textContent = all.length ? 'Tick at least one sprite to commit.' : 'No changes.'; return; }
       const token = await commitToken();
       if (!token) { note.textContent = 'Sign in at the top of this panel, or open Propose PR once to add a token, then Commit again.'; return; }
       const gh = S.meta.repo || {};
