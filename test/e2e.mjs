@@ -276,7 +276,14 @@ ok(fs.readdirSync(path.join(root, 'art')).every((n) => !n.includes('pf-tmp')), '
 const mf = await (await fetch(base + 'api/manifest')).json(); ok(mf.repo.slug === 'me/game', 'the manifest knows the GitHub repo from .git/config');
 
 section('new sprites, import and export');
-await page.locator('.pf-new').click(); await page.locator('.pf-nw').fill('8'); await page.locator('.pf-nh').fill('8'); await page.locator('.pf-nn').fill('art/items/gem.png'); await page.locator('.pf-new-ok').click(); await page.waitForTimeout(200);
+await page.locator('.pf-new').click();
+{ const q = await page.locator('.pf-n-quick button').allInnerTexts(), cur = await pf(), on = await page.locator('.pf-n-quick button.on').allInnerTexts();
+  ok(q.length === 4 && q.includes('16×16') && q.includes('32×32'), 'New offers four common sizes as one click: ' + q.join(' '));
+  ok(on.join() === cur.w + '×' + cur.h && (await page.locator('.pf-nw').inputValue()) === String(cur.w), 'it starts at the open sprite\'s size, marked: ' + on);
+  await page.locator('.pf-n-quick button', { hasText: '32×32' }).click();
+  ok((await page.locator('.pf-nw').inputValue()) === '32' && (await page.locator('.pf-nh').inputValue()) === '32' && (await page.locator('.pf-n-quick button.on').innerText()) === '32×32', 'clicking a size fills width and height');
+  await page.locator('.pf-nw').fill('24'); ok(await page.locator('.pf-n-quick button.on').count() === 0, 'any other size (24×32) can still be typed, and no preset stays marked'); }
+await page.locator('.pf-nw').fill('8'); await page.locator('.pf-nh').fill('8'); await page.locator('.pf-nn').fill('art/items/gem.png'); await page.locator('.pf-new-ok').click(); await page.waitForTimeout(200);
 s = await pf(); ok(s.path === 'art/items/gem.png' && s.w === 8, 'New creates a blank sprite at a path inside the project');
 await setHex('#00ff00'); await page.keyboard.press('b'); await click(3, 3); await page.keyboard.press('Control+s'); await until(() => fs.existsSync(path.join(root, 'art/items/gem.png')));
 ok(fs.existsSync(path.join(root, 'art/items/gem.png')) && decodePng(fs.readFileSync(path.join(root, 'art/items/gem.png'))).w === 8, 'saving it creates the file and its folder');

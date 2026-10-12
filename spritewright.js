@@ -809,7 +809,7 @@
 .pf-sz-anchorrow{display:flex;gap:10px;align-items:center}.pf-sz-anchor{display:grid;grid-template-columns:repeat(3,26px);gap:3px}
 .pf .pf-sz-anchor button{width:26px;height:26px;min-height:0;padding:0;background:var(--pf-panel2)}.pf .pf-sz-anchor button.on{background:var(--pf-accent);border-color:var(--pf-accent)}
 .pf-sz-prev{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;min-width:170px;min-height:170px;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-sz-cv{image-rendering:pixelated;outline:1px dashed var(--pf-accent)}
-.pf-sz-mode{align-self:flex-start}.pf-sz-info{text-align:center}.pf .pf-sz-quick button{min-width:34px}.pf-c-resume{margin-top:6px}
+.pf-sz-mode{align-self:flex-start}.pf-n-quick{align-self:flex-start}.pf-sz-info{text-align:center}.pf .pf-sz-quick button{min-width:34px}.pf-c-resume{margin-top:6px}
 .pf-pal-empty[hidden]{display:none}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
 .pf .pf-c-pick.on{border-color:var(--pf-accent)}
@@ -1053,6 +1053,7 @@
         <div class="pf-row"><button type="button" class="primary pf-v-go">Create</button><button value="cancel">Cancel</button></div></form></dialog>
       <dialog class="pf-dlg-keys"><form method="dialog" class="pf-form"><h4>Keyboard shortcuts</h4><div class="pf-keys"></div><div class="pf-row"><button value="cancel" class="primary">Close</button></div></form></dialog>
       <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><h4>New sprite</h4>
+        <div class="pf-seg pf-n-quick" role="group" aria-label="Common sizes"></div>
         <div class="pf-row"><label>width <input type="number" class="pf-nw" min="1" max="1024" value="16"></label><label>height <input type="number" class="pf-nh" min="1" max="1024" value="16"></label></div>
         <label>file name <input type="text" class="pf-nn" value="new-sprite.png" placeholder="art/hero.png"></label>
         <div class="pf-row"><button type="button" class="primary pf-new-ok">Create</button><button value="cancel">Cancel</button></div></form></dialog>
@@ -2019,7 +2020,23 @@
     $('.pf-revert').onclick = () => { const d = doc(); if (!d || !d.changed) return; commitFloat(); S.sel = null; applySize((x) => ({ px: x.base.px.slice(), w: x.base.w, h: x.base.h }), 'back to the original (Ctrl+Z brings your changes back)'); };
     const dlOutside = (e) => { const m = root.querySelector('.pf-dlmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-download')) closeDlMenu(); };
     document.addEventListener('pointerdown', dlOutside);
-    $('.pf-new').onclick = () => $('.pf-dlg-new').showModal();
+    /* New sprite: the four sizes this project uses most as one-click choices (standard squares when it has fewer), any size by hand */
+    function commonSizes() {
+      const n = new Map(); for (const x of S.sprites) if (x.w && x.h && !x.hiddenByDefault) { const k = x.w + 'x' + x.h; n.set(k, (n.get(k) || 0) + 1); }
+      const top = [...n].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, c]) => { const [w, h] = k.split('x').map(Number); return { w, h, c }; });
+      for (const d of [16, 32, 64, 128]) { if (top.length >= 4) break; if (!top.some((t) => t.w === d && t.h === d)) top.push({ w: d, h: d, c: 0 }); }
+      return top.sort((a, b) => a.w * a.h - b.w * b.h);
+    }
+    const markQuick = () => $$('.pf-n-quick button').forEach((b) => b.classList.toggle('on', b.dataset.w === $('.pf-nw').value && b.dataset.h === $('.pf-nh').value));
+    function openNew() {
+      const sizes = commonSizes(), d = doc();
+      $('.pf-n-quick').innerHTML = sizes.map((x) => `<button type="button" data-w="${x.w}" data-h="${x.h}" title="${x.c ? x.c + ' sprite' + (x.c > 1 ? 's' : '') + ' in this project are this size' : 'a common size'}">${x.w}×${x.h}</button>`).join('');
+      const pick = sizes.find((x) => d && x.w === d.w && x.h === d.h) || sizes.reduce((a, b) => (b.c > a.c ? b : a), sizes[0]); // the open sprite's size, else the project's most used
+      $('.pf-nw').value = pick.w; $('.pf-nh').value = pick.h; markQuick(); $('.pf-dlg-new').showModal();
+    }
+    $('.pf-n-quick').onclick = (e) => { const b = e.target.closest('[data-w]'); if (!b) return; $('.pf-nw').value = b.dataset.w; $('.pf-nh').value = b.dataset.h; markQuick(); };
+    $('.pf-nw').oninput = markQuick; $('.pf-nh').oninput = markQuick;
+    $('.pf-new').onclick = openNew;
     $('.pf-new-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-nw').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-nh').value | 0)); let n = $('.pf-nn').value.trim().replace(/^\/+/, '') || 'new-sprite.png'; if (!/\.png$/i.test(n)) n += '.png'; $('.pf-dlg-new').close(); addLocal(n, w, h, new Uint32Array(w * h), canWrite()); };
     $('.pf-open').onclick = () => $('.pf-file').click();
     $('.pf-file').onchange = async (e) => { for (const f of e.target.files) await importFile(f); e.target.value = ''; };
@@ -2041,7 +2058,7 @@
     authRows('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
     $('.pf-c-repolist').onclick = (e) => { const b = e.target.closest('.pf-c-pick'); if (!b) return; $('.pf-c-repo').value = b.dataset.repo; $('.pf-c-branch').value = b.dataset.branch; $('.pf-c-gh').click(); };
     $('.pf-c-upload').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-file').click(); };
-    $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-dlg-new').showModal(); };
+    $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); openNew(); };
     $('.pf-c-gh').onclick = async () => {
       const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), typed = S.auth.token ? '' : $('.pf-c-token').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
       try {
