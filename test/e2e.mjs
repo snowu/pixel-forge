@@ -264,6 +264,12 @@ await page.locator('.pf-rot').click(); s = await pf(); ok(s.w === 16 && s.h === 
 await page.keyboard.press('Control+z');
 
 section('saving into the project');
+{ await page.mouse.move(5, 5); await page.waitForTimeout(100); const before = await page.locator('.pf-view').boundingBox(), hb = (await page.locator('.pf-status').boundingBox()).height;
+  const p = await cellPos(3, 3); await page.mouse.move(p.x, p.y); await page.evaluate(() => { document.getElementById('app').__pf.state.notice = 'a long message '.repeat(20); });
+  await page.locator('.pf-zin').click(); await page.locator('.pf-zout').click(); await page.mouse.move(p.x, p.y + 2); await page.waitForTimeout(100);
+  const after = await page.locator('.pf-view').boundingBox(), ha = (await page.locator('.pf-status').boundingBox()).height;
+  ok(/x 3\s+y 3/.test(await page.locator('.pf-s-pos').innerText()) && ha === hb && after.y === before.y && after.height === before.height, `the status bar stays one line (${hb}px → ${ha}px) when the cursor readout and a long message appear, so the canvas never moves`);
+  await page.evaluate(() => { document.getElementById('app').__pf.state.notice = ''; }); }
 while (!(await page.locator('.pf-undo').isDisabled())) await page.keyboard.press('Control+z');
 ok((await page.locator('.pf-s-name').innerText()).includes('unsaved') === false, 'no "unsaved" marker after undoing everything');
 await setHex('#ff0000'); await page.keyboard.press('b'); await click(0, 0); await click(1, 0);
@@ -408,7 +414,7 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
     ok((await gp.locator('.pf-save').innerText()) === 'Saved', 'the Save button says Saved'); }
   await gp.reload(); await gp.waitForFunction(() => { const a = document.getElementById('app').__pf; return a && a.current && a.current.path === 'art/hero.png'; });
   ok(!(await gp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'after a reload the last repository reopens by itself');
-  ok(await gp.evaluate(() => document.getElementById('app').__pf.current.px[0]) === RED && /restored from this browser/.test(await gp.locator('.pf-s-info').innerText()), 'and the edited sprite comes back with the edit, opened first');
+  ok(await gp.evaluate(() => document.getElementById('app').__pf.current.px[0]) === RED && /restored from this browser/.test(await gp.locator('.pf-s-note').innerText()), 'and the edited sprite comes back with the edit, opened first');
   ok(await gp.locator('.pf-item .dot.base').count() === 1, 'the list marks it as changed (not in a PR yet)');
   await gp.locator('.pf-prbtn').click(); await gp.waitForSelector('.pf-dlg-pr[open]');
   ok((await gp.locator('.pf-pr-repo').inputValue()) === 'me/game' && (await gp.locator('.pf-pr-base').inputValue()) === 'main' && (await gp.locator('.pf-pr-token').inputValue()) === 'ghp_standalone', 'the PR dialog is prefilled from the connection (repo, branch, token)');
