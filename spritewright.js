@@ -1409,7 +1409,9 @@
     /** Does this sprite hold work that only exists here? Then it needs a browser copy. */
     const needsKeep = (d) => (savesOut(d) ? d.unsaved || (d.isNew && !d.onDisk) : d.changed || d.local || d.isNew);
     const pixelsNow = (d) => { if (d !== doc() || !S.float) return d.px; const px = d.px.slice(), f = S.float; pasteRect(px, d.w, d.h, f.px, f.w, f.h, f.x, f.y, false); return px; };
-    const isKept = (d) => !!d.kept && d.kept.w === d.w && d.kept.h === d.h && countDiff(d.kept.px, pixelsNow(d)) === 0;
+    /* The kept copy is fresh only while the pixels still match: a push replaces the base under it
+       (markPushed), so the next flush stores the new base instead of skipping on matching pixels. */
+    const isKept = (d) => !!d.kept && d.kept.w === d.w && d.kept.h === d.h && d.kept.base === d.base && countDiff(d.kept.px, pixelsNow(d)) === 0;
     /** Work that would be lost if the tab closed now. */
     const atRisk = (d) => (keeping() ? needsKeep(d) && !isKept(d) : savesOut(d) ? d.unsaved : d.changed || d.local);
     const keepSoon = () => { if (!drafts) return; clearTimeout(draftTimer); draftTimer = setTimeout(flushDrafts, 250); };
@@ -1424,7 +1426,7 @@
               if (isKept(d)) continue;
               const px = pixelsNow(d).slice();
               await drafts.put(key, { path: d.path, w: d.w, h: d.h, px, base: d.base, saved: d.saved, local: d.local, isNew: d.isNew, onDisk: !!d.onDisk, frames: d.frames, at: Date.now() });
-              d.kept = { w: d.w, h: d.h, px }; touched = true;
+              d.kept = { w: d.w, h: d.h, px, base: d.base }; touched = true;
             } else if (d.kept) { await drafts.remove(key, d.path); d.kept = null; touched = true; }
           }
         } catch (e) { draftsOk = false; note('This browser cannot keep your edits (' + e.message + '): use Save, Download or Propose PR before closing the tab.'); }
@@ -1439,7 +1441,7 @@
       recs.sort((a, b) => (b.at || 0) - (a.at || 0));
       for (const r of recs) {
         const d = new Doc(r.path, r.w, r.h, r.px, { local: r.local, isNew: r.isNew, frames: r.frames });
-        d.base = r.base; d.saved = r.saved || { w: r.w, h: r.h, px: r.px.slice() }; d.onDisk = !!r.onDisk; d.kept = { w: r.w, h: r.h, px: r.px.slice() };
+        d.base = r.base; d.saved = r.saved || { w: r.w, h: r.h, px: r.px.slice() }; d.onDisk = !!r.onDisk; d.kept = { w: r.w, h: r.h, px: r.px.slice(), base: d.base };
         S.docs.set(r.path, d);
         const meta = S.sprites.find((x) => x.path === r.path); if (meta) { meta.w = r.w; meta.h = r.h; } else S.sprites.push({ path: r.path, w: r.w, h: r.h, local: !!r.local });
       }
@@ -1968,10 +1970,8 @@
       }
       return { files, previews };
     }
-    /** After a push: the work lives on the branch, so the documents read clean from here on.
-        The kept browser copy is dropped too, so the next flush stores the new base — otherwise a reload
-        would resurrect the pre-push base and count the pushed pixels as changed again. */
-    function markPushed(docs) { for (const d of docs) { d.base = { w: d.w, h: d.h, px: d.px.slice() }; d.isNew = false; d.kept = null; if (!canWrite()) d.local = false; } }
+    /** After a push: the work lives on the branch, so the documents read clean from here on. */
+    function markPushed(docs) { for (const d of docs) { d.base = { w: d.w, h: d.h, px: d.px.slice() }; d.isNew = false; if (!canWrite()) d.local = false; } }
     function openPr() {
       commitFloat(); const changed = [...S.docs.values()].filter((d) => d.changed); if (!changed.length) return;
       const gh = S.meta.repo || {}, dlg = $('.pf-dlg-pr');
