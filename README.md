@@ -2,7 +2,13 @@
 
 A pixel art editor that works **by itself in a browser** or **as a dependency inside a game repository**. No runtime dependencies, no build step.
 
-Draw with pencil, eraser, fill, line, rectangles, colour picker, mirror drawing and "clean lines" (pixel-perfect) mode. Undo/redo, palette tools (recolour a colour everywhere, project palette, snap to palette), flip/rotate/shift/resize, a sprite-sheet animation preview, PNG import and export with nearest-neighbour upscaling. Mouse, touch and keyboard. Saves are **lossless**: PNGs are read and written byte for byte by the editor's own codec, so every channel of every pixel, including semi-transparent ones (for example alpha 250 "emissive" markers), comes back exactly as it went in.
+**Tools.** Pencil with brush sizes 1-8 (square or round tip) and a "clean lines" pixel-perfect mode, eraser, fill (connected area or every pixel of that colour), line, rectangle and ellipse (outline or filled, Shift for squares, circles and 45° lines), a checkerboard **dither** pattern for the pencil, fills and shapes, a **shade** brush that steps colours lighter or darker with hue shifting (or through your palette), colour picker (or Alt+click), **select and move** with copy, cut, paste (including images copied from other apps), nudge, flip, rotate and delete, mirror drawing, a **tile** preview for seamless textures that lets you draw across the edges, **onion skin** for sprite-sheet animation, and one-click outlines.
+
+**Colour.** Primary and secondary colours (right click paints the secondary one, which starts out clear so right click erases; X swaps), hue-shifted 5-colour ramps you can add to the palette, recolour a colour everywhere, project palettes (.hex), snap to palette.
+
+Also undo/redo, flip/rotate/shift/resize, a sprite-sheet animation preview, PNG import and export with nearest-neighbour upscaling, mouse, touch and keyboard (press `?` in the editor for every shortcut). Saves are **lossless**: PNGs are read and written byte for byte by the editor's own codec, so every channel of every pixel, including semi-transparent ones (for example alpha 250 "emissive" markers), comes back exactly as it went in.
+
+![spritewright editing a sprite](docs/pr-purple-tools/02-after.png)
 
 And it can hand art back as a **GitHub pull request**, so an artist never needs git.
 
@@ -121,7 +127,7 @@ It listens on `127.0.0.1` only, rejects requests whose `Host` header is not `loc
 
 ## Keys
 
-`B` pencil · `E` eraser · `G` fill · `L` line · `R` rectangle · `F` filled rectangle · `I` picker · `M` mirror X · `+`/`-`/`0` zoom/fit · `#` grid · `Ctrl+Z` / `Ctrl+Y` undo/redo · `Ctrl+S` save · scroll to zoom · space+drag or middle mouse to pan · right click erases · pinch to zoom on touch screens.
+Press `?` in the editor for the full list. The main ones: `B` pencil · `E` eraser · `G` fill · `I` picker · `L` line · `R`/`F` rectangle/filled · `O`/`U` ellipse/filled · `S` select · `D` shade · `[` `]` brush size · `X` swap colours · `M` mirror · `T` tile preview · `N` onion skin · `#` grid · `Ctrl+C`/`X`/`V` copy/cut/paste · `Ctrl+A` select all · arrows nudge · `Enter` apply · `Esc` drop · `Del` delete · `Ctrl+Z`/`Ctrl+Y` undo/redo · `Ctrl+S` save · scroll or `+`/`-`/`0` zoom · space+drag or middle mouse to pan · pinch to zoom on touch screens.
 
 ## Tests
 
