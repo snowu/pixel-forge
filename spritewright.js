@@ -1968,8 +1968,10 @@
       }
       return { files, previews };
     }
-    /** After a push: the work lives on the branch, so the documents read clean from here on. */
-    function markPushed(docs) { for (const d of docs) { d.base = { w: d.w, h: d.h, px: d.px.slice() }; d.isNew = false; if (!canWrite()) d.local = false; } }
+    /** After a push: the work lives on the branch, so the documents read clean from here on.
+        The kept browser copy is dropped too, so the next flush stores the new base — otherwise a reload
+        would resurrect the pre-push base and count the pushed pixels as changed again. */
+    function markPushed(docs) { for (const d of docs) { d.base = { w: d.w, h: d.h, px: d.px.slice() }; d.isNew = false; d.kept = null; if (!canWrite()) d.local = false; } }
     function openPr() {
       commitFloat(); const changed = [...S.docs.values()].filter((d) => d.changed); if (!changed.length) return;
       const gh = S.meta.repo || {}, dlg = $('.pf-dlg-pr');
