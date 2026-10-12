@@ -452,6 +452,7 @@
 .pf-note{color:var(--pf-muted);font-size:12px}.pf-bad{color:var(--pf-bad)}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px}
 .pf-signed-in .pf-gh-box{order:-1}.pf-dlg-connect h4{order:-2}.pf-c-pick.on{border-color:var(--pf-accent)}
+.pf-auth-row[hidden]{display:none}.pf-side-auth{justify-content:space-between;flex-wrap:nowrap}.pf-side-auth .pf-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.pf-side-auth .pf-who:empty{display:none}.pf-side-auth .pf-signin{width:100%}
 .pf-source{width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
 .pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -491,7 +492,8 @@
     if (!document.getElementById('pf-css')) { const st = document.createElement('style'); st.id = 'pf-css'; st.textContent = CSS; document.head.appendChild(st); }
     const O = Object.assign({ manifestUrl: null, baseUrl: '', save: null, github: null, palette: null, accent: null, pr: true }, options);
     const root = el(`<div class="pf" tabindex="-1">
-      <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
+      <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button>
+        <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
         <div class="pf-row"><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
         <div class="pf-note pf-src"></div><input type="file" class="pf-file" accept="image/png,image/*" multiple hidden></aside>
@@ -600,7 +602,7 @@
     }
     function renderAuth() {
       const on = !!S.auth.token;
-      $$('.pf-auth-row').forEach((r) => { r.querySelector('.pf-signin').hidden = on || !authBase; r.querySelector('.pf-signout').hidden = !on; r.querySelector('.pf-who').textContent = on ? 'Signed in as ' + (S.auth.login || 'GitHub user') : ''; });
+      $$('.pf-auth-row').forEach((r) => { r.hidden = !on && !authBase; r.querySelector('.pf-signin').hidden = on || !authBase; r.querySelector('.pf-signout').hidden = !on; r.querySelector('.pf-who').textContent = on ? 'Signed in as ' + (S.auth.login || 'GitHub user') : ''; });
       $$('.pf-auth-help').forEach((h) => { h.innerHTML = authBase ? (on ? '' : 'Sign in once and pick a repository you own or collaborate on. Edits go back as a pull request, no tokens to paste.') : `Sign-in is not set up on this page. Paste a token instead: <a href="${PAT_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">create one with the right permissions</a> (Contents and Pull requests: read and write, only for your repository).`; });
       $$('.pf-tokenbox').forEach((d) => { d.open = !authBase; d.hidden = on; });
       $('.pf-c-mine').hidden = !on; $('.pf-dlg-connect .pf-form').classList.toggle('pf-signed-in', on);
@@ -621,14 +623,15 @@
       renderRepos();
     }
     async function doSignIn(msgEl) {
+      const say = (t) => (msgEl ? (msgEl.textContent = t) : note(t));
       try {
-        if (msgEl) msgEl.textContent = 'Waiting for GitHub…';
+        say('Waiting for GitHub…');
         const r = await githubSignIn(authBase);
         let login = ''; try { login = (await githubUser(r.token, { apiBase: O.apiBase })).login; } catch { /* name is cosmetic */ }
         S.auth = fromGrant(r, login); saveAuth();
-        if (msgEl) msgEl.textContent = 'Signed in' + (login ? ' as ' + login : '') + '.';
+        say('Signed in' + (login ? ' as ' + login : '') + '.');
         renderAuth(); await loadRepos();
-      } catch (e) { if (msgEl) msgEl.textContent = e.message; }
+      } catch (e) { say(e.message); }
     }
     function signOut() { S.auth = emptyAuth(); saveAuth(); try { ['pf:authtoken', 'pf:authuser'].forEach((k) => sessionStorage.removeItem(k)); } catch { /* ignore */ } renderAuth(); }
 
@@ -950,8 +953,8 @@
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
     }
     $('.pf-source').onclick = () => openConnect();
-    $$('.pf-signin').forEach((b) => (b.onclick = () => doSignIn(b.closest('dialog').querySelector('.pf-c-msg, .pf-log'))));
-    $$('.pf-signout').forEach((b) => (b.onclick = signOut));
+    $$('.pf-signin').forEach((b) => (b.onclick = () => { const d = b.closest('dialog'); doSignIn(d && d.querySelector('.pf-c-msg, .pf-log')); }));
+    $$('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
     $('.pf-c-repolist').onclick = (e) => { const b = e.target.closest('.pf-c-pick'); if (!b) return; $('.pf-c-repo').value = b.dataset.repo; $('.pf-c-branch').value = b.dataset.branch; $('.pf-c-gh').click(); };
     $('.pf-c-upload').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-file').click(); };
     $('.pf-c-blank').onclick = () => { $('.pf-dlg-connect').close(); $('.pf-dlg-new').showModal(); };
