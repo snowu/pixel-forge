@@ -839,6 +839,8 @@
 .pf-branchrow{display:flex;gap:6px}
 .pf-branchrow select{flex:1;min-width:0}
 .pf-branchrow input{flex:1;min-width:0}
+/* Naming a new branch: the picker shrinks to its + New label, so the name field gets the room. */
+.pf-branchrow:has(.pf-commit-branch:not([hidden])) .pf-commit-branches{flex:0 1 92px}
 .pf-commit .pf-row{margin-top:8px}
 .pf-commit-note{margin-top:6px}
 .pf-commit-note:empty{display:none}
@@ -2110,7 +2112,7 @@
       let names = [];
       if (gh.slug && token) { try { names = await listBranches({ token, repo: gh.slug, apiBase: O.apiBase }); } catch { branchesFor = null; } }
       const sel = $('.pf-commit-branches');
-      if (sel) sel.innerHTML = names.map((b) => `<option value="${esc(b)}">⎇ ${esc(b)}</option>`).join('') + '<option value="">＋ New</option>';
+      if (sel) sel.innerHTML = names.map((b) => `<option value="${esc(b)}">⎇ ${esc(b)}</option>`).join('') + '<option value="">+ New</option>';
       const dl = $('#pf-c-branchlist');
       if (dl && gh.slug && token && names.length) dl.innerHTML = names.map((b) => `<option value="${esc(b)}">`).join('');
       setCommitBranch(commitBranchWant || (sel && sel.value) || '');
