@@ -132,6 +132,13 @@
     for (let y = lo; y < lo + s; y++) for (let x = lo; x < lo + s; x++) if (shape !== 'round' || s <= 2 || (x - c) ** 2 + (y - c) ** 2 <= r * r - 0.5) out.push([x, y]);
     return out;
   }
+  /** A 1-pixel path (a line or a shape outline) drawn with a bigger brush: the tip stamped on every point, each pixel once. */
+  function thicken(pts, size, shape) {
+    if ((size | 0) <= 1) return pts;
+    const tip = brushOffsets(size, shape), seen = new Set(), out = [];
+    for (const [x, y] of pts) for (const [ox, oy] of tip) { const k = (x + ox) + ',' + (y + oy); if (!seen.has(k)) { seen.add(k); out.push([x + ox, y + oy]); } }
+    return out;
+  }
   /** The checkerboard used by the dither pattern: true on the pixels it paints. */
   const ditherOn = (x, y, phase = 0) => ((x + y + phase) & 1) === 0;
   /** Replace every pixel of one colour (fully clear pixels count as one colour). Returns the indices changed. */
@@ -1104,7 +1111,7 @@
   // [id, name, key, rail icon or the rail tool it belongs to]
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
-  const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D', 'select & move · shade'], ['[ ]', 'brush size'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
+  const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D', 'select & move · shade'], ['[ ]', 'brush size (pencil, eraser, shade, and the line / outline shapes)'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
     ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save (to the project folder when it can be written; edits are kept in this browser either way)'], ['Ctrl+Shift+S', 'download this sprite as a PNG'], ['Ctrl+Alt+C', 'canvas size'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
   /* What shows behind transparent pixels. No single background suits all art (dark details vanish on the dark checker, pale
      ones on the light one), so like Aseprite, Pixelorama and Piskel the editor offers a few and remembers the choice.
@@ -1181,7 +1188,7 @@
           <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
         <div class="pf-opts">
-          <span class="pf-opt" data-for="pen erase shade"><span class="pf-ol">size</span><input type="range" class="pf-size" min="1" max="8" value="1" aria-label="Brush size"><b class="pf-sizev">1</b>
+          <span class="pf-opt" data-for="pen erase shade line rect ellipse"><span class="pf-ol">size</span><input type="range" class="pf-size" min="1" max="16" value="1" aria-label="Brush size"><b class="pf-sizev">1</b>
             <span class="pf-seg pf-shape"><button data-shape="square" class="on" title="Square tip">${icon('sq')}</button><button data-shape="round" title="Round tip">${icon('circ')}</button></span></span>
           <span class="pf-opt" data-for="pen fill rect rectf ellipse ellipsef line"><span class="pf-ol">pattern</span><span class="pf-seg pf-pattern"><button data-pattern="solid" class="on" title="Solid">solid</button><button data-pattern="dither" title="Checkerboard dither: the primary colour on every other pixel (fills put the secondary colour in between)">dither</button></span></span>
           <span class="pf-opt" data-for="fill"><span class="pf-ol">fill</span><span class="pf-seg pf-fillmode"><button data-fill="area" class="on" title="Only the connected area">area</button><button data-fill="same" title="Every pixel of that colour in the image">same colour</button></span></span>
@@ -1796,7 +1803,7 @@
         g.setLineDash([4, 4]); g.strokeStyle = '#000'; g.strokeRect(...r); g.lineDashOffset = 4; g.strokeStyle = '#fff'; g.strokeRect(...r); g.setLineDash([]); g.lineDashOffset = 0;
       }
       const hv = S.hover;
-      if (hv && !drag && (S.tool === 'pen' || S.tool === 'erase' || S.tool === 'shade') && z >= 3) { /* brush footprint */
+      if (hv && !drag && sized(S.tool) && z >= 3) { /* brush footprint */
         g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1;
         for (const [ox, oy] of brushOffsets(S.size, S.shape)) { const c = cell(d, hv.x + ox, hv.y + oy); if (c) g.strokeRect(S.ox + c[0] * z + .5, S.oy + c[1] * z + .5, z - 1, z - 1); }
       }
@@ -1893,7 +1900,7 @@
     }
     /** One brush dab at (x,y): size, tip shape, dither pattern and the shade tool all go through here. */
     function dab(d, x, y, drag) {
-      for (const [ox, oy] of brushOffsets(drag.tool === 'pen' || drag.tool === 'erase' || drag.tool === 'shade' ? S.size : 1, S.shape)) {
+      for (const [ox, oy] of brushOffsets(sized(drag.tool) ? S.size : 1, S.shape)) {
         const X = x + ox, Y = y + oy;
         if (drag.tool === 'shade') {
           for (const [mx, my] of mirrored(d, X, Y)) { const c = cell(d, mx, my); if (!c) continue; const i = c[1] * d.w + c[0]; if (drag.rec.has(i)) continue; drag.rec.set(i, d.px[i]); d.px[i] = shadeColor(d.px[i], drag.dir, S.palette); }
@@ -1901,7 +1908,9 @@
         else put(d, X, Y, drag.value, drag.rec);
       }
     }
-    const shapePts = (tool, a, b) => tool === 'line' ? linePoints(a.x, a.y, b.x, b.y) : tool === 'rect' || tool === 'rectf' ? rectPoints(a.x, a.y, b.x, b.y, tool === 'rectf') : ellipsePoints(a.x, a.y, b.x, b.y, tool === 'ellipsef');
+    const shapePts = (tool, a, b) => thicken(tool === 'line' ? linePoints(a.x, a.y, b.x, b.y) : tool === 'rect' || tool === 'rectf' ? rectPoints(a.x, a.y, b.x, b.y, tool === 'rectf') : ellipsePoints(a.x, a.y, b.x, b.y, tool === 'ellipsef'), sized(tool) ? S.size : 1, S.shape);
+    /** Tools the brush size applies to (filled shapes have no stroke to thicken). */
+    function sized(t) { return t === 'pen' || t === 'erase' || t === 'shade' || t === 'line' || t === 'rect' || t === 'ellipse'; }
     const isShape = (t) => t === 'line' || t === 'rect' || t === 'rectf' || t === 'ellipse' || t === 'ellipsef';
     function fillAt(d, x, y, value, other) {
       const tmp = d.px.slice(), seeds = mirrored(d, x, y).map(([a, b]) => cell(d, a, b)).filter(Boolean), region = new Set();
@@ -1976,7 +1985,7 @@
       const c = toCell(e), p = cell(d, c.x, c.y);
       $('.pf-s-pos').textContent = p ? `x ${p[0]}  y ${p[1]}  ${toHex(d.px[p[1] * d.w + p[0]])}${isClear(d.px[p[1] * d.w + p[0]]) ? ' (clear)' : ''}` : '';
       const hovered = !S.hover || S.hover.x !== c.x || S.hover.y !== c.y; S.hover = c;
-      if (!drag) { if (hovered && (S.tool === 'pen' || S.tool === 'erase' || S.tool === 'shade')) render(); return; }
+      if (!drag) { if (hovered && sized(S.tool)) render(); return; }
       if (drag.tool === 'select') {
         if (drag.move) { S.float.x = drag.fx + c.x - drag.start.x; S.float.y = drag.fy + c.y - drag.start.y; S.sel = { x: S.float.x, y: S.float.y, w: S.float.w, h: S.float.h }; }
         else S.sel = rectBetween(drag.start, c, d.w, d.h);
@@ -2004,7 +2013,7 @@
       const d = doc(); if (!drag || !d) return;
       if (drag.tool === 'select') { if (!drag.move && S.sel && S.sel.w * S.sel.h <= 1 && drag.start.x === (S.hover || drag.start).x && drag.start.y === (S.hover || drag.start).y) S.sel = null; drag = null; render(); status(); return; }
       if (overlay) { for (const [x, y] of overlay.pts) d.px[y * d.w + x] = overlay.value; overlay = null; }
-      else if (isShape(drag.tool) && !drag.moved) { const c = cell(d, drag.start.x, drag.start.y); if (c) d.px[c[1] * d.w + c[0]] = drag.value; }
+      else if (isShape(drag.tool) && !drag.moved) { for (const [x, y] of mirrorPts(d, shapePts(drag.tool, drag.start, drag.start))) { const c = cell(d, x, y); if (c && (S.pattern !== 'dither' || ditherOn(c[0], c[1]))) d.px[c[1] * d.w + c[0]] = drag.value; } }
       if (drag.tool === 'pen' || drag.tool === 'erase') S.lastPt = drag.last;
       const same = !d.undo.length || countDiff(d.undo[d.undo.length - 1].px, d.px) === 0 && d.undo[d.undo.length - 1].w === d.w; if (same) d.undo.pop();
       drag = null; changedUi();
@@ -2357,7 +2366,7 @@
     const cycleBg = () => { const list = bgModes().map(([m]) => m), i = list.indexOf(bgMode()); setBg(list[(i + 1) % list.length]); };
     /* tool options */
     const segOn = (box, b) => $$(box + ' button').forEach((x) => x.classList.toggle('on', x === b));
-    const setSize = (n) => { S.size = Math.max(1, Math.min(8, n | 0)); $('.pf-size').value = S.size; $('.pf-sizev').textContent = S.size; render(); };
+    const setSize = (n) => { S.size = Math.max(1, Math.min(16, n | 0)); $('.pf-size').value = S.size; $('.pf-sizev').textContent = S.size; render(); };
     $('.pf-size').oninput = (e) => setSize(+e.target.value);
     $$('.pf-shape button').forEach((b) => (b.onclick = () => { S.shape = b.dataset.shape; segOn('.pf-shape', b); render(); }));
     $$('.pf-pattern button').forEach((b) => (b.onclick = () => { S.pattern = b.dataset.pattern; segOn('.pf-pattern', b); }));
@@ -2736,5 +2745,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });
