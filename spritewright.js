@@ -1690,7 +1690,7 @@
     $('.pf-ref-load').onclick = () => $('.pf-ref-file').click();
     $('.pf-ref-file').onchange = async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { setRef(await createImageBitmap(f), f.name, false); } catch (err) { note('Could not read that image: ' + err.message); } };
     $('.pf-ref-sprite').onfocus = () => { const sel = $('.pf-ref-sprite'), cur = sel.value; sel.innerHTML = '<option value="">or a sprite…</option>' + S.sprites.map((x) => `<option value="${esc(x.path)}">${esc(x.path)}</option>`).join(''); sel.value = cur; };
-    $('.pf-ref-sprite').onchange = async (e) => { const path = e.target.value; if (!path) return; const d = await loadDoc(path); if (!d) return; const c = document.createElement('canvas'); c.width = d.w; c.height = d.h; c.getContext('2d').putImageData(d.imageData(), 0, 0); setRef(c, path.split('/').pop(), true); e.target.value = ''; };
+    $('.pf-ref-sprite').onchange = async (e) => { const path = e.target.value; if (!path) return; const d = await loadDoc(path); if (!d) return; const c = document.createElement('canvas'); c.width = d.w; c.height = d.h; c.getContext('2d').putImageData(d.imageData(), 0, 0); setRef(c, path.split('/').pop(), true); e.target.value = ''; e.target.blur(); /* shortcuts (H) work straight away */ };
     $('.pf-ref-op').oninput = (e) => { if (S.ref) { S.ref.opacity = +e.target.value / 100; render(); } };
     $$('.pf-ref-place button').forEach((b) => (b.onclick = () => { segOn('.pf-ref-place', b); if (S.ref) { S.ref.over = b.dataset.place === 'over'; render(); } }));
     $$('.pf-ref-fit button').forEach((b) => (b.onclick = () => { segOn('.pf-ref-fit', b); if (S.ref) { S.ref.fit = b.dataset.fit; render(); } }));
