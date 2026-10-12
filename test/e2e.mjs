@@ -374,11 +374,14 @@ ok(await page.locator('.pf-prbtn').isDisabled(), 'after the PR, nothing is pendi
 ok(await page.evaluate(() => sessionStorage.getItem('pf:token')) !== null && (await page.evaluate(() => localStorage.getItem('pf:token'))) === null, 'the token is kept for the tab only unless "remember" is ticked');
 
 section('commit in chunks, branches, pull requests later');
-await page.locator('.pf-item', { hasText: 'slime.png' }).click(); await page.waitForTimeout(200);
+await page.locator('.pf-item', { hasText: 'slime.png' }).click();
+await page.waitForFunction(() => document.getElementById('app').__pf.current.path.endsWith('slime.png'));
 await page.keyboard.press('b');
 await setHex('#00ff00'); await click(3, 3);
-await page.locator('.pf-item', { hasText: 'gem.png' }).click(); await page.waitForTimeout(200);
+await page.locator('.pf-item', { hasText: 'gem.png' }).click();
+await page.waitForFunction(() => document.getElementById('app').__pf.current.path.endsWith('gem.png'));
 await click(4, 4);
+await page.waitForFunction(() => document.querySelectorAll('.pf-commit-list input[type=checkbox]').length === 2);
 ok((await page.locator('.pf-commit-list input[type=checkbox]').count()) === 2, 'the commit panel lists both changed sprites');
 await page.locator('.pf-commit-list input[type=checkbox]').first().uncheck();
 await page.locator('.pf-commit-msg').fill('chunk one');
@@ -386,17 +389,18 @@ await page.locator('.pf-commit-branch').fill('art/chunks');
 const at = calls.length;
 await page.locator('.pf-commit-go').click();
 try { await page.waitForFunction(() => /Committed/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   commit note:', JSON.stringify(await page.locator('.pf-commit-note').innerText()), calls.slice(at).map((c) => c.m + ' ' + c.p).join(' | ')); }
-const chunkTree = calls.slice(at).find((c) => c.p.endsWith('/git/trees') && c.body.base_tree).body;
-ok(chunkTree.tree.length === 1, 'only the ticked sprite is committed');
+const chunkTree = calls.slice(at).find((c) => c.p.endsWith('/git/trees') && c.body.base_tree);
+ok(chunkTree && chunkTree.body.tree.length === 1, 'only the ticked sprite is committed');
 ok(await page.locator('.pf-commit-openpr').count() === 1, 'with no open pull request for the branch, the panel offers to open one');
 await page.locator('.pf-commit-openpr').click();
-await page.waitForFunction(() => /pull\/4/.test(document.querySelector('.pf-commit-note').innerHTML), null, { timeout: 8000 });
+try { await page.waitForFunction(() => /pull\/4/.test(document.querySelector('.pf-commit-note').innerHTML), null, { timeout: 8000 }); } catch { console.log('   open-pr note:', JSON.stringify(await page.locator('.pf-commit-note').innerText())); }
 ok((await page.locator('.pf-commit-note a').getAttribute('href')) === 'https://github.com/me/game/pull/4', 'one click opens the pull request for the whole branch');
 await setHex('#0000ff'); await click(5, 5);
+await page.waitForFunction(() => document.querySelectorAll('.pf-commit-list input[type=checkbox]').length >= 1);
 await page.locator('.pf-commit-msg').fill('chunk two');
 const pullsBefore = calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length;
 await page.locator('.pf-commit-go').click();
-await page.waitForFunction(() => /added to/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 });
+try { await page.waitForFunction(() => /added to|pull request/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   chunk-two note:', JSON.stringify(await page.locator('.pf-commit-note').innerText())); }
 ok(calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length === pullsBefore && /pull\/4/.test(await page.locator('.pf-commit-note').innerHTML), 'the second chunk joins pull request #4 instead of opening a new one');
 ok(calls.some((c) => c.m === 'PATCH' && /art\/chunks$/.test(c.p)), 'appending to the branch updates its ref');
 await page.locator('.pf-commit-branch').click();
@@ -770,6 +774,9 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.locator('.pf-q').fill('hero_0'); await fp.locator('.pf-item').first().click(); await fp.waitForTimeout(250); await fp.locator('.pf-q').fill('');
   ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png' && (await fp.locator('.pf-cell').count()) === 2, 'opening a sprite reveals its folder and leaves the other folded');
   await fp.locator('.pf-unfold-all').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'and unfold all restores the rest');
+  await fp.locator('.pf-dir', { hasText: 'chars' }).click();
+  ok((await fp.locator('.pf-cur .n').innerText()) === 'hero_0.png', 'a folded folder still shows the sprite being edited');
+  await fp.locator('.pf-cur').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'clicking it unfolds the folder');
   await fp.locator('.pf-cell', { hasText: 'bat.png' }).click(); await fp.waitForTimeout(250);
   ok((await fp.locator('.pf-fam-kind').innerText()) === 'single sprite', 'a lone sprite shows its one-member family');
   await fp.locator('.pf-fam-add').click(); await fp.waitForTimeout(400);
@@ -781,9 +788,6 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.locator('.pf-new').click(); await fp.waitForSelector('.pf-dlg-new[open]');
   ok((await fp.locator('.pf-nn').inputValue()) === 'new_sprite1.png', 'then the next one after that');
   await fp.locator('.pf-dlg-new button[value=cancel]').click();
-  await fp.locator('.pf-dir', { hasText: 'chars' }).click();
-  ok((await fp.locator('.pf-cur .n').innerText()) === 'hero_0.png', 'a folded folder still shows the sprite being edited');
-  await fp.locator('.pf-cur').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'clicking it unfolds the folder');
   // family strip
   await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(250);
   ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png', 'clicking a family opens its first frame');
