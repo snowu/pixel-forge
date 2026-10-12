@@ -26,10 +26,21 @@ To host the page yourself: copy `index.html` and `spritewright.js` to any static
 
 ### 2. As a dependency of a game repository
 
+No install at all: from the root of any clone of the game (needs Node 18+), run
+
 ```sh
-npm i -D spritewright            # or: npm i -D github:snowu/spritewright   (until it is on the npm registry)
+npx --allow-git=root github:snowu/spritewright --open   # editor + save-to-disk server on http://127.0.0.1:5173
+```
+
+then edit, **Save** (writes the PNGs in place), and commit/push or open a PR with git as usual. `--allow-git=root` is needed because npm 12 refuses packages fetched from GitHub unless you opt in; it only allows this one package. spritewright is not on the npm registry, so do not `npm i spritewright`.
+
+To pin it in the repo instead:
+
+```sh
+echo "allow-git=root" >> .npmrc  # so later `npm install` / `npm ci` runs accept it too
+npm i -D github:snowu/spritewright
 npx spritewright init            # writes spritewright.config.json (skips docs, screenshots, previews)
-npx spritewright --open          # editor + save-to-disk server on http://127.0.0.1:5173
+npx spritewright --open
 ```
 
 `spritewright init` looks at what a scan finds and writes a starter config; for a project with `art-handoff/`, `public/art/` and `docs/previews/` it picks the first two. Add a script so the artist just runs `npm run art`:
