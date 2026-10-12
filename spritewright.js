@@ -91,11 +91,28 @@
   const rotateCW = (px, w, h) => { const o = new Uint32Array(px.length); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) o[x * h + (h - 1 - y)] = px[y * w + x]; return o; };
   /** Move everything by (dx,dy), wrapping around the edges so nothing is lost. */
   const shiftWrap = (px, w, h, dx, dy) => { const o = new Uint32Array(px.length); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) o[((y + dy % h + h) % h) * w + ((x + dx % w + w) % w)] = px[y * w + x]; return o; };
-  /** A new canvas size. anchor 'tl' keeps the top-left corner, 'c' keeps the centre. */
+  /** Where the old image lands on a new canvas. anchor: tl t tr / l c r / bl b br (the part of the image that stays put). */
+  function anchorOffset(w, h, nw, nh, anchor = 'tl') {
+    const a = anchor === 'c' ? '' : anchor, ox = a.includes('l') ? 0 : a.includes('r') ? nw - w : Math.floor((nw - w) / 2), oy = a.startsWith('t') ? 0 : a.startsWith('b') ? nh - h : Math.floor((nh - h) / 2);
+    return { x: ox, y: oy };
+  }
+  /** A new canvas size: the image is kept at its anchor, cut off or surrounded by transparent pixels. */
   function resizePx(px, w, h, nw, nh, anchor) {
-    const o = new Uint32Array(nw * nh), ox = anchor === 'c' ? Math.floor((nw - w) / 2) : 0, oy = anchor === 'c' ? Math.floor((nh - h) / 2) : 0;
+    const o = new Uint32Array(nw * nh), { x: ox, y: oy } = anchorOffset(w, h, nw, nh, anchor);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const X = x + ox, Y = y + oy; if (X >= 0 && Y >= 0 && X < nw && Y < nh) o[Y * nw + X] = px[y * w + x]; }
     return o;
+  }
+  /** Scale the image itself to nw x nh, nearest neighbour (pixels are repeated or dropped, never blended). */
+  function scalePx(px, w, h, nw, nh) {
+    const o = new Uint32Array(nw * nh);
+    for (let y = 0; y < nh; y++) { const sy = Math.min(h - 1, Math.floor((y + 0.5) * h / nh)); for (let x = 0; x < nw; x++) o[y * nw + x] = px[sy * w + Math.min(w - 1, Math.floor((x + 0.5) * w / nw))]; }
+    return o;
+  }
+  /** The smallest rectangle holding every visible pixel, or null when the image is empty. */
+  function opaqueBounds(px, w, h) {
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (px[y * w + x] >>> 24) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
   }
   const countDiff = (a, b) => { if (a.length !== b.length) return Math.max(a.length, b.length); let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
 
@@ -452,6 +469,24 @@
     return out;
   }
 
+  /** A .zip of files ({ name, bytes }), stored without compression (PNGs are compressed already). Folders in names are kept. */
+  function zipFiles(files) {
+    const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+    for (const f of files) {
+      const name = enc.encode(f.name), b = f.bytes, crc = crc32(b, 0, b.length), head = new Uint8Array(30 + name.length), dv = new DataView(head.buffer);
+      dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, 0x800, true); dv.setUint16(10, 0, true); dv.setUint16(12, 0x21, true); // utf-8 names, 1980-01-01
+      dv.setUint32(14, crc, true); dv.setUint32(18, b.length, true); dv.setUint32(22, b.length, true); dv.setUint16(26, name.length, true); head.set(name, 30);
+      const c = new Uint8Array(46 + name.length), cv = new DataView(c.buffer);
+      cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, 0x800, true); cv.setUint16(14, 0x21, true);
+      cv.setUint32(16, crc, true); cv.setUint32(20, b.length, true); cv.setUint32(24, b.length, true); cv.setUint16(28, name.length, true); cv.setUint32(42, off, true); c.set(name, 46);
+      parts.push(head, b); central.push(c); off += head.length + b.length;
+    }
+    const size = central.reduce((n, c) => n + c.length, 0), end = new Uint8Array(22), ev = new DataView(end.buffer);
+    ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true); ev.setUint32(12, size, true); ev.setUint32(16, off, true);
+    const out = new Uint8Array(off + size + 22); let p = 0; for (const x of [...parts, ...central, end]) { out.set(x, p); p += x.length; }
+    return out;
+  }
+
 
   /* =====================================================================================================
      Sources: where sprites come from and how they are read and written. The editor itself does not care.
@@ -519,7 +554,7 @@
   /** Sprites listed in a manifest and fetched over HTTP relative to baseUrl. Read-only (Save downloads). */
   function staticSource(mf, baseUrl) {
     const base = baseUrl == null ? '' : baseUrl && !baseUrl.endsWith('/') ? baseUrl + '/' : baseUrl;
-    return { kind: 'static', thumbs: true, note: 'Static mode: Save downloads the PNG. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'static', thumbs: true, note: 'Static mode: edits are kept in this browser; Download takes them out. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(base + path.split('/').map(encodeURIComponent).join('/')); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); } };
   }
   /** The local `spritewright serve` server: reads and writes the project folder. */
@@ -571,7 +606,7 @@
       const f = await call(`/repos/${o.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`); return b64ToBytes(f.content.replace(/\n/g, ''));
     };
     return { kind: 'github', thumbs: true, history, readAt, sprites, hidden, palette, branch, background: cfg.background || null,
-      note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Save downloads; Propose PR sends changes back.',
+      note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Edits are kept in this browser; Propose PR sends them back.',
       repo: { slug: o.repo, base: branch, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
 
@@ -768,7 +803,13 @@
 .pf-ramp{display:flex;flex-direction:column;gap:6px}.pf-ramp[hidden]{display:none}.pf .pf-ramp .pf-sw button{width:34px;height:24px}
 .pf-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .pf-prev canvas{image-rendering:pixelated;background:var(--pf-ckbg);max-width:100%;display:block;border:1px solid var(--pf-line)}
-.pf-note{color:var(--pf-muted);font-size:11.5px}.pf-bad{color:var(--pf-bad)}
+.pf-note{color:var(--pf-muted);font-size:11.5px}.pf-bad{color:var(--pf-bad)}.pf-ok{color:var(--pf-good)}
+.pf .pf-s-size{min-height:0;padding:0 5px;font:inherit;background:none;border:1px dashed var(--pf-line2);color:inherit;cursor:pointer}.pf .pf-s-size:hover{border-color:var(--pf-accent);color:var(--pf-accent)}
+.pf-sz-body{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}.pf-sz-fields{display:flex;flex-direction:column;gap:8px;min-width:250px}
+.pf-sz-anchorrow{display:flex;gap:10px;align-items:center}.pf-sz-anchor{display:grid;grid-template-columns:repeat(3,26px);gap:3px}
+.pf .pf-sz-anchor button{width:26px;height:26px;min-height:0;padding:0;background:var(--pf-panel2)}.pf .pf-sz-anchor button.on{background:var(--pf-accent);border-color:var(--pf-accent)}
+.pf-sz-prev{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;min-width:170px;min-height:170px;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-sz-cv{image-rendering:pixelated;outline:1px dashed var(--pf-accent)}
+.pf-sz-mode{align-self:flex-start}.pf-sz-info{text-align:center}.pf .pf-sz-quick button{min-width:34px}.pf-c-resume{margin-top:6px}
 .pf-pal-empty[hidden]{display:none}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
 .pf .pf-c-pick.on{border-color:var(--pf-accent)}
@@ -838,13 +879,14 @@
     my: '<path d="M3 12h18" stroke-dasharray="1.5 2.5"/><path d="M7.5 9L12 4.5 16.5 9z"/><path d="M7.5 15l4.5 4.5 4.5-4.5z"/>',
     sq: '<rect x="6.5" y="6.5" width="11" height="11" fill="currentColor"/>',
     circ: '<circle cx="12" cy="12" r="6" fill="currentColor"/>',
+    download: '<path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 17.5v2h15v-2"/>',
   };
   const icon = (name) => `<svg class="pf-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   // [id, name, key, rail icon or the rail tool it belongs to]
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
   const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D', 'select & move · shade'], ['[ ]', 'brush size'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
-    ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
+    ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save (to the project folder when it can be written; edits are kept in this browser either way)'], ['Ctrl+Shift+S', 'download this sprite as a PNG'], ['Ctrl+Alt+C', 'canvas size'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
   /* What shows behind transparent pixels. No single background suits all art (dark details vanish on the dark checker, pale
      ones on the light one), so like Aseprite, Pixelorama and Piskel the editor offers a few and remembers the choice.
      "project" is the game's own background colour from spritewright.config.json ("background": "#1a1426"). */
@@ -866,6 +908,31 @@
 
   function $$dialogs(root) { root.querySelectorAll('dialog form').forEach((f) => f.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON') e.preventDefault(); })); }
 
+  /* =====================================================================================================
+     Edits kept in this browser (IndexedDB), so a reload, a crash or a closed tab loses nothing. One record per project + file:
+       { path, w, h, px, base, saved, local, isNew, onDisk, frames, at }   (px arrays are Uint32Array, stored as they are)
+     The editor writes a record whenever a sprite differs from what it can get back from its project, and deletes it once it
+     does not (saved to disk, proposed in a pull request, or reverted). Pass { drafts: false } to mount() to turn this off.
+     ===================================================================================================== */
+  function browserDrafts(name = 'spritewright') {
+    let dbp = null;
+    const open = () => dbp || (dbp = new Promise((res, rej) => {
+      if (typeof indexedDB === 'undefined') return rej(new Error('this browser has no IndexedDB'));
+      const r = indexedDB.open(name, 1); r.onupgradeneeded = () => r.result.createObjectStore('drafts');
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error || new Error('storage blocked')); r.onblocked = () => rej(new Error('storage blocked'));
+    }).catch((e) => { dbp = null; throw e; }));
+    const run = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction('drafts', mode), r = fn(t.objectStore('drafts')); t.oncomplete = () => res(r.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('storage aborted')); }); };
+    const all = (project) => IDBKeyRange.bound([project], [project, []]); // every [project, path] key
+    return {
+      list: (project) => run('readonly', (s) => s.getAll(all(project))),
+      put: (project, rec) => run('readwrite', (s) => s.put({ ...rec, project }, [project, rec.path])),
+      remove: (project, path) => run('readwrite', (s) => s.delete([project, path])),
+      clear: (project) => run('readwrite', (s) => s.delete(all(project))),
+    };
+  }
+  /** No project: sprites uploaded or drawn from scratch, living only in this browser until they are downloaded. */
+  const browserSource = () => ({ kind: 'browser', thumbs: false, sprites: [], hidden: [], note: 'Just drawing: these sprites are kept in this browser (they survive reloads). Download them, or open a project.', async read(path) { throw new Error(path + ' only exists in this browser'); } });
+
   function mount(host, options = {}) {
     if (!document.getElementById('pf-vision-defs')) { // colour-blind simulations (Machado, Oliveira & Fernandes 2009, full severity), used by CSS filters
       const m = { protan: '0.152286 1.052583 -0.204868 0 0 0.114503 0.786281 0.099216 0 0 -0.003882 -0.048116 1.051998 0 0', deutan: '0.367322 0.860646 -0.227968 0 0 0.280085 0.672501 0.047413 0 0 -0.011820 0.042940 0.968881 0 0', tritan: '1.255528 -0.076749 -0.178779 0 0 -0.078411 0.930809 0.147602 0 0 0.004733 0.691367 0.303900 0 0' };
@@ -885,7 +952,7 @@
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
           <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
-          <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-export" title="Download a PNG, optionally scaled up">Export</button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
+          <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
         <div class="pf-opts">
           <span class="pf-opt" data-for="pen erase shade"><span class="pf-ol">size</span><input type="range" class="pf-size" min="1" max="8" value="1" aria-label="Brush size"><b class="pf-sizev">1</b>
@@ -896,7 +963,7 @@
           <span class="pf-opt" data-for="line"><span class="pf-note">Shift snaps to 45°</span></span>
           <span class="pf-opt" data-for="pen"><button class="pf-pp" title="Pixel-perfect pencil: removes the corner doubles that make 1-pixel lines lumpy. Best for single lines; leave it off to fill areas by dragging.">clean lines</button><span class="pf-note">Shift+click: line from the last point</span></span>
           <span class="pf-opt" data-for="shade"><span class="pf-note">click lightens · right click darkens · steps through the palette when one is loaded</span></span>
-          <span class="pf-opt" data-for="select"><button class="pf-sel-copy" title="Copy (Ctrl+C)">copy</button><button class="pf-sel-cut" title="Cut (Ctrl+X)">cut</button><button class="pf-sel-paste" title="Paste (Ctrl+V; images from other apps too)">paste</button><button class="pf-sel-del" title="Delete (Del)">delete</button><button class="pf-sel-all" title="Select all (Ctrl+A)">all</button><button class="pf-sel-none" title="Drop the selection (Esc)">deselect</button><span class="pf-note">drag inside to move · arrows nudge</span></span>
+          <span class="pf-opt" data-for="select"><button class="pf-sel-copy" title="Copy (Ctrl+C)">copy</button><button class="pf-sel-cut" title="Cut (Ctrl+X)">cut</button><button class="pf-sel-paste" title="Paste (Ctrl+V; images from other apps too)">paste</button><button class="pf-sel-del" title="Delete (Del)">delete</button><button class="pf-sel-all" title="Select all (Ctrl+A)">all</button><button class="pf-sel-crop" title="Crop the canvas to the selection">crop</button><button class="pf-sel-none" title="Drop the selection (Esc)">deselect</button><span class="pf-note">drag inside to move · arrows nudge</span></span>
           <span class="pf-opt pf-opt-end" data-for="*"><button class="pf-mx" title="Mirror left-right (M)">${icon('mx')}<span>mirror X</span></button><button class="pf-my" title="Mirror up-down">${icon('my')}<span>mirror Y</span></button></span>
         </div>
         <div class="pf-work">
@@ -931,7 +998,8 @@
           <div class="pf-row"><button class="pf-sh" data-d="-1,0">←</button><button class="pf-sh" data-d="0,-1">↑</button><button class="pf-sh" data-d="0,1">↓</button><button class="pf-sh" data-d="1,0">→</button><span class="pf-note">wrap shift</span></div>
           <div class="pf-row"><button class="pf-variant" title="A recoloured copy of this sprite (and its whole family: every pose and frame) as new files, e.g. king → king_dark">Make variant…</button></div>
           <div class="pf-row"><button class="pf-outline" title="Draw a 1-pixel outline in the primary colour around everything opaque">Outline</button><label class="pf-note"><input type="checkbox" class="pf-outline-c"> corners</label></div>
-          <div class="pf-row"><button class="pf-resize">Canvas size…</button><button class="pf-clear">Clear</button></div></div>
+          <div class="pf-row"><button class="pf-resize" title="Change the canvas size, or scale the image (also: click the size in the status bar)">Canvas size…</button><button class="pf-trim" title="Cut away the empty (transparent) border">Trim</button><button class="pf-clear">Clear</button></div>
+          <div class="pf-row"><button class="pf-revert" title="Throw away every change to this sprite and go back to the original (undo brings them back)">Revert to original</button></div></div>
       </aside>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
         <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
@@ -959,13 +1027,19 @@
         </section>
         <div class="pf-c-grid">
           <section class="pf-c-tile pf-c-folderbox"><span class="pf-c-title">Folder on this computer</span><span class="pf-note pf-c-foldernote"></span><button type="button" class="pf-c-folder">Choose folder…</button></section>
-          <section class="pf-c-tile"><span class="pf-c-title">Just draw</span><span class="pf-note">Stays in this tab. Download when done.</span><span class="pf-row"><button type="button" class="pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></span></section>
+          <section class="pf-c-tile"><span class="pf-c-title">Just draw</span><span class="pf-note">Kept in this browser, even after a reload. Download when done.</span><span class="pf-row"><button type="button" class="pf-c-upload">Upload PNG…</button><button type="button" class="pf-c-blank">Blank sprite</button></span><button type="button" class="pf-c-resume" hidden></button></section>
         </div>
         <div class="pf-log pf-c-msg" aria-live="polite"></div>
         <div class="pf-note pf-c-foot">Tip: drop PNG files onto the canvas at any time.</div></form></dialog>
-      <dialog class="pf-dlg-size"><form method="dialog" class="pf-form"><h4>Canvas size</h4>
-        <div class="pf-row"><label>width <input type="number" class="pf-sz-w" min="1" max="1024"></label><label>height <input type="number" class="pf-sz-h" min="1" max="1024"></label></div>
-        <label>keep <select class="pf-sz-a"><option value="tl">top-left</option><option value="c">centre</option></select></label>
+      <dialog class="pf-dlg-size"><form method="dialog" class="pf-form">
+        <div class="pf-dlg-head"><h4>Canvas size</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <span class="pf-seg pf-sz-mode"><button type="button" data-mode="canvas" class="on" title="Add or cut away space around the image; the pixels stay the same size">resize canvas</button><button type="button" data-mode="scale" title="Stretch or shrink the image itself (nearest neighbour: pixels repeat or drop, never blur)">scale image</button></span>
+        <div class="pf-sz-body"><div class="pf-sz-fields">
+          <div class="pf-row"><label>width <input type="number" class="pf-sz-w" min="1" max="1024"></label><label>height <input type="number" class="pf-sz-h" min="1" max="1024"></label></div>
+          <div class="pf-row pf-sz-quick"><button type="button" data-q="half" title="Half the size">½</button><button type="button" data-q="double" title="Twice the size">×2</button><button type="button" data-q="pow2" title="Round up to a power of two (16, 32, 64…)">2ⁿ</button><button type="button" data-q="square" title="Make it square (the bigger side)">square</button><label class="pf-note pf-sz-lockrow"><input type="checkbox" class="pf-sz-lock" checked> keep proportions</label></div>
+          <div class="pf-sz-anchorrow"><span class="pf-ol">anchor</span><div class="pf-sz-anchor" role="radiogroup" aria-label="Where the image stays">${['tl', 't', 'tr', 'l', 'c', 'r', 'bl', 'b', 'br'].map((a) => `<button type="button" data-a="${a}" role="radio" title="Keep the ${{ tl: 'top-left corner', t: 'top edge', tr: 'top-right corner', l: 'left edge', c: 'centre', r: 'right edge', bl: 'bottom-left corner', b: 'bottom edge', br: 'bottom-right corner' }[a]} in place"></button>`).join('')}</div></div>
+          <label class="pf-note pf-sz-famrow" hidden><input type="checkbox" class="pf-sz-fam" checked> <span class="pf-sz-famtext"></span></label></div>
+          <div class="pf-sz-prev"><canvas class="pf-sz-cv"></canvas><div class="pf-note pf-sz-info"></div></div></div>
         <div class="pf-row"><button type="button" class="primary pf-sz-ok">Apply</button><button value="cancel">Cancel</button></div></form></dialog>
       <dialog class="pf-dlg-variant"><form method="dialog" class="pf-form">
         <div class="pf-dlg-head"><h4>New variant</h4><button value="cancel" class="pf-x" aria-label="Close">✕</button></div>
@@ -1065,8 +1139,9 @@
     const storedToken = () => { try { return sessionStorage.getItem('pf:token') || localStorage.getItem('pf:token') || ''; } catch { return ''; } };
     async function fetchJson(u) { const r = await fetch(u); if (!r.ok) throw new Error(u + ': ' + r.status); return r.json(); }
     /** Make `src` the project being edited. Returns false if the user chose to keep their unsaved session. */
-    async function useSource(src) {
-      if ([...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
+    async function useSource(src, how = {}) {
+      commitFloat(); await flushDrafts(); // this project's edits stay in the browser: they come back when it is opened again
+      if (!keeping() && [...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
       play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; folded = null; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
@@ -1074,8 +1149,10 @@
       const label = src.kind === 'github' ? src.repo.slug : src.kind === 'folder' ? src.name : '';
       $('.pf-source').textContent = label ? label + ' ▾' : 'Open project…'; $('.pf-source').title = (label ? label + ': ' : '') + 'switch to another GitHub repository or a folder on this computer';
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
+      const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src);
       renderList(); renderPalette(); applyBg();
-      if (S.sprites.length) await openSprite(S.sprites[0].path); else { status(); render(); }
+      if (restored.length) { await openSprite(restored[0].path); note(`${restored.length} sprite${restored.length > 1 ? 's' : ''} with changes restored from this browser`); }
+      else if (S.sprites.length) await openSprite(S.sprites[0].path); else { status(); render(); }
       return true;
     }
     async function init() {
@@ -1089,7 +1166,14 @@
         try { const mf = await fetchJson('api/manifest'), m = document.querySelector('meta[name="pf-token"]'); return void (await useSource(serverSource(mf, m ? m.content : ''))); } catch { /* no local server here */ }
         try { const mf = await fetchJson('pixel-art.json'); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); } catch { /* no manifest here */ }
         status(); render();
-        if (O.blank) await addLocal(O.blank.name || 'sprite.png', O.blank.w || 16, O.blank.h || 16, new Uint32Array((O.blank.w || 16) * (O.blank.h || 16)), false); else if (O.connect !== false) openConnect();
+        /* no project given: reopen the last GitHub repository, or carry on with what was drawn in this browser */
+        const last = O.blank ? null : lastProject(); let why = '';
+        if (last && last.kind === 'github' && O.connect !== false) {
+          try { return void (await useSource(await githubSource({ repo: last.slug, branch: last.branch, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase }))); } catch (e) { why = 'Could not reopen ' + last.slug + ': ' + e.message; }
+        }
+        await useSource(browserSource(), { remember: !last || last.kind === 'browser' });
+        if (O.blank && !S.docs.size) await addLocal(O.blank.name || 'sprite.png', O.blank.w || 16, O.blank.h || 16, new Uint32Array((O.blank.w || 16) * (O.blank.h || 16)), false);
+        else if (!S.docs.size && O.connect !== false) openConnect(why || (last && last.kind === 'folder' ? `Choose the folder "${last.name}" again to pick up where you left off (your unsaved edits are kept in this browser).` : ''));
       } catch (e) { note('Could not start: ' + e.message); }
     }
     /** The document for a sprite, loading it if needed (without opening it). Null if it cannot be read. */
@@ -1110,9 +1194,68 @@
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
       let path = name, n = 1; while (S.docs.has(path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
-      S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); return openSprite(path);
+      S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); keepSoon(); return openSprite(path);
     }
     const canWrite = () => !!(S.src && S.src.write);
+    /** Save sends this sprite somewhere outside the browser (the project folder, or the page's own save hook). */
+    const savesOut = (d) => !!O.save || (canWrite() && !d.local);
+
+    /* ---------- kept in this browser (see browserDrafts) ---------- */
+    const drafts = O.drafts === false ? null : O.drafts || browserDrafts();
+    let draftsOk = !!drafts, draftTimer = 0, flushing = Promise.resolve();
+    const keeping = () => !!drafts && draftsOk;
+    const projectKey = () => {
+      const s = S.src; if (O.draftsKey) return O.draftsKey;
+      if (!s || s.kind === 'browser') return 'browser:' + location.pathname;
+      if (s.kind === 'github') return 'github:' + s.repo.slug + '@' + s.branch;
+      if (s.kind === 'folder') return 'folder:' + s.name;
+      return (s.kind || 'custom') + ':' + location.origin + location.pathname + (O.manifestUrl ? '#' + O.manifestUrl : '');
+    };
+    /** Does this sprite hold work that only exists here? Then it needs a browser copy. */
+    const needsKeep = (d) => (savesOut(d) ? d.unsaved || (d.isNew && !d.onDisk) : d.changed || d.local || d.isNew);
+    const pixelsNow = (d) => { if (d !== doc() || !S.float) return d.px; const px = d.px.slice(), f = S.float; pasteRect(px, d.w, d.h, f.px, f.w, f.h, f.x, f.y, false); return px; };
+    const isKept = (d) => !!d.kept && d.kept.w === d.w && d.kept.h === d.h && countDiff(d.kept.px, pixelsNow(d)) === 0;
+    /** Work that would be lost if the tab closed now. */
+    const atRisk = (d) => (keeping() ? needsKeep(d) && !isKept(d) : savesOut(d) ? d.unsaved : d.changed || d.local);
+    const keepSoon = () => { if (!drafts) return; clearTimeout(draftTimer); draftTimer = setTimeout(flushDrafts, 250); };
+    function flushDrafts() {
+      clearTimeout(draftTimer); if (!keeping()) return flushing;
+      const key = projectKey(), list = [...S.docs.values()];
+      flushing = flushing.then(async () => {
+        let touched = false;
+        try {
+          for (const d of list) {
+            if (needsKeep(d)) {
+              if (isKept(d)) continue;
+              const px = pixelsNow(d).slice();
+              await drafts.put(key, { path: d.path, w: d.w, h: d.h, px, base: d.base, saved: d.saved, local: d.local, isNew: d.isNew, onDisk: !!d.onDisk, frames: d.frames, at: Date.now() });
+              d.kept = { w: d.w, h: d.h, px }; touched = true;
+            } else if (d.kept) { await drafts.remove(key, d.path); d.kept = null; touched = true; }
+          }
+        } catch (e) { draftsOk = false; note('This browser cannot keep your edits (' + e.message + '): use Save, Download or Propose PR before closing the tab.'); }
+        if (touched && S.docs.size) { status(); renderListSoon(); }
+      });
+      return flushing;
+    }
+    /** Bring back what this project had kept in the browser. Newest first. */
+    async function restoreDrafts() {
+      if (!keeping()) return [];
+      let recs = []; try { recs = await drafts.list(projectKey()); } catch { draftsOk = false; return []; }
+      recs.sort((a, b) => (b.at || 0) - (a.at || 0));
+      for (const r of recs) {
+        const d = new Doc(r.path, r.w, r.h, r.px, { local: r.local, isNew: r.isNew, frames: r.frames });
+        d.base = r.base; d.saved = r.saved || { w: r.w, h: r.h, px: r.px.slice() }; d.onDisk = !!r.onDisk; d.kept = { w: r.w, h: r.h, px: r.px.slice() };
+        S.docs.set(r.path, d);
+        const meta = S.sprites.find((x) => x.path === r.path); if (meta) { meta.w = r.w; meta.h = r.h; } else S.sprites.push({ path: r.path, w: r.w, h: r.h, local: !!r.local });
+      }
+      return recs;
+    }
+    const LAST_KEY = 'pf:last';
+    const lastProject = () => { try { return JSON.parse(localStorage.getItem(LAST_KEY) || 'null'); } catch { return null; } };
+    function rememberProject(src) { // only projects picked on this page; ones given by the page's own options always load anyway
+      const v = src.kind === 'github' ? { kind: 'github', slug: src.repo.slug, branch: src.branch } : src.kind === 'folder' ? { kind: 'folder', name: src.name } : src.kind === 'browser' ? { kind: 'browser' } : null;
+      if (v && !(O.source || O.sprites || O.manifestUrl)) try { localStorage.setItem(LAST_KEY, JSON.stringify(v)); } catch { /* not remembered */ }
+    }
 
     /* ---------- list ---------- */
     const thumbs = new Map();
@@ -1131,11 +1274,11 @@
     }
     const spriteOf = (path) => S.sprites.find((x) => x.path === path);
     function tileHtml(s, label, fam, flat) {
-      const d = S.docs.get(s.path), members = fam ? fam.members : [s.path], dirty = members.some((p) => { const x = S.docs.get(p); return x && x.unsaved; }), changed = members.some((p) => { const x = S.docs.get(p); return x && x.changed; });
+      const d = S.docs.get(s.path), members = fam ? fam.members : [s.path], dirty = members.some((p) => { const x = S.docs.get(p); return x && (savesOut(x) ? x.unsaved : atRisk(x)); }), changed = members.some((p) => { const x = S.docs.get(p); return x && (x.changed || x.local || x.isNew); });
       const size = d ? d.w + '×' + d.h : (s.w || '?') + '×' + (s.h || '?'), dir = s.path.split('/').slice(0, -1).join('/') || '.';
       const badge = fam && fam.members.length > 1 ? `<i class="pf-badge${fam.animated ? ' anim' : ''}" title="${fam.animated ? 'animation: ' + fam.members.length + ' frames' : fam.members.length + ' images in this family'}">${fam.animated ? '▶' : ''}${fam.members.length}</i>` : '';
       const on = members.includes(S.cur);
-      return `<button class="pf-item${flat ? '' : ' pf-cell'}${on ? ' on' : ''}" role="option" data-path="${esc(s.path)}" title="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(label)}<small>${flat ? esc(dir) + ' · ' : ''}${size}</small></span>${badge}${dirty ? '<i class="dot" title="unsaved"></i>' : changed ? '<i class="dot base" title="saved, not yet proposed"></i>' : ''}</button>`;
+      return `<button class="pf-item${flat ? '' : ' pf-cell'}${on ? ' on' : ''}" role="option" data-path="${esc(s.path)}" title="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(label)}<small>${flat ? esc(dir) + ' · ' : ''}${size}</small></span>${badge}${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? `<i class="dot base" title="${keeping() && !(d && savesOut(d)) ? 'changed: kept in this browser, not in a pull request yet' : 'saved, not yet proposed'}"></i>` : ''}</button>`;
     }
     function renderList() {
       const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'), groups = regroup(); list.innerHTML = '';
@@ -1308,12 +1451,18 @@
       else { g.imageSmoothingEnabled = false; g.drawImage(r.img, S.ox, S.oy, r.img.width * z, r.img.height * z); }
       g.restore();
     }
+    const setHtml = (e, h) => { if (e.__h !== h) { e.__h = h; e.innerHTML = h; } }; // rewrite only on change: the status bar holds buttons people press and hold
     function status() {
       const d = doc();
-      $('.pf-s-name').innerHTML = d ? `<b>${esc(d.path)}</b>${d.unsaved ? ' · <span class="pf-bad">unsaved</span>' : d.changed ? ' · saved, not yet in a PR' : ''}${d.changed ? ` · <span class="pf-s-peek" title="Press and hold (or hold \\) to see the original">${d.changedPixels()} px changed · hold \\ for before</span>` : ''}` : 'No sprite open';
-      $('.pf-s-info').innerHTML = d ? `${d.w}×${d.h} · zoom ${S.zoom}×${S.notice ? ' · ' + esc(S.notice) : ''}` : esc(S.notice);
+      const where = !d ? '' : savesOut(d) ? (d.unsaved ? ' · <span class="pf-bad">unsaved</span>' + (keeping() && isKept(d) ? ' (kept in this browser meanwhile)' : '') : d.changed ? ' · saved, not yet in a PR' : '')
+        : needsKeep(d) ? (!keeping() ? ' · <span class="pf-bad">not kept: download it before closing</span>' : isKept(d) ? ' · <span class="pf-ok">kept in this browser</span>' + (d.changed && S.src && S.src.kind === 'github' ? ', not in a PR yet' : '') : ' · saving…') : '';
+      setHtml($('.pf-s-name'), d ? `<b>${esc(d.path)}</b>${where}${d.changed ? ` · <span class="pf-s-peek" title="Press and hold (or hold \\) to see the original">${d.changedPixels()} px changed · hold \\ for before</span>` : ''}` : 'No sprite open');
+      setHtml($('.pf-s-info'), d ? `<button type="button" class="pf-s-size" title="Canvas size (Ctrl+Alt+C)">${d.w}×${d.h}</button> · zoom ${S.zoom}×${S.notice ? ' · ' + esc(S.notice) : ''}` : esc(S.notice));
       $('.pf-zl').textContent = S.zoom + '×'; $('.pf-s-sel').textContent = S.sel ? `selection ${S.sel.w}×${S.sel.h}${S.float ? ' · floating' : ''}` : '';
-      $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d;
+      $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed;
+      const out = d && savesOut(d), pend = d && !out && needsKeep(d) && !isKept(d);
+      $('.pf-save').textContent = !d || out || pend || !keeping() ? 'Save' : 'Saved'; $('.pf-save').classList.toggle('primary', !d || !!out || !!pend || !keeping());
+      $('.pf-save').title = out ? 'Save to the project (Ctrl+S). Until then your edits are kept in this browser.' : keeping() ? 'Your edits are kept in this browser as you draw and survive reloads (Ctrl+S keeps them right away). Download or Propose PR to take them out.' : 'This browser cannot keep edits: use Download.';
       $('.pf-prbtn').hidden = !O.pr; $('.pf-prbtn').disabled = ![...S.docs.values()].some((x) => x.changed);
     }
 
@@ -1328,7 +1477,7 @@
     }
     $('.pf-tools').innerHTML = TOOLS.filter((x) => !x[3]).map(([k, n, key]) => `<button data-t="${k}" title="${n} (${key})" aria-label="${n}">${icon(k)}</button>`).join('');
     $('.pf-keys').innerHTML = KEYS.map(([k, v]) => `<div class="pf-key"><kbd>${esc(k)}</kbd><span>${esc(v)}</span></div>`).join('');
-    const changedUi = () => { renderColors(); status(); renderListSoon(); drawPreview(); render(); renderFamilySoon(); };
+    const changedUi = () => { keepSoon(); renderColors(); status(); renderListSoon(); drawPreview(); render(); renderFamilySoon(); };
     let famTimer = 0; const renderFamilySoon = () => { clearTimeout(famTimer); famTimer = setTimeout(renderFamily, 150); };
     let listTimer = 0; const renderListSoon = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 120); };
     /** Where a pixel lands: wrapped around the edges in tile mode, else null when outside the image. */
@@ -1473,18 +1622,44 @@
       if (hasStreams()) return new Blob([await encodePngBytes(d.w, d.h, d.px, scale)], { type: 'image/png' });
       const c = document.createElement('canvas'); drawPx(c, d, scale); return toBlob(c);
     }
+    /* Save: writes to the project when it can be written (local server, folder, the page's save hook). Everything else stays in
+       this browser, kept as you draw (Save only makes that immediate): Download and Propose PR are how sprites leave it. */
     async function save() {
       const d = doc(); if (!d) return; commitFloat();
       try {
-        const blob = await pngOf(d);
-        if (O.save) await O.save(d, blob);
-        else if (canWrite() && !d.local) await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
-        else download(blob, d.path.split('/').pop());
-        d.markSaved(); note(canWrite() && !d.local ? 'saved ' + d.path : 'downloaded ' + d.path.split('/').pop()); changedUi();
+        if (savesOut(d)) {
+          const blob = await pngOf(d);
+          if (O.save) await O.save(d, blob); else await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
+          d.markSaved(); d.onDisk = true; note('saved ' + d.path);
+        } else {
+          await flushDrafts();
+          note(keeping() ? 'kept in this browser: it survives reloads. Download it or propose a PR to take it out.' : 'This browser cannot keep edits: use Download.');
+        }
+        changedUi();
       } catch (e) { note('Save failed: ' + e.message); }
     }
     function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000); }
-    async function exportPng() { const d = doc(); if (!d) return; const s = +(prompt('Export scale (1 = original size, 8 = each pixel becomes 8×8):', '1') || 0); if (!s || s < 1 || s > 64) return; download(await pngOf(d, Math.floor(s)), d.path.split('/').pop().replace(/\.png$/i, '') + (s > 1 ? '@' + s + 'x' : '') + '.png'); }
+    const fileName = (d) => d.path.split('/').pop();
+    async function downloadPng(scale = 1) { const d = doc(); if (!d) return; commitFloat(); download(await pngOf(d, scale), fileName(d).replace(/\.png$/i, '') + (scale > 1 ? '@' + scale + 'x' : '') + '.png'); }
+    const changedDocs = () => [...S.docs.values()].filter((d) => d.changed || d.local || d.isNew);
+    async function downloadAll() {
+      commitFloat(); const list = changedDocs(); if (!list.length) return;
+      const files = []; for (const d of list) files.push({ name: d.path, bytes: new Uint8Array(await (await pngOf(d)).arrayBuffer()) });
+      const proj = (S.src && S.src.kind === 'github' && S.src.repo.slug.split('/')[1]) || (S.src && S.src.name) || 'sprites';
+      download(new Blob([zipFiles(files)], { type: 'application/zip' }), proj.replace(/[^\w.-]+/g, '-') + '-changed.zip'); note(`downloaded ${files.length} sprite${files.length > 1 ? 's' : ''} as a .zip (with their folders)`);
+    }
+    function closeDlMenu() { const m = root.querySelector('.pf-dlmenu'); if (m) m.remove(); }
+    function openDlMenu() {
+      closeDlMenu(); const d = doc(); if (!d) return; const n = changedDocs().length;
+      const menu = el(`<div class="pf-bgmenu pf-dlmenu" role="menu">
+        <button role="menuitem" data-dl="1"><b>${esc(fileName(d))}</b>&nbsp;<span class="pf-note">${d.w}×${d.h} PNG</span></button>
+        ${[2, 4, 8, 16].map((k) => `<button role="menuitem" data-dl="${k}">at ${k}× <span class="pf-note">${d.w * k}×${d.h * k}, for sharing</span></button>`).join('')}
+        <button role="menuitem" data-dl="all"${n ? '' : ' disabled'}>All changed sprites (.zip) <span class="pf-note">${n}</span></button></div>`);
+      root.appendChild(menu);
+      const b = $('.pf-download').getBoundingClientRect(), r = root.getBoundingClientRect();
+      menu.style.left = Math.max(4, Math.min(b.left - r.left, r.width - menu.offsetWidth - 4)) + 'px'; menu.style.top = (b.bottom - r.top + 4) + 'px';
+      menu.onclick = (e) => { const t = e.target.closest('[data-dl]'); if (!t || t.disabled) return; closeDlMenu(); if (t.dataset.dl === 'all') downloadAll(); else downloadPng(+t.dataset.dl); };
+    }
 
     /* ---------- preview & animation ---------- */
     const frameKey = (d) => 'pf:frames:' + d.path;
@@ -1580,8 +1755,8 @@
         const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
           body: (ctx) => prBody({ files, repo, prefix, description: $('.pf-pr-desc').value.trim(), baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha, previewDir: ctx.previewDir }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
         log.innerHTML = `${esc(log.textContent)}Done${res.forked ? ' (from your fork)' : ''}: <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">${esc(res.url)}</a>`;
-        for (const d of changed) d.base = { w: d.w, h: d.h, px: d.px.slice() };
-        status(); renderList();
+        for (const d of changed) { d.base = { w: d.w, h: d.h, px: d.px.slice() }; d.isNew = false; if (!canWrite()) d.local = false; } // the work now lives in the pull request
+        keepSoon(); status(); renderList();
       } catch (e) { log.textContent += '\n' + e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { go.disabled = false; }
     }
 
@@ -1661,7 +1836,7 @@
       const dir = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/') + 1) : '', path = `${dir}${fam.key}${sep}${String(n).padStart(pad, '0')}.png`;
       if (S.sprites.some((x) => x.path === path)) return note(path + ' already exists');
       await addLocal(path, d.w, d.h, d.px.slice(), canWrite(), true);
-      note(`new frame ${path.split('/').pop()}: a copy of ${d.path.split('/').pop()}${canWrite() ? '' : ' (Save downloads it; Propose PR adds it)'}`);
+      note(`new frame ${path.split('/').pop()}: a copy of ${d.path.split('/').pop()}${canWrite() ? '' : ' (kept in this browser; Propose PR adds it)'}`);
     };
     async function moveFrame(dir) {
       const d = doc(), fam = famFor(d); if (!d || !fam) return;
@@ -1735,7 +1910,7 @@
       }
       $('.pf-dlg-variant').close();
       for (const x of variant.docs) { const path = variantPath(x.path, variant.key, sfx); await addLocal(path, x.w, x.h, x.px.map(fn), canWrite(), true); made.push(path); }
-      await openSprite(made[0]); note(`variant: ${made.length} new file${made.length > 1 ? 's' : ''} (${canWrite() ? 'Save writes each' : 'Save downloads; Propose PR adds them'})`);
+      await openSprite(made[0]); note(`variant: ${made.length} new file${made.length > 1 ? 's' : ''} (${canWrite() ? 'Save writes each' : 'kept in this browser; Propose PR adds them'})`);
     };
     /* history: earlier versions of the open sprite from git (GitHub repositories and the local server) */
     let histFor = null, histPick = null;
@@ -1784,7 +1959,7 @@
     $('.pf-my').onclick = (e) => { S.my = !S.my; e.currentTarget.classList.toggle('on', S.my); render(); };
     try { S.pp = localStorage.getItem('pf:cleanlines') === '1'; } catch { /* default off */ } $('.pf-pp').classList.toggle('on', S.pp);
     $('.pf-pp').onclick = (e) => { S.pp = !S.pp; e.currentTarget.classList.toggle('on', S.pp); try { localStorage.setItem('pf:cleanlines', S.pp ? '1' : '0'); } catch { /* ignore */ } };
-    $('.pf-save').onclick = save; $('.pf-export').onclick = exportPng; $('.pf-prbtn').onclick = openPr; $('.pf-pr-go').onclick = submitPr;
+    $('.pf-save').onclick = save; $('.pf-download').onclick = (e) => { e.stopPropagation(); root.querySelector('.pf-dlmenu') ? closeDlMenu() : openDlMenu(); }; $('.pf-prbtn').onclick = openPr; $('.pf-pr-go').onclick = submitPr;
     $('.pf-cpick').oninput = (e) => setColor(fromHex(e.target.value));
     $('.pf-chex').onchange = (e) => { const c = fromHex(e.target.value); if (c != null) setColor(c); else renderColors(); };
     $('.pf-recolor').onclick = () => { const i = $('.pf-recolor-in'); i.value = toHex(S.color); i.click(); };
@@ -1796,8 +1971,54 @@
     $('.pf-rot').onclick = () => transformSel((px, w, h) => ({ px: rotateCW(px, w, h), w: h, h: w })) || edit((d) => { d.px = rotateCW(d.px, d.w, d.h); [d.w, d.h] = [d.h, d.w]; fit(); });
     $('.pf-outline').onclick = () => { if (isClear(S.color)) return note('Pick an opaque primary colour for the outline.'); commitFloat(); edit((d) => { d.px = outlinePx(d.px, d.w, d.h, S.color, $('.pf-outline-c').checked); }); };
     $('.pf-clear').onclick = () => edit((d) => { d.px = new Uint32Array(d.w * d.h); });
-    $('.pf-resize').onclick = () => { const d = doc(); if (!d) return; $('.pf-sz-w').value = d.w; $('.pf-sz-h').value = d.h; $('.pf-dlg-size').showModal(); };
-    $('.pf-sz-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-sz-w').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-sz-h').value | 0)); edit((d) => { d.px = resizePx(d.px, d.w, d.h, w, h, $('.pf-sz-a').value); d.w = w; d.h = h; fit(); }); $('.pf-dlg-size').close(); };
+    /* canvas size: grow or cut the canvas around an anchor, or scale the image; optionally every frame and pose of the family */
+    const sz = { mode: 'canvas', anchor: 'c' };
+    const szVal = (c) => Math.max(1, Math.min(1024, +$(c).value | 0));
+    const famMembers = (d) => { const f = famOf.get(d.path); return f && f.members.length > 1 ? f.members : [d.path]; };
+    function openSize() {
+      const d = doc(); if (!d) return; commitFloat();
+      $('.pf-sz-w').value = d.w; $('.pf-sz-h').value = d.h; sz.ratio = d.w / d.h;
+      const m = famMembers(d); $('.pf-sz-famrow').hidden = m.length < 2; $('.pf-sz-famtext').textContent = `all ${m.length} ${famOf.get(d.path) && famOf.get(d.path).animated ? 'frames' : 'images'} of "${famOf.get(d.path) ? famOf.get(d.path).key.split('/').pop() : ''}" (they should match)`;
+      sizeUi(); $('.pf-dlg-size').showModal();
+    }
+    function sizeResult(d, w, h) { return sz.mode === 'scale' ? scalePx(d.px, d.w, d.h, w, h) : resizePx(d.px, d.w, d.h, w, h, sz.anchor); }
+    function sizeUi() {
+      const d = doc(); if (!d) return; const w = szVal('.pf-sz-w'), h = szVal('.pf-sz-h');
+      $$('.pf-sz-mode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === sz.mode));
+      $$('.pf-sz-anchor button').forEach((b) => b.classList.toggle('on', b.dataset.a === sz.anchor));
+      $('.pf-sz-anchorrow').hidden = sz.mode !== 'canvas'; $('.pf-sz-lockrow').hidden = sz.mode !== 'scale';
+      const cv = $('.pf-sz-cv'), k = Math.max(1, Math.floor(160 / Math.max(w, h, d.w, d.h)));
+      drawPx(cv, { w, h, imageData: () => new ImageData(new Uint8ClampedArray(sizeResult(d, w, h).buffer), w, h) }); cv.style.width = w * k + 'px'; cv.style.height = h * k + 'px';
+      const lost = sz.mode === 'canvas' && (w < d.w || h < d.h) && (() => { const o = anchorOffset(d.w, d.h, w, h, sz.anchor), b = opaqueBounds(d.px, d.w, d.h); return b && (b.x + o.x < 0 || b.y + o.y < 0 || b.x + b.w + o.x > w || b.y + b.h + o.y > h); })();
+      $('.pf-sz-info').innerHTML = `${d.w}×${d.h} → <b>${w}×${h}</b>${lost ? '<br><span class="pf-bad">cuts off visible pixels</span>' : ''}`;
+    }
+    function applySize(fn, what) {
+      const d = doc(); if (!d) return; commitFloat(); S.sel = null;
+      edit((x) => { const r = fn(x); x.px = r.px; x.w = r.w; x.h = r.h; }); fit(); render(); note(what);
+    }
+    $('.pf-resize').onclick = openSize;
+    root.addEventListener('click', (e) => { if (e.target.closest('.pf-s-size')) openSize(); });
+    $('.pf-sz-mode').onclick = (e) => { const b = e.target.closest('[data-mode]'); if (!b) return; sz.mode = b.dataset.mode; const d = doc(); if (d) sz.ratio = d.w / d.h; sizeUi(); };
+    $('.pf-sz-anchor').onclick = (e) => { const b = e.target.closest('[data-a]'); if (!b) return; sz.anchor = b.dataset.a; sizeUi(); };
+    $('.pf-sz-w').oninput = () => { if (sz.mode === 'scale' && $('.pf-sz-lock').checked) $('.pf-sz-h').value = Math.max(1, Math.round(szVal('.pf-sz-w') / sz.ratio)); sizeUi(); };
+    $('.pf-sz-h').oninput = () => { if (sz.mode === 'scale' && $('.pf-sz-lock').checked) $('.pf-sz-w').value = Math.max(1, Math.round(szVal('.pf-sz-h') * sz.ratio)); sizeUi(); };
+    $('.pf-sz-quick').onclick = (e) => {
+      const b = e.target.closest('[data-q]'); if (!b) return; let w = szVal('.pf-sz-w'), h = szVal('.pf-sz-h'); const p2 = (n) => 2 ** Math.ceil(Math.log2(n));
+      ({ half: () => { w = Math.max(1, Math.round(w / 2)); h = Math.max(1, Math.round(h / 2)); }, double: () => { w *= 2; h *= 2; }, pow2: () => { w = p2(w); h = p2(h); }, square: () => { w = h = Math.max(w, h); } })[b.dataset.q]();
+      $('.pf-sz-w').value = Math.min(1024, w); $('.pf-sz-h').value = Math.min(1024, h); sizeUi();
+    };
+    $('.pf-sz-ok').onclick = async () => {
+      const d = doc(); if (!d) return; const w = szVal('.pf-sz-w'), h = szVal('.pf-sz-h'), all = !$('.pf-sz-famrow').hidden && $('.pf-sz-fam').checked;
+      $('.pf-dlg-size').close(); commitFloat(); S.sel = null;
+      const paths = all ? famMembers(d) : [d.path]; let n = 0;
+      for (const p of paths) { const x = await loadDoc(p); if (!x || (x.w === w && x.h === h)) continue; x.snapshot(); x.px = sizeResult(x, w, h); x.w = w; x.h = h; n++; }
+      fit(); changedUi(); note(`${sz.mode === 'scale' ? 'scaled' : 'canvas'} ${w}×${h}${paths.length > 1 ? ` · ${n} of ${paths.length} images changed (undo works per image)` : ''}`);
+    };
+    $('.pf-trim').onclick = () => { const d = doc(); if (!d) return; commitFloat(); const b = opaqueBounds(d.px, d.w, d.h); if (!b) return note('Nothing to trim: the image is empty.'); if (b.w === d.w && b.h === d.h) return note('Nothing to trim: no empty border.'); applySize((x) => ({ px: copyRect(x.px, x.w, x.h, b), w: b.w, h: b.h }), `trimmed to ${b.w}×${b.h}`); };
+    $('.pf-sel-crop').onclick = () => { const d = doc(); if (!d) return; commitFloat(); const r = S.sel; if (!r) return note('Select an area first (S, then drag).'); applySize((x) => ({ px: copyRect(x.px, x.w, x.h, r), w: r.w, h: r.h }), `cropped to ${r.w}×${r.h}`); };
+    $('.pf-revert').onclick = () => { const d = doc(); if (!d || !d.changed) return; commitFloat(); S.sel = null; applySize((x) => ({ px: x.base.px.slice(), w: x.base.w, h: x.base.h }), 'back to the original (Ctrl+Z brings your changes back)'); };
+    const dlOutside = (e) => { const m = root.querySelector('.pf-dlmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-download')) closeDlMenu(); };
+    document.addEventListener('pointerdown', dlOutside);
     $('.pf-new').onclick = () => $('.pf-dlg-new').showModal();
     $('.pf-new-ok').onclick = () => { const w = Math.max(1, Math.min(1024, +$('.pf-nw').value | 0)), h = Math.max(1, Math.min(1024, +$('.pf-nh').value | 0)); let n = $('.pf-nn').value.trim().replace(/^\/+/, '') || 'new-sprite.png'; if (!/\.png$/i.test(n)) n += '.png'; $('.pf-dlg-new').close(); addLocal(n, w, h, new Uint32Array(w * h), canWrite()); };
     $('.pf-open').onclick = () => $('.pf-file').click();
@@ -1811,7 +2032,10 @@
       if (S.auth.token) loadRepos();
       const canFolder = typeof window.showDirectoryPicker === 'function'; $('.pf-c-folder').disabled = !canFolder; $('.pf-c-foldernote').textContent = canFolder ? 'Saves the PNGs in place. Chrome, Edge and Opera.' : 'Needs Chrome, Edge or Opera.';
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
+      const resume = $('.pf-c-resume'); resume.hidden = true;
+      if (keeping() && !(S.src && S.src.kind === 'browser')) drafts.list('browser:' + location.pathname).then((r) => { if (!r.length) return; resume.hidden = false; resume.textContent = `Resume ${r.length} sprite${r.length > 1 ? 's' : ''} kept in this browser`; }).catch(() => {});
     }
+    $('.pf-c-resume').onclick = async () => { if (await useSource(browserSource())) $('.pf-dlg-connect').close(); };
     $('.pf-source').onclick = () => openConnect();
     authRows('.pf-signin').forEach((b) => (b.onclick = () => { const d = b.closest('dialog'); doSignIn(d && d.querySelector('.pf-c-msg, .pf-log')); }));
     authRows('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
@@ -1847,11 +2071,12 @@
       const tag = (e.target.tagName || '').toLowerCase(); if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
       if (root.querySelector('dialog[open]')) return;
       const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
-      if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); } else if (mod && k === 'y') { e.preventDefault(); redo(); } else if (mod && k === 's') { e.preventDefault(); save(); }
+      if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); } else if (mod && k === 'y') { e.preventDefault(); redo(); } else if (mod && k === 's') { e.preventDefault(); e.shiftKey ? downloadPng(1) : save(); }
+      else if (mod && e.altKey && k === 'c') { e.preventDefault(); openSize(); }
       else if (mod && k === 'c') { if (copySel(false)) e.preventDefault(); } else if (mod && k === 'x') { if (copySel(true)) e.preventDefault(); }
       else if (mod && k === 'a') { e.preventDefault(); selectAll(); }
       else if (mod && k === 'v') { pasteSoon = setTimeout(() => { if (S.clip) pastePx(S.clip.px, S.clip.w, S.clip.h); }, 60); } // the paste event below wins when the clipboard holds an image from another app
-      else if (k === 'escape' && root.querySelector('.pf-bgmenu')) { e.preventDefault(); closeBgMenu(); }
+      else if (k === 'escape' && root.querySelector('.pf-bgmenu')) { e.preventDefault(); closeBgMenu(); closeDlMenu(); }
       else if (k === 'escape' && (S.sel || S.float)) { e.preventDefault(); dropSelection(); }
       else if (k === 'enter' && S.float) { e.preventDefault(); commitFloat(); render(); status(); }
       else if ((k === 'delete' || k === 'backspace') && (S.sel || S.float)) { e.preventDefault(); deleteSel(); }
@@ -1875,18 +2100,19 @@
       try { const img = await decodePng(file); pastePx(img.px, img.w, img.h); } catch (err) { note('Could not paste that image: ' + err.message); }
     }
     document.addEventListener('keydown', keydown); document.addEventListener('keyup', keyup); document.addEventListener('paste', onPaste);
-    const leaveGuard = (e) => { if ([...S.docs.values()].some((d) => d.unsaved && d.changed)) { e.preventDefault(); e.returnValue = ''; } }; /* unsaved work would be lost: ask first */
+    const leaveGuard = (e) => { if ([...S.docs.values()].some(atRisk)) { flushDrafts(); e.preventDefault(); e.returnValue = ''; } }; /* work that is neither saved nor kept in the browser would be lost: ask first */
+    const hideFlush = () => { if (document.visibilityState === 'hidden') flushDrafts(); }; document.addEventListener('visibilitychange', hideFlush);
     window.addEventListener('beforeunload', leaveGuard);
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const had = doc(); resizeView(); if (had && !S.touched) fit(); render(); }) : null; if (ro) ro.observe(stage);
     resizeView(); renderAuth(); applyBg(); init();
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setColor2, setTool, undo, redo, selectAll, state: S,
-      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
+      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); document.removeEventListener('visibilitychange', hideFlush); document.removeEventListener('pointerdown', dlOutside); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
     };
     host.__pf = ctrl;
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, Doc } };
 });

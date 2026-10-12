@@ -38,6 +38,11 @@ export interface MountOptions {
   accent?: string;
   /** Replace the default Save behaviour. */
   save?: (doc: Doc, png: Blob) => Promise<void> | void;
+  /** Edits are kept in this browser (IndexedDB) as you draw and come back after a reload. false turns that off;
+      or pass your own store with the same shape as core.browserDrafts(). */
+  drafts?: false | { list(project: string): Promise<unknown[]>; put(project: string, rec: unknown): Promise<unknown>; remove(project: string, path: string): Promise<unknown>; clear(project: string): Promise<unknown> };
+  /** The key edits are kept under in this browser (default: derived from the project: repo@branch, folder name, page URL). */
+  draftsKey?: string;
   /** false hides the pull request button. */
   pr?: boolean;
   /** URL of the sign-in service (see worker/): enables the "Sign in with GitHub" button. */
