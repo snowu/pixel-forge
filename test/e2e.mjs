@@ -657,6 +657,19 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.locator('.pf-q').fill('hero_'); ok((await fp.locator('.pf-item').count()) === 4 && (await fp.locator('.pf-dir').count()) === 0, 'typing a filter shows a flat list of matching files');
   ok(await fp.evaluate(() => [...document.querySelectorAll('.pf-list .pf-badge')].every((b) => { const i = b.closest('.pf-item').getBoundingClientRect(), r = b.getBoundingClientRect(); return r.top >= i.top - 1 && r.bottom <= i.bottom + 1 && r.right <= i.right + 1; })), 'family badges stay inside their row in the flat list');
   await fp.locator('.pf-q').fill('');
+  // context: the sprite at game scale next to its folder neighbours, live
+  await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(200);
+  await fp.keyboard.press('v'); await fp.waitForTimeout(300);
+  const has = (rgb) => fp.evaluate((rgb) => { const c = document.querySelector('.pf-ctx-cv'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 0; i < d.length; i += 4) if (d[i] === rgb[0] && d[i + 1] === rgb[1] && d[i + 2] === rgb[2]) return true; return false; }, rgb);
+  ok(await fp.locator('.pf-ctx').isVisible() && /2× · 1 neighbour from chars/.test(await fp.locator('.pf-ctx-note').innerText()), 'V shows the sprite in context with its neighbour from the same folder: ' + await fp.locator('.pf-ctx-note').innerText());
+  ok(await has([0, 0, 255]) && await has([255, 0, 0]), 'the strip draws the sprite (blue bat) and its neighbour (red hero frame)');
+  await fp.locator('.pf-chex').fill('#12ab34'); await fp.locator('.pf-chex').press('Tab'); await fp.keyboard.press('b');
+  { const b = await fp.locator('.pf-view').boundingBox(), st = await fp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); await fp.mouse.click(b.x + (st.ox + 2.5 * st.z) / st.k, b.y + (st.oy + 2.5 * st.z) / st.k); }
+  ok(await has([0x12, 0xab, 0x34]), 'an edit shows up in the context strip straight away');
+  await fp.locator('.pf-ctx-scale button[data-scale="4"]').click(); ok(/^4×/.test(await fp.locator('.pf-ctx-note').innerText()), 'the scale buttons change the game scale');
+  await fp.keyboard.press('Control+z');
+  await fp.reload(); await fp.waitForSelector('.pf-item'); ok(await fp.locator('.pf-ctx').isVisible(), 'the context strip stays on after a reload');
+  await fp.keyboard.press('v'); ok(await fp.locator('.pf-ctx').isHidden(), 'V hides it');
   ok(ferr2.length === 0, 'no page errors ' + ferr2.join('|'));
   await fp.close(); await s2.close();
 }
