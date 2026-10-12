@@ -326,19 +326,26 @@ ok(seen.size >= 3, 'playing the animation cycles through the frames (' + seen.si
 section('pull request flow (GitHub API mocked)');
 const calls = []; let pushAccess = true;
 const authSeen = new Set();
+const refs = { main: 'base1' }; const pulls = []; // refs and pull requests the test run creates, so later sections build on them
 await ctx.route('https://api.github.com/**', async (route) => {
   const r = route.request(), u = new URL(r.url()), p = u.pathname, m = r.method(), body = r.postData() ? JSON.parse(r.postData()) : null; calls.push({ m, p, body, auth: r.headers().authorization }); if (m !== 'OPTIONS') authSeen.add(r.headers().authorization);
   const j = (status, obj) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(obj) });
   if (m === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,accept,x-github-api-version', 'access-control-allow-methods': '*' } });
   if (p === '/user') return j(200, { login: 'artist' });
   if (p === '/repos/me/game' && m === 'GET') return j(200, { name: 'game', default_branch: 'main', permissions: { push: pushAccess } });
-  if (p === '/repos/me/game/git/ref/heads/main') return j(200, { object: { sha: 'base1' } });
-  if (p === '/repos/me/game/git/commits/base1') return j(200, { tree: { sha: 'tree0' } });
+  if (p === '/repos/me/game/branches') return j(200, [{ name: 'main', protected: true }, { name: 'art/wip', protected: false }]);
+  { const mr = /^\/repos\/me\/game\/git\/ref\/heads\/(.+)$/.exec(p);
+    if (mr && m === 'GET') { const b = decodeURIComponent(mr[1]); return refs[b] ? j(200, { object: { sha: refs[b] } }) : j(404, { message: 'no such ref' }); } }
+  { const mc = /^\/repos\/me\/game\/git\/commits\/([^/]+)$/.exec(p);
+    if (mc && m === 'GET') return j(200, { tree: { sha: 'tree-of-' + mc[1] } }); }
   if (p.endsWith('/git/blobs')) return j(201, { sha: 'b' + calls.length });
-  if (p.endsWith('/git/trees')) return j(201, { sha: 'tree1' });
-  if (p.endsWith('/git/commits')) return j(201, { sha: 'c1' });
-  if (p.endsWith('/git/refs')) return j(201, {});
-  if (p === '/repos/me/game/pulls') return j(201, { html_url: 'https://github.com/me/game/pull/3', number: 3 });
+  if (p.endsWith('/git/trees') && m === 'POST') return j(201, { sha: 'tree1' });
+  if (p.endsWith('/git/commits') && m === 'POST') return j(201, { sha: 'c1' });
+  if (p.endsWith('/git/refs') && m === 'POST') { refs[body.ref.replace(/^refs\/heads\//, '')] = body.sha; return j(201, {}); }
+  { const mp = /^\/repos\/me\/game\/git\/refs\/heads\/(.+)$/.exec(p);
+    if (mp && m === 'PATCH') { refs[decodeURIComponent(mp[1])] = body.sha; return j(200, {}); } }
+  if (p === '/repos/me/game/pulls' && m === 'POST') { const n = 3 + pulls.length; const pr = { html_url: 'https://github.com/me/game/pull/' + n, number: n, title: body.title, head: body.head, base: body.base }; pulls.push(pr); return j(201, pr); }
+  if (p === '/repos/me/game/pulls' && m === 'GET') { const head = u.searchParams.get('head'); const list = pulls.filter((x) => !head || x.head === head || x.head.split(':').pop() === String(head).split(':').pop()).map(({ number, html_url, title }) => ({ number, html_url, title })); return j(200, list); }
   return j(404, { message: 'unexpected ' + m + ' ' + p });
 });
 await page.locator('.pf-item', { hasText: 'slime.png' }).click(); await page.waitForTimeout(200);
@@ -346,6 +353,7 @@ ok(!(await page.locator('.pf-prbtn').isDisabled()), 'Propose PR is enabled becau
 await page.locator('.pf-prbtn').click(); await page.waitForSelector('.pf-dlg-pr[open]');
 ok((await page.locator('.pf-pr-repo').inputValue()) === 'me/game', 'the repository is filled in from the project');
 const changedNames = await page.locator('.pf-chg > span').allInnerTexts(); ok(changedNames.length === 2 && changedNames.some((t) => t.includes('slime.png')) && changedNames.some((t) => t.includes('gem.png')), 'the dialog lists exactly the changed sprites (' + changedNames.map((t) => t.split('\n')[0]).join(', ') + ')');
+ok((await page.locator('.pf-dirchg').allInnerTexts()).join() === '1 changed,1 changed', 'folder headers count the changed sprites, folded or not');
 await page.locator('.pf-pr-token').fill('ghp_testtoken'); await page.locator('.pf-pr-title').fill('Improve slime'); await page.locator('.pf-pr-desc').fill('Redder eyes');
 await page.locator('.pf-pr-go').click();
 try { await page.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 8000 }); } catch { console.log('   PR log:', JSON.stringify(await page.locator('.pf-log').innerText()), calls.map((c) => c.m + ' ' + c.p).join(' | ')); }
@@ -364,6 +372,43 @@ const prCall = calls.find((c) => c.p === '/repos/me/game/pulls'); ok(prCall.body
 await page.locator('.pf-dlg-pr button[value=cancel]').click();
 ok(await page.locator('.pf-prbtn').isDisabled(), 'after the PR, nothing is pending any more');
 ok(await page.evaluate(() => sessionStorage.getItem('pf:token')) !== null && (await page.evaluate(() => localStorage.getItem('pf:token'))) === null, 'the token is kept for the tab only unless "remember" is ticked');
+
+section('commit in chunks, branches, pull requests later');
+await page.locator('.pf-item', { hasText: 'slime.png' }).click();
+await page.waitForFunction(() => document.getElementById('app').__pf.current.path.endsWith('slime.png'));
+await page.keyboard.press('b');
+await setHex('#00ff00'); await click(3, 3);
+await page.locator('.pf-item', { hasText: 'gem.png' }).click();
+await page.waitForFunction(() => document.getElementById('app').__pf.current.path.endsWith('gem.png'));
+await click(4, 4);
+await page.waitForFunction(() => document.querySelectorAll('.pf-commit-list input[type=checkbox]').length === 2);
+ok((await page.locator('.pf-commit-list input[type=checkbox]').count()) === 2, 'the commit panel lists both changed sprites');
+await page.locator('.pf-commit-list input[type=checkbox]').first().uncheck();
+await page.locator('.pf-commit-msg').fill('chunk one');
+await page.locator('.pf-commit-branch').fill('art/chunks');
+const at = calls.length;
+await page.locator('.pf-commit-go').click();
+try { await page.waitForFunction(() => /Created|Committed/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   commit note:', JSON.stringify(await page.locator('.pf-commit-note').innerText()), calls.slice(at).map((c) => c.m + ' ' + c.p).join(' | ')); }
+const chunkTree = calls.slice(at).find((c) => c.p.endsWith('/git/trees') && c.body.base_tree);
+ok(chunkTree && chunkTree.body.tree.length === 1, 'only the ticked sprite is committed');
+ok(await page.locator('.pf-commit-openpr').count() === 1, 'with no open pull request for the branch, the panel offers to open one');
+await page.locator('.pf-commit-openpr').click();
+try { await page.waitForFunction(() => /pull\/4/.test(document.querySelector('.pf-commit-note').innerHTML), null, { timeout: 8000 }); } catch { console.log('   open-pr note:', JSON.stringify(await page.locator('.pf-commit-note').innerText())); }
+ok((await page.locator('.pf-commit-note a').getAttribute('href')) === 'https://github.com/me/game/pull/4', 'one click opens the pull request for the whole branch');
+await setHex('#0000ff'); await click(5, 5);
+await page.waitForFunction(() => document.querySelectorAll('.pf-commit-list input[type=checkbox]').length >= 1);
+await page.locator('.pf-commit-msg').fill('chunk two');
+const pullsBefore = calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length;
+await page.locator('.pf-commit-go').click();
+try { await page.waitForFunction(() => /added to|pull request/.test(document.querySelector('.pf-commit-note').textContent), null, { timeout: 8000 }); } catch { console.log('   chunk-two note:', JSON.stringify(await page.locator('.pf-commit-note').innerText())); }
+console.log('   chunk-two state:', JSON.stringify(await page.locator('.pf-commit-note').innerText()), 'pulls POSTs:', calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length, 'api:', calls.filter((c) => /pulls|git\/ref/.test(c.p)).map((c) => c.m + ' ' + c.p).join(' | '));
+const afterCount = calls.filter((c) => c.p === '/repos/me/game/pulls' && c.m === 'POST').length;
+const noteHtml = await page.locator('.pf-commit-note').innerHTML();
+ok(afterCount === pullsBefore, 'the second chunk opens no new pull request');
+ok(/pull\/4/.test(noteHtml), 'it joins pull request #4');
+ok(calls.some((c) => c.m === 'PATCH' && /art\/chunks$/.test(c.p)), 'appending to the branch updates its ref');
+await page.locator('.pf-commit-branch').click();
+ok(await until(async () => (await page.locator('#pf-branchlist option').count()) >= 2), 'the branch picker lists the repository branches');
 
 section('standalone: hosted page + GitHub repository (no server, no manifest)');
 {
@@ -733,6 +778,20 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.locator('.pf-q').fill('hero_0'); await fp.locator('.pf-item').first().click(); await fp.waitForTimeout(250); await fp.locator('.pf-q').fill('');
   ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png' && (await fp.locator('.pf-cell').count()) === 2, 'opening a sprite reveals its folder and leaves the other folded');
   await fp.locator('.pf-unfold-all').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'and unfold all restores the rest');
+  await fp.locator('.pf-dir', { hasText: 'chars' }).click();
+  ok((await fp.locator('.pf-openrow .n').innerText()) === 'hero_0.png', 'a folded folder still shows the sprite being edited');
+  await fp.locator('.pf-openrow').click(); ok((await fp.locator('.pf-cell').count()) === 3, 'clicking it unfolds the folder');
+  await fp.locator('.pf-cell', { hasText: 'bat.png' }).click(); await fp.waitForTimeout(250);
+  ok((await fp.locator('.pf-fam-kind').innerText()) === 'single sprite', 'a lone sprite shows its one-member family');
+  await fp.locator('.pf-fam-add').click(); await fp.waitForTimeout(400);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/bat_1.png', '+ frame on a lone sprite starts its numbering');
+  await fp.locator('.pf-new').click(); await fp.waitForSelector('.pf-dlg-new[open]');
+  ok((await fp.locator('.pf-nn').inputValue()) === 'new_sprite.png', 'New suggests a name that does not collide');
+  await fp.locator('.pf-new-ok').click(); await fp.waitForTimeout(400);
+  ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'new_sprite.png', 'and creates it');
+  await fp.locator('.pf-new').click(); await fp.waitForSelector('.pf-dlg-new[open]');
+  ok((await fp.locator('.pf-nn').inputValue()) === 'new_sprite1.png', 'then the next one after that');
+  await fp.locator('.pf-dlg-new button[value=cancel]').click();
   // family strip
   await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(250);
   ok((await fp.evaluate(() => document.getElementById('app').__pf.current.path)) === 'chars/hero_0.png', 'clicking a family opens its first frame');

@@ -376,6 +376,96 @@
     const pr = await call('POST', '/repos/' + o.repo + '/pulls', { title: o.title, body: typeof o.body === 'function' ? o.body({ baseSha, commit: commit.sha, headRepo, previewSha, previewDir }) : (o.body || ''), head: headOwner ? headOwner + ':' + branch : branch, base, maintainer_can_modify: true });
     return { url: pr.html_url, number: pr.number, branch, forked: !!headOwner, commit: commit.sha, headRepo, previewSha, previewDir };
   }
+  /** The GitHub REST calls the commit, branch and pull-request flows share. `fetch` is injectable so tests can mock the API. */
+  function ghApi(o) {
+    const api = (o.apiBase || 'https://api.github.com').replace(/\/$/, ''), doFetch = o.fetch || fetch.bind(globalThis);
+    const call = async (method, url, body) => {
+      const res = await doFetch(api + url, { method, headers: { Authorization: 'Bearer ' + o.token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+      const text = await res.text(); let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
+      if (!res.ok) { const e = new Error(explainGithubError(res.status, (json && json.message) || text.slice(0, 120), `${method} ${url}`, o.repo)); e.status = res.status; throw e; }
+      return json;
+    };
+    return { call };
+  }
+  /** Branch names on a repository. */
+  async function listBranches(o) {
+    const { call } = ghApi(o);
+    if (!o.token) throw new Error('A GitHub token is required.');
+    if (!/^[\w.-]+\/[\w.-]+$/.test(o.repo || '')) throw new Error('Repository must look like owner/name.');
+    return ((await call('GET', '/repos/' + o.repo + '/branches?per_page=100')) || []).map((b) => b.name);
+  }
+  /** Open pull requests with this head branch, newest first. `head` is `owner:branch`; the owner defaults to the repository's. */
+  async function openPulls(o) {
+    const { call } = ghApi(o);
+    if (!o.token) throw new Error('A GitHub token is required.');
+    const owner = o.owner || (o.repo || '').split('/')[0];
+    const pulls = await call('GET', '/repos/' + o.repo + '/pulls?state=open&head=' + encodeURIComponent(owner + ':' + o.branch) + '&per_page=10&sort=created&direction=desc');
+    return (pulls || []).map((p) => ({ number: p.number, url: p.html_url, title: p.title }));
+  }
+  /** Open a pull request for a branch that already has the changes. */
+  async function openPull(o) {
+    const { call } = ghApi(o), log = o.onProgress || (() => {});
+    if (!o.token) throw new Error('A GitHub token is required.');
+    if (!/^[\w.-]+\/[\w.-]+$/.test(o.repo || '')) throw new Error('Repository must look like owner/name.');
+    if (!o.branch) throw new Error('There is no branch to propose yet.');
+    log('Opening the pull request…');
+    const pr = await call('POST', '/repos/' + o.repo + '/pulls', { title: o.title || 'Update sprites', body: o.body || '', head: o.headOwner ? o.headOwner + ':' + o.branch : o.branch, base: o.base, maintainer_can_modify: true });
+    return { url: pr.html_url, number: pr.number };
+  }
+  /** Push PNG files as one commit: to `branch` when it exists, or to a new branch from `base` when it does not
+      (forking first without write access, like createPullRequest). One chunk of a bigger piece of work: later
+      chunks push again, and the pull request — opened now or later — carries every commit on the branch. */
+  async function pushSprites(o) {
+    const { call } = ghApi(o), log = o.onProgress || (() => {});
+    if (!o.token) throw new Error('A GitHub token is required.');
+    if (!/^[\w.-]+\/[\w.-]+$/.test(o.repo || '')) throw new Error('Repository must look like owner/name.');
+    if (!o.files || !o.files.length) throw new Error('There are no changed sprites to commit.');
+    log('Checking the token…');
+    const me = (await call('GET', '/user')).login;
+    log('Reading ' + o.repo + '…');
+    const repo = await call('GET', '/repos/' + o.repo);
+    const base = o.base || repo.default_branch;
+    let headRepo = o.repo, headOwner = null;
+    if (!(repo.permissions && repo.permissions.push)) {
+      log('No write access, forking to ' + me + '…');
+      const fork = await call('POST', '/repos/' + o.repo + '/forks', {});
+      headRepo = fork.full_name || me + '/' + repo.name; headOwner = me;
+      for (let i = 0; i < (o.forkRetries ?? 30); i++) {
+        try { await call('GET', '/repos/' + headRepo); break; } catch (e) { if (e.status !== 404 || i === (o.forkRetries ?? 30) - 1) throw e; await new Promise((r) => setTimeout(r, o.forkDelay ?? 1000)); }
+      }
+      try { await call('POST', '/repos/' + headRepo + '/merge-upstream', { branch: base }); } catch { /* already up to date, or not allowed: carry on */ }
+    }
+    const branch = o.branch || 'art/update-' + Date.now().toString(36);
+    let parent = null, baseTree = null, baseSha = null, created = true;
+    try {
+      const ref = await call('GET', '/repos/' + headRepo + '/git/ref/heads/' + refPath(branch));
+      const tip = await call('GET', '/repos/' + headRepo + '/git/commits/' + ref.object.sha);
+      parent = ref.object.sha; baseTree = tip.tree.sha; created = false;
+    } catch (e) {
+      if (e.status !== 404) throw e;
+      log('Reading ' + base + '…');
+      const baseRef = await call('GET', '/repos/' + o.repo + '/git/ref/heads/' + refPath(base));
+      baseSha = baseRef.object.sha;
+      const baseCommit = await call('GET', '/repos/' + o.repo + '/git/commits/' + baseSha);
+      parent = baseSha; baseTree = baseCommit.tree.sha;
+    }
+    const upload = async (data) => {
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(await data.arrayBuffer());
+      let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return (await call('POST', '/repos/' + headRepo + '/git/blobs', { content: btoa(bin), encoding: 'base64' })).sha;
+    };
+    const tree = [];
+    for (const f of o.files) {
+      log('Uploading ' + f.path + '…');
+      tree.push({ path: (o.prefix || '') + f.path, mode: '100644', type: 'blob', sha: await upload(f.blob) });
+    }
+    log('Creating the commit…');
+    const newTree = await call('POST', '/repos/' + headRepo + '/git/trees', { base_tree: baseTree, tree });
+    const commit = await call('POST', '/repos/' + headRepo + '/git/commits', { message: o.message || 'Update sprites', tree: newTree.sha, parents: [parent] });
+    if (created) await call('POST', '/repos/' + headRepo + '/git/refs', { ref: 'refs/heads/' + branch, sha: commit.sha });
+    else await call('PATCH', '/repos/' + headRepo + '/git/refs/heads/' + refPath(branch), { sha: commit.sha });
+    return { branch, headRepo, headOwner, forked: !!headOwner, commit: commit.sha, base, baseSha, created };
+  }
   /** How much to blow a sprite up for the pull request description: about 256 px on the long side, 1× to 16×. */
   const previewScale = (w, h) => Math.max(1, Math.min(16, Math.floor(256 / Math.max(w, h, 1))));
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'art';
@@ -727,9 +817,26 @@
 .pf-list:not(.pf-flat){display:block}
 .pf .pf-dir{display:flex;width:100%;justify-content:flex-start;gap:6px;background:none;border:0;border-bottom:1px solid var(--pf-line);padding:7px 2px 5px;min-height:0;margin-top:6px;color:var(--pf-muted);font-size:11.5px;letter-spacing:.04em;position:sticky;top:0;z-index:1;background:var(--pf-panel)}
 .pf .pf-dir:hover:not(:disabled){box-shadow:none;color:var(--pf-accent)}
-.pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}
+.pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}.pf-dirchg{color:var(--pf-accent);font-size:11.5px;flex:none}
 .pf-foldrow{display:flex;gap:6px;margin-top:6px}
 .pf-foldrow button{flex:1;min-height:24px;font-size:11.5px;color:var(--pf-muted);background:none;border-color:transparent}
+.pf .pf-openrow{display:flex;width:100%;align-items:center;gap:8px;background:none;border:1px solid var(--pf-line2);border-top:0;padding:4px 6px;min-height:0;color:var(--pf-ink);font-size:11.5px}
+.pf-openrow canvas{width:24px;height:24px;image-rendering:pixelated;background:var(--pf-ckbg);flex:none}
+.pf-openrow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.pf-openrow .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-openrow .dot.base{background:var(--pf-warn)}
+.pf-commit{border:1px solid var(--pf-line);background:var(--pf-panel2);padding:8px}
+.pf-commit summary{cursor:pointer;list-style:none}
+.pf-commit summary::-webkit-details-marker{display:none}
+.pf-commit summary h4{margin:0}
+.pf-commit-list{display:flex;flex-direction:column;gap:2px;margin:8px 0;max-height:220px;overflow:auto}
+.pf-commit label{display:flex;flex-direction:column;align-items:stretch;gap:4px;margin:6px 0;font-size:11.5px;color:var(--pf-muted)}
+.pf-commit-list label{flex-direction:row;align-items:center;margin:0;color:var(--pf-ink);cursor:pointer}
+.pf-commit-list input{flex:none}
+.pf-commit-list .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-commit-list small{color:var(--pf-muted)}
+.pf-commit .pf-row{margin-top:8px}
+.pf-commit-note{margin-top:6px}
+.pf-commit-note:empty{display:none}
 .pf-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(60px,1fr));gap:4px;padding:6px 0 4px}
 .pf .pf-cell{flex-direction:column;gap:3px;padding:5px 3px 4px;min-height:0;position:relative;justify-content:flex-start;border:1px solid transparent}
 .pf .pf-cell canvas{width:44px;height:44px;object-fit:contain}
@@ -977,6 +1084,12 @@
       <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button>
         <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><h4>Sprites</h4><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"><div class="pf-foldrow"><button type="button" class="pf-fold-all" title="Fold every folder">▸ Fold all</button><button type="button" class="pf-unfold-all" title="Unfold every folder">▾ Unfold all</button></div></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
+        <details class="pf-commit" open hidden><summary><h4>Changes <span class="pf-commit-n"></span></h4></summary>
+          <div class="pf-commit-list"></div>
+          <label>Message <input type="text" class="pf-commit-msg" placeholder="What changed" aria-label="Commit message"></label>
+          <label>Branch <input type="text" class="pf-commit-branch" list="pf-branchlist" placeholder="art/…" autocomplete="off" aria-label="Branch: an existing one, or a new name"><datalist id="pf-branchlist"></datalist></label>
+          <div class="pf-row"><button type="button" class="pf-commit-go primary">Commit</button></div>
+          <div class="pf-note pf-commit-note" aria-live="polite"></div></details>
         <div class="pf-row"><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
         <div class="pf-note pf-src"></div><input type="file" class="pf-file" accept="image/png,image/*" multiple hidden></aside>
       <section class="pf-main">
@@ -1048,7 +1161,7 @@
             <span class="pf-row pf-auth-row"><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button><button type="button" class="primary pf-signin">Sign in with GitHub</button></span></div>
           <div class="pf-note pf-auth-help"></div>
           <div class="pf-c-mine" hidden><div class="pf-c-repolist"></div><div class="pf-note pf-c-addrepo"></div></div>
-          <div class="pf-c-other"><input type="text" class="pf-c-repo" list="pf-repos" placeholder="owner/name" autocomplete="off" aria-label="Repository (owner/name)"><datalist id="pf-repos"></datalist><input type="text" class="pf-c-branch" placeholder="branch" aria-label="Branch (default branch if empty)"><button type="button" class="pf-c-gh">Open</button></div>
+          <div class="pf-c-other"><input type="text" class="pf-c-repo" list="pf-repos" placeholder="owner/name" autocomplete="off" aria-label="Repository (owner/name)"><datalist id="pf-repos"></datalist><input type="text" class="pf-c-branch" list="pf-c-branchlist" placeholder="branch" autocomplete="off" aria-label="Branch: pick one, or type a new name"><datalist id="pf-c-branchlist"></datalist><button type="button" class="pf-c-gh">Open</button></div>
           <details class="pf-tokenbox"><summary>Use a token instead</summary>
             <label>Token <input type="password" class="pf-c-token" autocomplete="off" placeholder="optional for public repos; needed for private repos and pull requests"></label>
             <label><input type="checkbox" class="pf-c-remember"> remember the token in this browser</label></details>
@@ -1171,6 +1284,7 @@
       if (!keeping() && [...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
       play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; folded = null; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
+      loadWork(); // the branch this repository was being committed to, if any
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
       $('.pf-src').textContent = src.note || '';
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
@@ -1223,7 +1337,7 @@
     }
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
-      let path = name, n = 1; while (S.docs.has(path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
+      let path = name, n = 1; while (S.docs.has(path) || S.sprites.some((x) => x.path === path)) path = name.replace(/(\.png)?$/i, '') + '-' + (++n) + '.png';
       S.docs.set(path, new Doc(path, w, h, px, { local: !inProject, isNew })); S.sprites.push({ path, w, h, local: !inProject }); keepSoon(); sourceButton(); return openSprite(path);
     }
     const canWrite = () => !!(S.src && S.src.write);
@@ -1295,7 +1409,9 @@
     /** Does this sprite hold work that only exists here? Then it needs a browser copy. */
     const needsKeep = (d) => (savesOut(d) ? d.unsaved || (d.isNew && !d.onDisk) : d.changed || d.local || d.isNew);
     const pixelsNow = (d) => { if (d !== doc() || !S.float) return d.px; const px = d.px.slice(), f = S.float; pasteRect(px, d.w, d.h, f.px, f.w, f.h, f.x, f.y, false); return px; };
-    const isKept = (d) => !!d.kept && d.kept.w === d.w && d.kept.h === d.h && countDiff(d.kept.px, pixelsNow(d)) === 0;
+    /* The kept copy is fresh only while the pixels still match: a push replaces the base under it
+       (markPushed), so the next flush stores the new base instead of skipping on matching pixels. */
+    const isKept = (d) => !!d.kept && d.kept.w === d.w && d.kept.h === d.h && d.kept.base === d.base && countDiff(d.kept.px, pixelsNow(d)) === 0;
     /** Work that would be lost if the tab closed now. */
     const atRisk = (d) => (keeping() ? needsKeep(d) && !isKept(d) : savesOut(d) ? d.unsaved : d.changed || d.local);
     const keepSoon = () => { if (!drafts) return; clearTimeout(draftTimer); draftTimer = setTimeout(flushDrafts, 250); };
@@ -1310,7 +1426,7 @@
               if (isKept(d)) continue;
               const px = pixelsNow(d).slice();
               await drafts.put(key, { path: d.path, w: d.w, h: d.h, px, base: d.base, saved: d.saved, local: d.local, isNew: d.isNew, onDisk: !!d.onDisk, frames: d.frames, at: Date.now() });
-              d.kept = { w: d.w, h: d.h, px }; touched = true;
+              d.kept = { w: d.w, h: d.h, px, base: d.base }; touched = true;
             } else if (d.kept) { await drafts.remove(key, d.path); d.kept = null; touched = true; }
           }
         } catch (e) { draftsOk = false; note('This browser cannot keep your edits (' + e.message + '): use Save, Download or Propose PR before closing the tab.'); }
@@ -1325,7 +1441,7 @@
       recs.sort((a, b) => (b.at || 0) - (a.at || 0));
       for (const r of recs) {
         const d = new Doc(r.path, r.w, r.h, r.px, { local: r.local, isNew: r.isNew, frames: r.frames });
-        d.base = r.base; d.saved = r.saved || { w: r.w, h: r.h, px: r.px.slice() }; d.onDisk = !!r.onDisk; d.kept = { w: r.w, h: r.h, px: r.px.slice() };
+        d.base = r.base; d.saved = r.saved || { w: r.w, h: r.h, px: r.px.slice() }; d.onDisk = !!r.onDisk; d.kept = { w: r.w, h: r.h, px: r.px.slice(), base: d.base };
         S.docs.set(r.path, d);
         const meta = S.sprites.find((x) => x.path === r.path); if (meta) { meta.w = r.w; meta.h = r.h; } else S.sprites.push({ path: r.path, w: r.w, h: r.h, local: !!r.local });
       }
@@ -1363,11 +1479,29 @@
       return `<button class="pf-item${flat ? '' : ' pf-cell'}${on ? ' on' : ''}" role="option" data-path="${esc(s.path)}" title="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(label)}<small>${flat ? esc(dir) + ' · ' : ''}${size}</small></span>${badge}${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? `<i class="dot base" title="${keeping() && !(d && savesOut(d)) ? 'changed: kept in this browser, not in a pull request yet' : 'saved, not yet proposed'}"></i>` : ''}</button>`;
     }
     function renderList() {
-      const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'), groups = regroup(); list.innerHTML = '';
+      const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'), groups = regroup();
+      // Rows whose markup is unchanged keep their DOM nodes — and with them their painted thumbnails —
+      // so drawing does not flash the whole explorer. Only the open sprite rebuilds (a live thumbnail).
+      const old = new Map();
+      for (const b of list.querySelectorAll('.pf-item,.pf-dir')) {
+        const k = b.classList.contains('pf-dir') ? 'd:' + b.dataset.dir : 'i:' + b.dataset.path;
+        if (!old.has(k)) old.set(k, b);
+      }
+      list.innerHTML = '';
       if (!folded) loadFolded();
-      const add = (html, s) => { const b = el(html); list.appendChild(b); const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s); return b; };
+      // Same markup as an existing row: move that row over instead of repainting. Anything else is built fresh.
+      const place = (parent, html, key, s) => {
+        const b = el(html), live = !!s && s.path === S.cur, o = !live && old.get(key);
+        if (o) old.delete(key);
+        if (o && o.outerHTML === b.outerHTML) { parent.appendChild(o); return o; }
+        parent.appendChild(b);
+        const cv = b.querySelector('canvas');
+        if (cv && s) { cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s); }
+        return b;
+      };
+      const add = (html, s) => place(list, html, 'i:' + s.path, s);
       list.classList.toggle('pf-flat', !!q);
-      if (q) { for (const s of S.sprites.filter((x) => x.path.toLowerCase().includes(q))) add(tileHtml(s, s.path.split('/').pop(), famOf.get(s.path), true), s); return; }
+      if (q) { for (const s of S.sprites.filter((x) => x.path.toLowerCase().includes(q))) add(tileHtml(s, s.path.split('/').pop(), famOf.get(s.path), true), s); renderCommit(); return; }
       const hid = (S.src && S.src.hidden) || []; let hidNote = null;
       if (hid.length) { // the default skip of docs/screenshots/... folders, made visible and reversible
         const shown = S.sprites.some((x) => x.hiddenByDefault);
@@ -1375,16 +1509,28 @@
       }
       for (const g of groups) {
         const n = g.families.reduce((k, f) => k + f.members.length, 0), shut = folded.has(g.dir);
-        if (groups.length > 1 || g.dir) list.appendChild(el(`<button class="pf-dir${shut ? ' shut' : ''}" data-dir="${esc(g.dir)}" aria-expanded="${!shut}"><span class="pf-caret">${shut ? '▸' : '▾'}</span><span class="pf-dirname">${esc(g.dir || '.')}</span><span class="pf-dircount">${n}</span></button>`));
-        if (shut) continue;
+        const chg = g.families.reduce((k, f) => k + f.members.filter((m) => { const x = S.docs.get(m); return x && x.changed; }).length, 0);
+        if (groups.length > 1 || g.dir) place(list, `<button class="pf-dir${shut ? ' shut' : ''}" data-dir="${esc(g.dir)}" aria-expanded="${!shut}"><span class="pf-caret">${shut ? '▸' : '▾'}</span><span class="pf-dirname">${esc(g.dir || '.')}</span>${chg ? `<span class="pf-dirchg" title="${chg} changed sprite${chg > 1 ? 's' : ''} in this folder, not in a pull request yet">${chg} changed</span>` : ''}<span class="pf-dircount">${n}</span></button>`, 'd:' + g.dir, null);
+        if (shut) {
+          // A shut folder still shows the sprite being edited, so the list never loses your place. Clicking it unfolds.
+          const open = S.cur && g.families.some((f) => f.members.includes(S.cur)) ? spriteOf(S.cur) : null;
+          if (open) {
+            const dd = S.docs.get(S.cur), label = S.cur.split('/').pop();
+            const dirty = dd && (savesOut(dd) ? dd.unsaved : atRisk(dd)), changed = dd && (dd.changed || dd.local || dd.isNew);
+            const b = el(`<button class="pf-openrow" data-dir="${esc(g.dir)}" title="${esc(S.cur)} — unfold this folder"><canvas width="${open.w || 16}" height="${open.h || 16}"></canvas><span class="n">${esc(label)}</span>${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? '<i class="dot base" title="changed, not in a pull request yet"></i>' : ''}</button>`);
+            list.appendChild(b);
+            const cv = b.querySelector('canvas'); cv.__s = open; if (io) io.observe(cv); else paintThumb(cv, open);
+          }
+          continue;
+        }
         const grid = el('<div class="pf-tiles"></div>'); list.appendChild(grid);
         for (const f of g.families) {
           const shown = f.members.includes(S.cur) ? S.cur : f.members[0], s = spriteOf(shown);
-          const b = el(tileHtml(s, f.members.length > 1 ? f.key : shown.split('/').pop(), famOf.get(shown), false)); grid.appendChild(b);
-          const cv = b.querySelector('canvas'); cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s);
+          place(grid, tileHtml(s, f.members.length > 1 ? f.key : shown.split('/').pop(), famOf.get(shown), false), 'i:' + s.path, s);
         }
       }
       if (hidNote) list.appendChild(hidNote); // after the folders
+      renderCommit();
     }
     function toggleDir(dir) { if (!folded) loadFolded(); folded.has(dir) ? folded.delete(dir) : folded.add(dir); saveFolded(); renderList(); }
     function setAllFolded(shut) { if (!folded) loadFolded(); if (shut) { for (const g of regroup()) folded.add(g.dir); } else folded.clear(); saveFolded(); renderList(); }
@@ -1757,6 +1903,9 @@
     /* Families (poses, variants, numbered animation frames in separate files): any member as something drawable.
        An open document wins, so edits show up in the strip, the flipbook and the onion skin straight away. */
     const famFor = (d) => { const f = d && famOf.get(d.path); return f && f.members.length > 1 ? f : null; };
+    /** A lone sprite as a one-member family. Only the family panel and its + frame button use this —
+        everything that plays families (flipbook, stepping, GIF) keeps famFor, so single sprites behave exactly as before. */
+    const famOrSingle = (d) => famFor(d) || (d && famOf.get(d.path) && { key: stem(d.path), members: [d.path], animated: false });
     const pending = new Set();
     function memberImage(path) {
       const d = S.docs.get(path);
@@ -1770,9 +1919,9 @@
     }
     const memberLabel = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length).replace(/^[_-]/, ''); return r || 'base'; };
     function renderFamily() {
-      const d = doc(), fam = famFor(d), box = $('.pf-fam'); box.hidden = !fam; if (!fam) return;
+      const d = doc(), fam = famOrSingle(d), box = $('.pf-fam'); box.hidden = !fam; if (!fam) return;
       const at = fam.members.indexOf(d.path); $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
-      $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`;
+      $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.members.length > 1 ? (fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`) : 'single sprite';
       const strip = $('.pf-fam-strip'); strip.innerHTML = '';
       for (const p of fam.members) {
         const b = el(`<button class="pf-fam-m${p === S.cur ? ' on' : ''}" data-path="${esc(p)}" role="option" title="${esc(p)}"><canvas></canvas><span>${esc(memberLabel(fam, p))}</span></button>`);
@@ -1811,6 +1960,18 @@
     }
 
     /* ---------- pull request dialog ---------- */
+    /** PNG blobs plus description previews for a set of changed documents. */
+    async function filesAndPreviews(docs) {
+      const files = [], previews = [];
+      for (const d of docs) {
+        const sc = previewScale(Math.max(d.w, d.base.w), Math.max(d.h, d.base.h)); // one scale for both sides so they compare 1:1
+        files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels(), scale: sc, baseW: d.base.w, isNew: !!(d.local || d.isNew) });
+        previews.push({ before: d.local || d.isNew ? null : await pngOf(new Doc(d.path, d.base.w, d.base.h, d.base.px), sc), after: await pngOf(d, sc) });
+      }
+      return { files, previews };
+    }
+    /** After a push: the work lives on the branch, so the documents read clean from here on. */
+    function markPushed(docs) { for (const d of docs) { d.base = { w: d.w, h: d.h, px: d.px.slice() }; d.isNew = false; if (!canWrite()) d.local = false; } }
     function openPr() {
       commitFloat(); const changed = [...S.docs.values()].filter((d) => d.changed); if (!changed.length) return;
       const gh = S.meta.repo || {}, dlg = $('.pf-dlg-pr');
@@ -1830,19 +1991,99 @@
       try {
         const token = (S.auth.token && !typed ? await authToken() : typed) || '';
         if (!token) throw new Error(authBase ? 'Sign in with GitHub first.' : 'Paste a GitHub token first.');
-        const files = [], previews = [];
-        for (const d of changed) {
-          const sc = previewScale(Math.max(d.w, d.base.w), Math.max(d.h, d.base.h)); // one scale for both sides so they compare 1:1
-          files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels(), scale: sc, baseW: d.base.w, isNew: !!(d.local || d.isNew) });
-          previews.push({ before: d.local || d.isNew ? null : await pngOf(new Doc(d.path, d.base.w, d.base.h, d.base.px), sc), after: await pngOf(d, sc) });
-        }
+        const { files, previews } = await filesAndPreviews(changed);
         const prefix = (S.meta.repo && S.meta.repo.prefix) || '';
         const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
           body: (ctx) => prBody({ files, repo, prefix, description: $('.pf-pr-desc').value.trim(), baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha, previewDir: ctx.previewDir }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
         log.innerHTML = `${esc(log.textContent)}Done${res.forked ? ' (from your fork)' : ''}: <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">${esc(res.url)}</a>`;
-        for (const d of changed) { d.base = { w: d.w, h: d.h, px: d.px.slice() }; d.isNew = false; if (!canWrite()) d.local = false; } // the work now lives in the pull request
+        markPushed(changed); // the work now lives in the pull request
         keepSoon(); status(); renderList();
       } catch (e) { log.textContent += '\n' + e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { go.disabled = false; }
+    }
+
+    /* ---------- commit panel: changes in chunks, outside the pull request dialog ----------
+       Tick the files a commit should hold, write a message, and Commit pushes them to a branch:
+       an existing one, or a new name that is created on push. The pull request for the branch is
+       opened separately, when the work is ready — the panel offers it whenever the branch has none
+       open, so chunks accumulate first and one pull request carries them all. */
+    let commitSig = null, branchesFor = null; // what the panel last rendered; which project the branch lists are for
+    const workKey = () => 'pf:work:' + ((S.meta.repo && S.meta.repo.slug) || '');
+    function saveWork() { try { if (S.work && S.work.branch) localStorage.setItem(workKey(), JSON.stringify(S.work)); else localStorage.removeItem(workKey()); } catch { /* the work still pushes, only the shortcut is not remembered */ } }
+    function loadWork() {
+      S.work = null; S.lastPush = null; S.commitSel = null; commitSig = null; branchesFor = null;
+      try { const w = JSON.parse(localStorage.getItem(workKey()) || 'null'); if (w && w.branch) S.work = w; } catch { /* start without a remembered branch */ }
+      if (S.work && S.work.branch) $('.pf-commit-branch').value = S.work.branch;
+    }
+    const commitToken = async () => (S.auth.token ? authToken().catch(() => '') : storedToken());
+    function renderCommit() {
+      const panel = $('.pf-commit'), repo = O.pr !== false && S.meta.repo && S.meta.repo.slug;
+      panel.hidden = !repo;
+      if (!repo) return;
+      const changed = [...S.docs.values()].filter((d) => d.changed);
+      $('.pf-commit-n').textContent = changed.length ? `(${changed.length})` : '';
+      $('.pf-commit-go').disabled = !changed.length;
+      const sig = changed.map((d) => d.path + ':' + d.changedPixels()).join('|');
+      if (sig === commitSig) return;
+      commitSig = sig;
+      if (S.commitSel) S.commitSel = new Set([...S.commitSel].filter((p) => changed.some((d) => d.path === p)));
+      $('.pf-commit-list').innerHTML = changed.length ? changed.map((d) => `<label title="${esc(d.path)}"><input type="checkbox" data-path="${esc(d.path)}"${!S.commitSel || S.commitSel.has(d.path) ? ' checked' : ''}><span class="n">${esc(d.path)}<br><small>${d.w}×${d.h} · ${d.changedPixels()} px changed</small></span></label>`).join('')
+        : '<div class="pf-note">No changes. Draw something first.</div>';
+    }
+    /** Branch names for the panel and connect datalists, fetched once per project. Quiet when signed out or offline. */
+    async function fillBranches() {
+      if (branchesFor === S.src) return; branchesFor = S.src;
+      const gh = S.meta.repo || {}, token = await commitToken();
+      for (const id of ['#pf-branchlist', '#pf-c-branchlist']) { const dl = $(id); if (dl && gh.slug && token) { try { dl.innerHTML = (await listBranches({ token, repo: gh.slug, apiBase: O.apiBase })).map((b) => `<option value="${esc(b)}">`).join(''); } catch { branchesFor = null; } } }
+    }
+    async function submitCommit() {
+      commitFloat();
+      const all = [...S.docs.values()].filter((d) => d.changed);
+      const sel = !S.commitSel ? all : all.filter((d) => S.commitSel.has(d.path));
+      const note = $('.pf-commit-note'), go = $('.pf-commit-go');
+      if (!sel.length) { note.textContent = all.length ? 'Tick at least one sprite to commit.' : 'No changes. Draw something first.'; return; }
+      const token = await commitToken();
+      if (!token) { note.textContent = 'Sign in at the top of this panel, or open Propose PR once to add a token, then Commit again.'; return; }
+      const gh = S.meta.repo || {};
+      const message = $('.pf-commit-msg').value.trim() || (sel.length === 1 ? 'Update ' + sel[0].path.split('/').pop() : 'Update ' + sel.length + ' sprites');
+      const branch = $('.pf-commit-branch').value.trim() || (S.work && S.work.branch) || ('art/' + slug(message) + '-' + Date.now().toString(36));
+      go.disabled = true; note.textContent = '';
+      try {
+        const { files } = await filesAndPreviews(sel);
+        const res = await pushSprites({ token, repo: gh.slug, base: gh.base || undefined, branch, prefix: gh.prefix || '', files: files.map((f) => ({ path: f.path, blob: f.blob })), message, apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
+        markPushed(sel);
+        S.commitSel = null; commitSig = null; $('.pf-commit-msg').value = ''; $('.pf-commit-branch').value = res.branch;
+        const meta = files.map((f) => ({ path: f.path, w: f.w, h: f.h, pixels: f.pixels, scale: f.scale, baseW: f.baseW, isNew: f.isNew }));
+        const prev = S.lastPush && S.lastPush.branch === res.branch ? S.lastPush : null;
+        S.lastPush = { branch: res.branch, message, files: (prev ? prev.files : []).filter((m) => !meta.some((x) => x.path === m.path)).concat(meta), baseSha: res.baseSha || (prev && prev.baseSha) || null, commit: res.commit };
+        S.work = { branch: res.branch, headRepo: res.headRepo, headOwner: res.headOwner, base: res.base, pr: (S.work && S.work.branch === res.branch && S.work.pr) || null };
+        saveWork(); branchesFor = null;
+        const open = await openPulls({ token, repo: gh.slug, branch: res.branch, owner: res.headOwner || undefined, apiBase: O.apiBase }).catch(() => null);
+        const found = open && open[0];
+        if (found) {
+          S.work.pr = { number: found.number, url: found.url }; saveWork();
+          note.innerHTML = `Committed ${sel.length} sprite${sel.length > 1 ? 's' : ''} to ${esc(res.branch)} — added to <a href="${esc(found.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">#${found.number}</a>.`;
+        } else {
+          note.innerHTML = `${esc(res.created ? 'Created' : 'Committed to')} ${esc(res.branch)} (${esc(res.commit.slice(0, 7))}). <button type="button" class="pf-commit-openpr">Open a pull request</button>`;
+        }
+        keepSoon(); status(); renderList();
+      } catch (e) { note.textContent = e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { go.disabled = false; }
+    }
+    async function submitOpenPr() {
+      const btn = $('.pf-commit-openpr'), note = $('.pf-commit-note');
+      const work = S.work || {}, lp = S.lastPush || {};
+      const branch = work.branch || lp.branch || $('.pf-commit-branch').value.trim();
+      if (!branch) { note.textContent = 'Commit something first.'; return; }
+      const token = await commitToken();
+      if (!token) { note.textContent = 'Sign in at the top of this panel, or open Propose PR once to add a token, then try again.'; return; }
+      const gh = S.meta.repo || {};
+      if (btn) btn.disabled = true;
+      try {
+        const files = lp.branch === branch ? lp.files : [];
+        const res = await openPull({ token, repo: gh.slug, branch, headOwner: work.headOwner || undefined, base: work.base || gh.base || undefined, title: $('.pf-commit-msg').value.trim() || lp.message || branch,
+          body: prBody({ files, description: '', repo: gh.slug, baseSha: lp.baseSha || undefined, commit: lp.commit || undefined, headRepo: work.headRepo || undefined, prefix: gh.prefix || '' }), apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
+        S.work = { ...work, branch, pr: { number: res.number, url: res.url } }; saveWork();
+        note.innerHTML = `Pull request <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">#${res.number}</a> opened for ${esc(branch)}.`;
+      } catch (e) { note.textContent = e.message; } finally { if (btn) btn.disabled = false; }
     }
 
     /* ---------- events ---------- */
@@ -1851,8 +2092,10 @@
       if (t.dataset.t) return setTool(t.dataset.t);
       if (t.classList.contains('pf-item')) return openSprite(t.dataset.path);
       if (t.classList.contains('pf-dir')) return toggleDir(t.dataset.dir);
+      if (t.classList.contains('pf-openrow')) return toggleDir(t.dataset.dir);
       if (t.classList.contains('pf-fold-all')) return setAllFolded(true);
       if (t.classList.contains('pf-unfold-all')) return setAllFolded(false);
+      if (t.classList.contains('pf-commit-openpr')) return submitOpenPr();
       if (t.classList.contains('pf-hidden-toggle')) { const hid = S.src.hidden || []; if (S.sprites.some((x) => x.hiddenByDefault)) S.sprites = S.sprites.filter((x) => !x.hiddenByDefault); else S.sprites = S.sprites.concat(hid.map((x) => ({ ...x, hiddenByDefault: true }))); return renderList(); }
       if (t.classList.contains('pf-fam-m')) return openSprite(t.dataset.path);
       if (t.dataset.c !== undefined && t.closest('.pf-sw')) return e.shiftKey ? setColor2(+t.dataset.c) : setColor(+t.dataset.c);
@@ -1860,6 +2103,13 @@
     });
     root.addEventListener('contextmenu', (e) => { const t = e.target.closest('.pf-sw button[data-c]'); if (t) { e.preventDefault(); setColor2(+t.dataset.c); } });
     $('.pf-q').oninput = renderList;
+    $('.pf-commit-go').onclick = submitCommit;
+    $('.pf-commit-branch').addEventListener('focus', fillBranches);
+    root.addEventListener('change', (e) => {
+      const c = e.target.closest('.pf-commit-list input[type=checkbox]'); if (!c) return;
+      if (!S.commitSel) S.commitSel = new Set([...S.docs.values()].filter((d) => d.changed).map((d) => d.path));
+      if (c.checked) S.commitSel.add(c.dataset.path); else S.commitSel.delete(c.dataset.path);
+    });
     /* background behind transparent pixels: a menu on the Background button, K cycles, the choice is remembered */
     const projectBg = () => { const b = O.background || (S.src && S.src.background); return typeof b === 'string' && fromHex(b) != null ? toHex(fromHex(b)) : null; };
     const bgModes = () => BACKGROUNDS.filter(([m]) => m !== 'project' || projectBg());
@@ -1918,7 +2168,8 @@
     /* animation: frames that are separate numbered files (flame_0, flame_1...) */
     const frameNo = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length); const m = /^([_-])(\d+)$/.exec(r); return m ? { sep: m[1], n: +m[2], pad: m[2].length } : null; };
     $('.pf-fam-add').onclick = async () => {
-      const d = doc(), fam = famFor(d); if (!d || !fam) return;
+      const d = doc(); if (!d) return;
+      const fam = famOrSingle(d); if (!fam) return;
       const nums = fam.members.map((p) => frameNo(fam, p)).filter(Boolean), sep = nums[0] ? nums[0].sep : '_', pad = nums[0] ? nums[0].pad : 1, n = nums.length ? Math.max(...nums.map((x) => x.n)) + 1 : 1;
       const dir = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/') + 1) : '', path = `${dir}${fam.key}${sep}${String(n).padStart(pad, '0')}.png`;
       if (S.sprites.some((x) => x.path === path)) return note(path + ' already exists');
@@ -2118,11 +2369,13 @@
       return top.sort((a, b) => a.w * a.h - b.w * b.h);
     }
     const markQuick = () => $$('.pf-n-quick button').forEach((b) => b.classList.toggle('on', b.dataset.w === $('.pf-nw').value && b.dataset.h === $('.pf-nh').value));
+    /** The name sidebar New suggests: the next free `new_sprite[N].png`, so creating never silently numbers a duplicate. */
+    function nextSpriteName() { const taken = new Set(S.sprites.map((s) => s.path)); if (!taken.has('new_sprite.png')) return 'new_sprite.png'; let n = 1; while (taken.has(`new_sprite${n}.png`)) n++; return `new_sprite${n}.png`; }
     function openNew() {
       const sizes = commonSizes(), d = doc();
       $('.pf-n-quick').innerHTML = sizes.map((x) => `<button type="button" data-w="${x.w}" data-h="${x.h}" title="${x.c ? x.c + ' sprite' + (x.c > 1 ? 's' : '') + ' in this project are this size' : 'a common size'}">${x.w}×${x.h}</button>`).join('');
       const pick = sizes.find((x) => d && x.w === d.w && x.h === d.h) || sizes.reduce((a, b) => (b.c > a.c ? b : a), sizes[0]); // the open sprite's size, else the project's most used
-      $('.pf-nw').value = pick.w; $('.pf-nh').value = pick.h; markQuick(); $('.pf-dlg-new').showModal();
+      $('.pf-nw').value = pick.w; $('.pf-nh').value = pick.h; markQuick(); $('.pf-nn').value = nextSpriteName(); $('.pf-dlg-new').showModal();
     }
     $('.pf-n-quick').onclick = (e) => { const b = e.target.closest('[data-w]'); if (!b) return; $('.pf-nw').value = b.dataset.w; $('.pf-nh').value = b.dataset.h; markQuick(); };
     $('.pf-nw').oninput = markQuick; $('.pf-nh').oninput = markQuick;
@@ -2133,10 +2386,19 @@
     async function importFile(f) { try { const img = await decodePng(f); addLocal(f.name, img.w, img.h, img.px); } catch (err) { note('Could not read ' + f.name + ': ' + err.message); } }
     stage.addEventListener('dragover', (e) => e.preventDefault());
     stage.addEventListener('drop', async (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) if (/^image\//.test(f.type)) await importFile(f); });
+    /** Branch names for the connect dialog, so an existing branch can be picked instead of typed. Quiet when signed out or offline. */
+    async function fillConnectBranches() {
+      const dl = $('#pf-c-branchlist'); if (!dl) return;
+      const repo = $('.pf-c-repo').value.trim(); if (!repo) { dl.innerHTML = ''; return; }
+      const token = await commitToken();
+      if (!token) return;
+      try { dl.innerHTML = (await listBranches({ token, repo, apiBase: O.apiBase })).map((b) => `<option value="${esc(b)}">`).join(''); } catch { /* leave free typing */ }
+    }
     function openConnect(msg) {
       const dlg = $('.pf-dlg-connect'), gh = O.github || {};
       $('.pf-c-repo').value = $('.pf-c-repo').value || gh.slug || ''; $('.pf-c-branch').value = $('.pf-c-branch').value || gh.base || ''; if (!S.auth.token) $('.pf-c-token').value = $('.pf-c-token').value || storedToken();
       if (S.auth.token) loadRepos();
+      fillConnectBranches();
       const canFolder = typeof window.showDirectoryPicker === 'function'; $('.pf-c-folder').disabled = !canFolder; $('.pf-c-foldernote').textContent = canFolder ? 'Saves the PNGs in place. Chrome, Edge and Opera.' : 'Needs Chrome, Edge or Opera.';
       $('.pf-c-msg').textContent = msg || ''; if (!dlg.open) dlg.showModal();
       renderLocals();
@@ -2151,6 +2413,7 @@
     authRows('.pf-signin').forEach((b) => (b.onclick = () => { const d = b.closest('dialog'); doSignIn(d && d.querySelector('.pf-c-msg, .pf-log')); }));
     authRows('.pf-signout').forEach((b) => (b.onclick = () => { signOut(); if (!b.closest('dialog')) note('Signed out of GitHub on this device.'); }));
     $('.pf-c-repolist').onclick = (e) => { const b = e.target.closest('.pf-c-pick'); if (!b) return; $('.pf-c-repo').value = b.dataset.repo; $('.pf-c-branch').value = b.dataset.branch; $('.pf-c-gh').click(); };
+    $('.pf-c-repo').addEventListener('change', fillConnectBranches);
     let uploadToNew = false; // Upload PNG in the dialog starts a project in this browser (unless one is open); Open PNG in the sidebar adds to the open project
     $('.pf-c-upload').onclick = () => { uploadToNew = !(S.src && S.src.kind === 'browser'); $('.pf-dlg-connect').close(); $('.pf-file').click(); };
     $('.pf-c-blank').onclick = () => newLocalProject();
@@ -2227,5 +2490,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, Doc } };
 });
