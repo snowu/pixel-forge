@@ -389,10 +389,14 @@ await setHex('#00ff00'); await click(3, 3);
 await page.locator('.pf-item', { hasText: 'gem.png' }).click();
 await page.waitForFunction(() => document.getElementById('app').__pf.current.path.endsWith('gem.png'));
 await click(4, 4);
+await page.locator('.pf-commit > summary').click(); // the panel rests collapsed
 await page.waitForFunction(() => document.querySelectorAll('.pf-commit-list input[type=checkbox]').length === 2);
 ok((await page.locator('.pf-commit-list input[type=checkbox]').count()) === 2, 'the commit panel lists both changed sprites');
 await page.locator('.pf-commit-list input[type=checkbox]').first().uncheck();
 await page.locator('.pf-commit-msg').fill('chunk one');
+await page.waitForFunction(() => document.querySelectorAll('.pf-commit-branches option').length >= 2);
+ok((await page.locator('.pf-commit-branches option').allInnerTexts()).join().includes('art/wip'), 'the branch picker lists the repository branches');
+await page.locator('.pf-commit-branches').selectOption('');
 await page.locator('.pf-commit-branch').fill('art/chunks');
 const at = calls.length;
 await page.locator('.pf-commit-go').click();
@@ -415,8 +419,7 @@ const noteHtml = await page.locator('.pf-commit-note').innerHTML();
 ok(afterCount === pullsBefore, 'the second chunk opens no new pull request');
 ok(/pull\/4/.test(noteHtml), 'it joins pull request #4');
 ok(calls.some((c) => c.m === 'PATCH' && /art\/chunks$/.test(c.p)), 'appending to the branch updates its ref');
-await page.locator('.pf-commit-branch').click();
-ok(await until(async () => (await page.locator('#pf-branchlist option').count()) >= 2), 'the branch picker lists the repository branches');
+ok((await page.locator('.pf-commit-branches').inputValue()) === 'art/chunks', 'the picker stays on the branch the chunks go to');
 
 section('standalone: hosted page + GitHub repository (no server, no manifest)');
 {
@@ -479,7 +482,7 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.waitForFunction(() => /⎇ main/.test(document.querySelector('.pf-source').textContent));
   await gp.waitForFunction(() => document.getElementById('app').__pf.current);
   ok(/⎇ main/.test(await gp.locator('.pf-source').innerText()), 'and back again');
-  ok((await gp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.w + 'x' + d.h; })) === '16x4' || true, 'opened the first sprite');
+  ok(await gp.evaluate(() => { const pf = document.getElementById('app').__pf; return pf.current.path === pf.state.sprites[0].path; }), 'switching branches opens the first sprite again');
   await gp.locator('.pf-item', { hasText: 'hero.png' }).click(); await gp.waitForTimeout(250);
   const gview = await gp.locator('.pf-view').boundingBox();
   const gS = await gp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
@@ -882,6 +885,76 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.keyboard.press('Control+z');
   await fp.reload(); await fp.waitForSelector('.pf-item'); ok(await fp.locator('.pf-ctx').isVisible(), 'the context strip stays on after a reload');
   await fp.keyboard.press('v'); ok(await fp.locator('.pf-ctx').isHidden(), 'V hides it');
+  // the explorer does not blink while you draw and save: the open sprite's thumbnail keeps its canvas and is never blank
+  await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(300);
+  await fp.evaluate(() => {
+    const row = () => document.querySelector('.pf-item.on canvas'), w = (window.__blink = { cv: row(), swapped: 0, blank: 0, frames: 0, markers: [] });
+    const tick = () => { const c = row(); if (!w.on) return; w.frames++; if (c !== w.cv) w.swapped++; if (c) { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let on = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) on++; if (!on) w.blank++; } const m = document.querySelector('.pf-item.on .dot'); const mk = m ? m.className : 'gone'; if (w.markers.at(-1) !== mk) w.markers.push(mk); w.dot = w.dot || m; if (m && m !== w.dot) w.dotSwapped = true; requestAnimationFrame(tick); };
+    w.on = true; requestAnimationFrame(tick);
+  });
+  { const b = await fp.locator('.pf-view').boundingBox(), st = await fp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
+    await fp.keyboard.press('b'); await fp.mouse.click(b.x + (st.ox + 3.5 * st.z) / st.k, b.y + (st.oy + 3.5 * st.z) / st.k); }
+  await fp.waitForTimeout(500); await fp.keyboard.press('Control+s'); await fp.waitForTimeout(600);
+  const blink = await fp.evaluate(() => { const w = window.__blink; w.on = false; return { swapped: w.swapped, blank: w.blank, frames: w.frames, markers: w.markers, dotSwapped: !!w.dotSwapped }; });
+  ok(blink.frames > 10 && blink.swapped === 0 && blink.blank === 0 && !blink.dotSwapped, `drawing then saving never swaps or blanks the open sprite's thumbnail, and only its marker changes (${blink.frames} frames, markers: ${blink.markers.join(' → ')})`);
+  ok(blink.markers.join() === 'dot base,dot,dot base', 'the marker goes changed → not saved → saved, on the same element: ' + blink.markers.join(' → '));
+  // context groups from the config: the sprites it is seen with, on the group's background; and the project's alpha rule
+  fs.writeFileSync(path.join(r2, 'groups.json'), JSON.stringify({ 'Floor-mates': { background: '#203040', sprites: ['tiles/floor_moss.png', 'chars/bat.png'] }, Heroes: ['chars/hero_0.png'] }));
+  fs.writeFileSync(path.join(r2, 'spritewright.config.json'), JSON.stringify({ groups: 'groups.json', alpha: { clear: 15, solid: 245, keep: [250] } }));
+  await fp.reload(); await fp.waitForSelector('.pf-item');
+  await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(200);
+  await fp.keyboard.press('v'); await fp.waitForTimeout(300);
+  ok((await fp.locator('.pf-ctx-group option').allInnerTexts()).join() === 'Floor-mates,Same folder' && await fp.locator('.pf-ctx-group').inputValue() === 'Floor-mates', 'Context opens on the config group that holds the sprite, and offers the folder too: ' + (await fp.locator('.pf-ctx-group option').allInnerTexts()).join(' | '));
+  ok(/1 neighbour from Floor-mates/.test(await fp.locator('.pf-ctx-note').innerText()) && await has([0x20, 0x30, 0x40]) && await has([255, 0, 0]), 'its neighbours come from the group, drawn on the group background: ' + await fp.locator('.pf-ctx-note').innerText());
+  { // clicking a neighbour in the strip opens it
+    const at = await fp.evaluate(() => { const c = document.querySelector('.pf-ctx-cv'), r = c.getBoundingClientRect(), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      for (let i = 0; i < d.length; i += 4) if (d[i] === 255 && d[i + 1] === 0 && d[i + 2] === 0) { const x = (i / 4) % c.width, y = Math.floor(i / 4 / c.width); return { x: r.left + x * r.width / c.width, y: r.top + y * r.height / c.height }; } return null; });
+    await fp.mouse.click(at.x, at.y); await fp.waitForTimeout(300);
+    ok(await fp.evaluate(() => document.getElementById('app').__pf.current.path) === 'tiles/floor_moss.png', 'clicking a neighbour in the context strip opens it on the canvas');
+    await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(200);
+  }
+  await fp.locator('.pf-ctx-group').selectOption(''); await fp.waitForTimeout(150);
+  ok(/neighbour from chars/.test(await fp.locator('.pf-ctx-note').innerText()), 'Same folder goes back to the folder neighbours');
+  await fp.reload(); await fp.waitForSelector('.pf-item'); await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(300);
+  ok(await fp.locator('.pf-ctx-group').inputValue() === '', 'the choice is remembered across a reload');
+  await fp.locator('.pf-ctx-group').selectOption('Floor-mates'); await fp.waitForTimeout(150);
+  await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(300);
+  ok(await fp.locator('.pf-ctx-group').inputValue() === 'Heroes', 'a frame of a family uses the group its family is in (hero_1 → Heroes)');
+  await fp.keyboard.press('v');
+  await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(200);
+  await fp.evaluate(async () => { const a = document.getElementById('app').__pf, d = a.current; d.snapshot(); d.px[5] = ((252 << 24) | 0x00ff00) >>> 0; d.px[6] = ((3 << 24) | 0x00ff00) >>> 0; await a.save(); });
+  { const out = decodePng(fs.readFileSync(path.join(r2, 'chars/bat.png'))).rgba;
+    ok(out[5 * 4 + 3] === 255 && out[5 * 4 + 1] === 255 && out[6 * 4 + 3] === 0, 'Save snaps stray alpha to the project rule: 252 → solid, 3 → clear'); }
+  ok(/saved chars\/bat\.png · 2 stray-alpha pixels snapped/.test(await fp.evaluate(() => document.getElementById('app').__pf.state.notice)), 'and says so: ' + await fp.evaluate(() => document.getElementById('app').__pf.state.notice));
+  await fp.keyboard.press('Control+z'); ok(await fp.evaluate(() => document.getElementById('app').__pf.current.px[5] >>> 24) === 252, 'undo brings the stray value back');
+  // fullscreen on a phone held sideways: canvas and tools fill the screen, menus slide in from the edges
+  ok(await fp.locator('.pf-fs-go').isHidden(), 'no fullscreen button on a desktop with a mouse');
+  { const mctx = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true }), mp = await mctx.newPage(), merr = []; mp.on('pageerror', (e) => merr.push(e.message));
+    await mp.goto(b2); await mp.waitForSelector('.pf-item'); await mp.locator('.pf-cell', { hasText: 'bat' }).tap(); await mp.waitForTimeout(300);
+    await mp.locator('.pf-fs-go').tap(); await mp.waitForTimeout(500);
+    const box = (sel) => mp.locator(sel).boundingBox();
+    const st = await box('.pf-stage'), rail = await box('.pf-rail'), side = await box('.pf-side'), right = await box('.pf-right');
+    ok(await mp.evaluate(() => document.querySelector('.pf').classList.contains('pf-fs')) && st.height >= 380 && st.x + st.width >= 840 && rail.height >= 380, `the canvas and tool rail fill the screen (stage ${Math.round(st.width)}×${Math.round(st.height)}, rail ${Math.round(rail.width)}px)`);
+    ok(side.x + side.width <= 0 && right.x >= 844 && await mp.evaluate(() => document.documentElement.scrollWidth) <= 844, 'menus are off screen, nothing scrolls sideways');
+    const bot = await mp.evaluate(() => { const r = document.querySelector('.pf-rail').getBoundingClientRect(); return Math.max(...[...document.querySelectorAll('.pf-rail button')].map((b) => b.getBoundingClientRect().bottom)) <= r.bottom + 1; });
+    ok(bot, 'every tool fits in the rail without scrolling');
+    const v = await mp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), r = c.getBoundingClientRect(); return { x: r.left + (S.ox + 2.5 * S.zoom) * r.width / c.width, y: r.top + (S.oy + 2.5 * S.zoom) * r.height / c.height }; });
+    await mp.touchscreen.tap(v.x, v.y); await mp.waitForTimeout(200);
+    ok(await mp.evaluate(() => document.getElementById('app').__pf.current.changed), 'tapping the canvas draws');
+    await mp.locator('.pf-fs-undo').tap(); await mp.waitForTimeout(200);
+    ok(!(await mp.evaluate(() => document.getElementById('app').__pf.current.changed)), 'the floating undo undoes it');
+    await mp.locator('.pf-fs-hl').tap(); await mp.waitForTimeout(400);
+    ok((await box('.pf-side')).x >= 0 && (await mp.locator('.pf-fs-hl').innerText()) === '‹', '› slides the sprite list in from the left (and turns into ‹)');
+    await mp.locator('.pf-cell', { hasText: 'hero' }).tap(); await mp.waitForTimeout(500);
+    ok(/hero/.test(await mp.evaluate(() => document.getElementById('app').__pf.current.path)) && (await box('.pf-side')).x + (await box('.pf-side')).width <= 0, 'picking a sprite opens it and closes the list');
+    await mp.locator('.pf-fs-hr').tap(); await mp.waitForTimeout(400);
+    ok((await box('.pf-right')).x + (await box('.pf-right')).width <= 845 && await mp.locator('.pf-right .pf-bar .pf-save').isVisible() && await mp.locator('.pf-right .pf-opts').count() === 1, '‹ slides in the colours with the toolbar and tool options on top (Save is there)');
+    await mp.locator('.pf-fs-scrim').tap({ position: { x: 150, y: 200 } }); await mp.waitForTimeout(400);
+    ok((await box('.pf-right')).x >= 844, 'tapping the dimmed canvas closes it');
+    await mp.locator('.pf-fs-exit').tap(); await mp.waitForTimeout(400);
+    ok(await mp.evaluate(() => { const m = document.querySelector('.pf-main'); return !document.querySelector('.pf').classList.contains('pf-fs') && m.firstElementChild.classList.contains('pf-bar') && m.children[1].classList.contains('pf-opts'); }), 'leaving fullscreen puts the toolbar and options back where they were');
+    ok(merr.length === 0, 'no page errors on the phone ' + merr.join('|'));
+    await mctx.close(); }
   ok(ferr2.length === 0, 'no page errors ' + ferr2.join('|'));
   await fp.close(); await s2.close();
 }

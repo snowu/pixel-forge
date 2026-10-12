@@ -645,13 +645,47 @@
   }
   /** With no project config, leave out folders that are clearly not game art (docs, screenshots, previews, tests...). */
   const skipNonArt = (items) => items.filter((it) => !it.path.split('/').slice(0, -1).some((seg) => NON_ART.test(seg)));
+  /** The project's alpha rule from the config, { clear, solid, keep: [..] }, or null. Values are clamped to 0-255. */
+  function normAlpha(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const n = (v, d) => (Number.isFinite(+v) ? Math.max(0, Math.min(255, Math.round(+v))) : d);
+    return { clear: n(raw.clear, 0), solid: n(raw.solid, 255), keep: (Array.isArray(raw.keep) ? raw.keep : []).map((v) => n(v, -1)).filter((v) => v > 0 && v < 255) };
+  }
+  /* Stray alpha: what a soft brush or an eraser leaves behind, near-clear specks (1..clear) and near-opaque values
+     (solid..254) that are not one the project keeps on purpose (say 250 for "glows"). Specks become clear (colour too);
+     near-opaque pixels become solid, or the kept value when the original image (`base`) had that value at that pixel and
+     this one is within 5 of it. Rewrites px in place and returns how many pixels changed. */
+  function snapAlpha(px, rule, base = null) {
+    if (!rule) return 0;
+    let n = 0;
+    for (let i = 0; i < px.length; i++) {
+      const v = px[i], a = v >>> 24;
+      if (a === 0 || a === 255 || rule.keep.includes(a)) continue;
+      let to = -1;
+      if (a <= rule.clear) to = 0;
+      else if (a >= rule.solid) { const b = base ? base[i] >>> 24 : -1; to = rule.keep.includes(b) && Math.abs(a - b) <= 5 ? b : 255; }
+      if (to < 0) continue;
+      px[i] = to === 0 ? 0 : ((v & 0xffffff) | (to << 24)) >>> 0; n++;
+    }
+    return n;
+  }
+  /** Context groups from the config: { name: [paths] | { sprites: [paths], background? } } -> [{ name, sprites, background }].
+      Order is kept: a sprite's first group is the one Context opens on. Anything malformed is dropped, never thrown. */
+  function normGroups(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    return Object.entries(raw).map(([name, g]) => {
+      const list = Array.isArray(g) ? g : g && Array.isArray(g.sprites) ? g.sprites : [];
+      const background = g && !Array.isArray(g) && typeof g.background === 'string' && /^#[0-9a-f]{6}$/i.test(g.background) ? g.background.toLowerCase() : null;
+      return { name: String(name), sprites: list.filter((x) => typeof x === 'string'), background };
+    }).filter((g) => g.sprites.length);
+  }
   /** What applyConfig left out only because of that default, so the editor can offer "show N hidden images". */
   const hiddenBy = (items, cfg, kept) => { const k = new Set(kept.map((x) => x.path)); return applyConfig(items, { ...cfg, keepDocs: true }).filter((x) => !k.has(x.path)); };
 
   /** Sprites listed in a manifest and fetched over HTTP relative to baseUrl. Read-only (Save downloads). */
   function staticSource(mf, baseUrl) {
     const base = baseUrl == null ? '' : baseUrl && !baseUrl.endsWith('/') ? baseUrl + '/' : baseUrl;
-    return { kind: 'static', thumbs: true, note: 'Static mode: edits are kept in this browser; Download takes them out. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'static', thumbs: true, note: 'Static mode: edits are kept in this browser; Download takes them out. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(base + path.split('/').map(encodeURIComponent).join('/')); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); } };
   }
   /** The local `spritewright serve` server: reads and writes the project folder. */
@@ -659,7 +693,7 @@
     const url = (path) => 'project/' + path.split('/').map(encodeURIComponent).join('/');
     const history = async (path) => { const r = await fetch('api/history?path=' + encodeURIComponent(path)); return r.ok ? r.json() : []; };
     const readAt = async (path, sha) => { const r = await fetch(`api/file-at?path=${encodeURIComponent(path)}&sha=${sha}`); if (!r.ok) throw new Error('not in that commit'); return new Uint8Array(await r.arrayBuffer()); };
-    return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
       async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
   }
@@ -695,6 +729,8 @@
     let cfg = {}, palette = null;
     if (entries.has('spritewright.config.json')) { try { cfg = JSON.parse(new TextDecoder().decode(await blob('spritewright.config.json'))); } catch { /* ignore a broken config */ } }
     if (cfg.palette && entries.has(cfg.palette)) { try { palette = palFromText(new TextDecoder().decode(await blob(cfg.palette))); } catch { /* none */ } }
+    let groups = typeof cfg.groups === 'object' ? cfg.groups : null;
+    if (typeof cfg.groups === 'string' && entries.has(cfg.groups)) { try { groups = JSON.parse(new TextDecoder().decode(await blob(cfg.groups))); } catch { /* none */ } }
     const png = [...entries.values()].filter((e) => /\.png$/i.test(e.path) && e.size <= (cfg.maxBytes || maxBytes)).map((e) => ({ path: e.path, bytes: e.size }));
     const sprites = applyConfig(png, cfg), hidden = hiddenBy(png, cfg, sprites);
     const history = async (path) => (await call(`/repos/${o.repo}/commits?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(branch)}&per_page=30`)).map((c) => ({ sha: c.sha, date: c.commit.author.date, author: (c.author && c.author.login) || c.commit.author.name, message: c.commit.message.split('\n')[0] }));
@@ -702,9 +738,9 @@
       if (rawUrl) { try { const r = await doFetch(`${rawBase.replace(/\/$/, '')}/${o.repo}/${sha}/${path.split('/').map(encodeURIComponent).join('/')}`); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* use the API */ } }
       const f = await call(`/repos/${o.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`); return b64ToBytes(f.content.replace(/\n/g, ''));
     };
-    return { kind: 'github', thumbs: true, history, readAt, sprites, hidden, palette, branch, background: cfg.background || null,
+    return { kind: 'github', thumbs: true, history, readAt, sprites, hidden, palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Edits are kept in this browser; Propose PR sends them back.',
-      repo: { slug: o.repo, base: branch, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
+      repo: { slug: o.repo, base: branch, defaultBranch: info.default_branch || null, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
 
   /** A folder on disk through the File System Access API (Chromium browsers): lists, reads and saves in place. */
@@ -724,9 +760,11 @@
     };
     await walk(root, ''); found.sort((a, b) => a.path.localeCompare(b.path));
     let palette = null; if (cfg.palette) { const t = await readText(root, ...cfg.palette.split('/')); if (t) palette = palFromText(t); }
+    let groups = typeof cfg.groups === 'object' ? cfg.groups : null;
+    if (typeof cfg.groups === 'string') { const t = await readText(root, ...cfg.groups.split('/')); if (t) try { groups = JSON.parse(t); } catch { /* none */ } }
     const gitCfg = await readText(root, '.git', 'config'), m = gitCfg && /\[remote "origin"\][^[]*?url\s*=\s*(.+)/.exec(gitCfg), slug = (m && slugFromRemote(m[1])) || (cfg.repo && cfg.repo.slug) || null;
     const sprites = applyConfig(found, cfg);
-    return { kind: 'folder', thumbs: true, sprites, hidden: hiddenBy(found, cfg, sprites), palette, background: cfg.background || null, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
+    return { kind: 'folder', thumbs: true, sprites, hidden: hiddenBy(found, cfg, sprites), palette, groups, alpha: cfg.alpha || null, background: cfg.background || null, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
       async read(path) { const h = files.get(path); if (!h) throw new Error('not found: ' + path); return new Uint8Array(await (await h.getFile()).arrayBuffer()); },
       async write(path, bytes) {
         const parts = path.split('/'); let dir = root; for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
@@ -820,7 +858,7 @@
 .pf .pf-item.on,.pf .pf-item.on:hover:not(:disabled){border-color:var(--pf-accent);background:var(--pf-panel2);color:var(--pf-ink);font-weight:400;box-shadow:inset 3px 0 0 var(--pf-accent)}
 .pf-item canvas{width:36px;height:36px;image-rendering:pixelated;background:var(--pf-ckbg);flex:none}
 .pf-item .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}.pf-item small{display:block;color:var(--pf-muted);overflow:hidden;text-overflow:ellipsis}
-.pf-item .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-item .dot.base{background:var(--pf-warn)}
+.pf-item .dot{width:8px;height:8px;background:var(--pf-accent);flex:none}.pf-item .dot.base{background:var(--pf-warn)}.pf-item .dot,.pf-openrow .dot{transition:background-color .25s ease,opacity .25s ease}.pf-item .dot.none,.pf-openrow .dot.none{opacity:0}
 .pf-list:not(.pf-flat){display:block}
 .pf .pf-dir{display:flex;width:100%;justify-content:flex-start;gap:6px;background:none;border:0;border-bottom:1px solid var(--pf-line);padding:7px 2px 5px;min-height:0;margin-top:6px;color:var(--pf-muted);font-size:11.5px;letter-spacing:.04em;position:sticky;top:0;z-index:1;background:var(--pf-panel)}
 .pf .pf-dir:hover:not(:disabled){box-shadow:none;color:var(--pf-accent)}
@@ -843,6 +881,11 @@
 .pf-commit-list input{flex:none}
 .pf-commit-list .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-commit-list small{color:var(--pf-muted)}
+.pf-branchrow{display:flex;gap:6px}
+.pf-branchrow select{flex:1;min-width:0}
+.pf-branchrow input{flex:1;min-width:0}
+/* Naming a new branch: the picker shrinks to its + New label, so the name field gets the room. */
+.pf-branchrow:has(.pf-commit-branch:not([hidden])) .pf-commit-branches{flex:none;width:72px;box-sizing:border-box}
 .pf-commit .pf-row{margin-top:8px}
 .pf-commit-note{margin-top:6px}
 .pf-commit-note:empty{display:none}
@@ -864,7 +907,7 @@
 .pf-bgmenu .pf-bg-sw{width:16px;height:16px}.pf-bgmenu label{padding:4px 8px;font-size:11.5px}.pf-bgmenu input[type=color]{width:34px;height:24px;padding:0;border:1px solid var(--pf-line2);background:none}
 .pf-s-peek{color:var(--pf-accent2);cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:none}.pf-arrow{color:var(--pf-faint);font-style:normal}
 .pf-ctx{border-top:1px solid var(--pf-line);background:var(--pf-panel);display:flex;flex-direction:column;flex:none}
-.pf-ctx-bar{display:flex;gap:10px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--pf-line)}.pf .pf-ctx-bar .pf-seg button{min-height:24px;padding:1px 8px}
+.pf-ctx-bar{display:flex;gap:10px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--pf-line)}.pf .pf-ctx-bar .pf-seg button{min-height:24px;padding:1px 8px}.pf .pf-ctx-bar .pf-ctx-group{width:auto;max-width:260px;min-height:24px;padding:1px 6px;flex:0 1 auto;min-width:0;text-overflow:ellipsis}.pf-ctx-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .pf-ctx-cv{display:block;width:100%;height:150px;image-rendering:pixelated}
 .pf-fam-tools{margin-left:auto;display:inline-flex;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11.5px}
 .pf-vision-tag{position:absolute;left:14px;top:12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;background:var(--pf-accent2);color:var(--pf-on);font-weight:700;pointer-events:none}
@@ -983,7 +1026,36 @@
   .pf-grp-end,.pf-opt-end{margin-left:0}
   .pf button{min-height:38px}.pf input[type=text],.pf input[type=password],.pf input[type=number],.pf select,.pf textarea{font-size:16px;min-height:38px}
   .pf-key{grid-template-columns:1fr}
-}`;
+}
+/* Fullscreen (touch and narrow screens): the canvas and the tool rail fill the screen; the sprite list slides in from the
+   left and the colour panel (with the toolbar and tool options) from the right, on the › ‹ handles at the canvas edges. */
+.pf-fsbar,.pf-fs-h,.pf-fs-scrim,.pf-grp-fs{display:none}
+@media (pointer:coarse),(max-width:900px){.pf-grp-fs{display:inline-flex}}
+.pf.pf-fs{position:fixed;inset:0;z-index:2147483000;display:block;width:100vw;height:100vh;height:100dvh;max-height:none;overflow:hidden;background:var(--pf-bg)}
+.pf.pf-fs .pf-main{position:absolute;inset:0 env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px);display:flex;flex-direction:column}
+.pf.pf-fs .pf-status,.pf.pf-fs .pf-ctx,.pf.pf-fs .pf-grp-fs{display:none}
+.pf.pf-fs .pf-work{flex-direction:row;flex:1;min-height:0}
+.pf.pf-fs .pf-rail{flex-direction:column;flex-wrap:wrap;align-content:flex-start;align-items:center;border-right:1px solid var(--pf-line);border-bottom:0;overflow:hidden;padding:6px 4px;gap:4px;max-height:100%}
+.pf.pf-fs .pf-tools{display:contents}
+.pf.pf-fs .pf-swatch{margin:4px 0 0}
+.pf.pf-fs .pf-stage{min-height:0;flex:1}
+.pf.pf-fs .pf-fsbar{display:flex;position:absolute;top:8px;right:34px;gap:4px;z-index:3}
+.pf.pf-fs .pf-fsbar button{min-width:40px;min-height:40px;padding:0 8px;background:rgba(14,9,24,.82);border:1px solid var(--pf-line2);display:inline-flex;align-items:center;justify-content:center}
+.pf.pf-fs .pf-side,.pf.pf-fs .pf-right{display:flex;flex-direction:column;position:absolute;top:0;bottom:0;width:min(340px,86vw);z-index:6;overflow:auto;overscroll-behavior:contain;transition:transform .22s ease;background:var(--pf-panel);border:0;max-height:none;box-shadow:0 0 28px rgba(0,0,0,.55)}
+.pf.pf-fs .pf-side{left:0;transform:translateX(-102%);padding-left:env(safe-area-inset-left,0px)}
+.pf.pf-fs .pf-right{right:0;transform:translateX(102%);padding-right:env(safe-area-inset-right,0px)}
+.pf.pf-fs.pf-fs-lopen .pf-side,.pf.pf-fs.pf-fs-ropen .pf-right{transform:none}
+.pf.pf-fs .pf-list:not(.pf-flat){max-height:none;flex:1}
+.pf.pf-fs .pf-right .pf-bar,.pf.pf-fs .pf-right .pf-opts{flex-wrap:wrap;height:auto;overflow:visible;gap:6px;padding:8px;border-bottom:1px solid var(--pf-line)}
+.pf.pf-fs .pf-fs-scrim{display:block;position:absolute;inset:0;z-index:5;background:rgba(5,3,10,.5);opacity:0;pointer-events:none;transition:opacity .22s ease}
+.pf.pf-fs.pf-fs-lopen .pf-fs-scrim,.pf.pf-fs.pf-fs-ropen .pf-fs-scrim{opacity:1;pointer-events:auto}
+.pf.pf-fs .pf-fs-h{display:flex;align-items:center;justify-content:center;position:absolute;top:50%;width:28px;height:76px;margin-top:-38px;z-index:7;padding:0;min-height:0;font-size:24px;line-height:1;background:rgba(21,14,36,.88);border:1px solid var(--pf-line2);color:var(--pf-ink);transition:left .22s ease,right .22s ease,opacity .15s}
+.pf.pf-fs .pf-fs-hl{left:calc(var(--pf-rail-w,52px) + env(safe-area-inset-left,0px));border-left:0;border-radius:0 9px 9px 0}
+.pf.pf-fs .pf-fs-hr{right:env(safe-area-inset-right,0px);border-right:0;border-radius:9px 0 0 9px}
+.pf.pf-fs.pf-fs-lopen .pf-fs-hl{left:min(340px,86vw)}
+.pf.pf-fs.pf-fs-ropen .pf-fs-hr{right:min(340px,86vw)}
+.pf.pf-fs.pf-fs-lopen .pf-fs-hr,.pf.pf-fs.pf-fs-ropen .pf-fs-hl{opacity:0;pointer-events:none}
+.pf-ctx-cv.pf-ctx-hit{cursor:pointer}`;
 
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -998,6 +1070,8 @@
     ellipse: '<ellipse cx="12" cy="12" rx="8.2" ry="6.6"/>',
     select: '<path d="M4.5 8V4.5H8M11 4.5h2M16 4.5h3.5V8M19.5 11v2M19.5 16v3.5H16M13 19.5h-2M8 19.5H4.5V16M4.5 13v-2"/>',
     shade: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
+    fullscreen: '<path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/>',
+    exitfull: '<path d="M9 4.5V9H4.5M19.5 9H15V4.5M15 19.5V15h4.5M4.5 15H9v4.5"/>',
     undo: '<path d="M9 13.5L4.5 9 9 4.5"/><path d="M4.5 9H15a5 5 0 0 1 0 10h-3.5"/>',
     redo: '<path d="M15 13.5L19.5 9 15 4.5"/><path d="M19.5 9H9a5 5 0 0 0 0 10h3.5"/>',
     grid: '<rect x="4" y="4" width="16" height="16"/><path d="M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16"/>',
@@ -1097,10 +1171,10 @@
       <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button>
         <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><div class="pf-side-head"><h4>Sprites</h4><span class="pf-foldmini"><button type="button" class="pf-fold-all" title="Fold every folder">▸ all</button><button type="button" class="pf-unfold-all" title="Unfold every folder">▾ all</button></span></div><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
-        <details class="pf-commit" open hidden><summary><h4>Changes <span class="pf-commit-n"></span></h4></summary>
+        <details class="pf-commit" hidden><summary><h4>Changes <span class="pf-commit-n"></span></h4></summary>
           <div class="pf-commit-list"></div>
           <label>Message <input type="text" class="pf-commit-msg" placeholder="What changed" aria-label="Commit message"></label>
-          <label>Branch <input type="text" class="pf-commit-branch" list="pf-branchlist" placeholder="art/…" autocomplete="off" aria-label="Branch: an existing one, or a new name"><datalist id="pf-branchlist"></datalist></label>
+          <label>Branch <span class="pf-branchrow"><select class="pf-commit-branches" aria-label="Branch: pick one, or create a new one"></select><input type="text" class="pf-commit-branch" placeholder="new-branch-name" autocomplete="off" aria-label="New branch name" hidden></span></label>
           <div class="pf-row"><button type="button" class="pf-commit-go primary">Commit</button></div>
           <div class="pf-note pf-commit-note" aria-live="polite"></div></details>
         <div class="pf-row"><button class="pf-open">Open PNG…</button><button class="pf-new">New</button></div>
@@ -1109,6 +1183,7 @@
         <div class="pf-bar">
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
+          <span class="pf-grp pf-grp-fs"><button class="pf-fs-go" title="Fullscreen: canvas and tools only, menus slide in from the sides">${icon('fullscreen')}<span>Fullscreen</span></button></span>
           <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
           <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
@@ -1129,7 +1204,8 @@
             <span class="pf-swatch" title="Primary (left click) and secondary (right click) colours. X swaps them."><button class="pf-prim" aria-label="Primary colour"></button><button class="pf-sec" aria-label="Secondary colour"></button><button class="pf-swap" title="Swap colours (X)">⇄</button></span></nav>
           <div class="pf-stage"><canvas class="pf-view" aria-label="Sprite canvas"></canvas><span class="pf-vision-tag" hidden></span></div>
         </div>
-        <div class="pf-ctx" hidden><div class="pf-ctx-bar"><span class="pf-ol">in context</span><span class="pf-seg pf-ctx-scale">${[1, 2, 3, 4].map((n) => `<button data-scale="${n}"${n === 2 ? ' class="on"' : ''}>${n}×</button>`).join('')}</span><span class="pf-note pf-ctx-note"></span></div><canvas class="pf-ctx-cv" aria-label="The sprite in context"></canvas></div>
+        <div class="pf-ctx" hidden><div class="pf-ctx-bar"><span class="pf-ol">in context</span><select class="pf-ctx-group" title="What to compare against: a group from the project's config, or the sprites in the same folder"></select><span class="pf-seg pf-ctx-scale">${[1, 2, 3, 4].map((n) => `<button data-scale="${n}"${n === 2 ? ' class="on"' : ''}>${n}×</button>`).join('')}</span><span class="pf-note pf-ctx-note"></span></div><canvas class="pf-ctx-cv" aria-label="The sprite in context"></canvas></div>
+        <div class="pf-fsbar" aria-label="Fullscreen controls"><button class="pf-fs-undo" title="Undo">${icon('undo')}</button><button class="pf-fs-redo" title="Redo">${icon('redo')}</button><button class="pf-fs-fit" title="Fit to screen">Fit</button><button class="pf-fs-exit" title="Leave fullscreen">${icon('exitfull')}</button></div>
         <div class="pf-status"><span class="pf-s-name"></span><span class="pf-s-pos"></span><span class="pf-s-sel"></span><span class="pf-s-note"></span><span class="pf-s-info"></span></div>
       </section>
       <aside class="pf-right">
@@ -1155,6 +1231,7 @@
         <div class="pf-panel pf-imgpanel"><h4>Image</h4><div class="pf-imgtools">${IMAGE_TOOLS.map(([cls, ic, name, tip, extra]) => `<button class="${cls}" aria-label="${name}" data-tip="${esc(name + ': ' + tip)}" title="${esc(name)}"${extra || ''}>${icon(ic)}</button>`).join('')}</div>
           <div class="pf-note pf-imgtip" aria-live="polite">Point at a button to see what it does</div></div>
       </aside>
+      <div class="pf-fs-scrim"></div><button class="pf-fs-h pf-fs-hl" aria-label="Sprites" aria-expanded="false">›</button><button class="pf-fs-h pf-fs-hr" aria-label="Colours, options and actions" aria-expanded="false">‹</button>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
         <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
         <label>Base branch <input type="text" class="pf-pr-base" placeholder="default branch"></label>
@@ -1222,7 +1299,7 @@
     /* ---------- state ---------- */
     const S = { sprites: [], docs: new Map(), cur: null, tool: 'pen', color: pack(185, 140, 255), mx: false, my: false, pp: false, grid: true, zoom: 8, ox: 0, oy: 0,
       color2: 0, ref: null, vision: 'normal', ctx: false, ctxScale: 2, changes: false, peek: false, bg: 'auto', bgCustom: '#3a5a40', size: 1, shape: 'square', pattern: 'solid', fillMode: 'area', tile: false, onion: false, sel: null, float: null, clip: null, hover: null, lastPt: null,
-      palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], src: null, meta: {}, auth: { token: '', login: '' }, anim: { timer: 0, t: 0 }, notice: '' };
+      groups: [], ctxGroup: null, alpha: null, palette: O.palette ? O.palette.map((c) => (typeof c === 'string' ? fromHex(c) : c)).filter((c) => c != null) : [], src: null, meta: {}, auth: { token: '', login: '' }, anim: { timer: 0, t: 0 }, notice: '' };
     const doc = () => S.docs.get(S.cur);
     const view = $('.pf-view'), stage = $('.pf-stage'), g = view.getContext('2d');
     const offscreen = document.createElement('canvas'), diffCanvas = document.createElement('canvas');
@@ -1299,6 +1376,7 @@
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       loadWork(); // the branch this repository was being committed to, if any
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
+      S.groups = normGroups(src.groups); S.alpha = normAlpha(O.alpha || src.alpha);
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
       const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src); sourceButton();
       renderList(); renderPalette(); applyBg();
@@ -1373,6 +1451,12 @@
       if (!src || src.kind !== 'github' || branch === src.branch) return;
       try {
         await useSource(await githubSource({ repo: src.repo.slug, branch, token: await commitToken(), apiBase: O.apiBase }));
+        // The panel follows: it commits to the branch now open, and anything remembered
+        // about the old one (its pull request, its last push) stays behind with it.
+        S.work = { branch, base: S.meta.repo.defaultBranch || null, headRepo: null, headOwner: null, pr: null };
+        S.lastPush = null;
+        saveWork();
+        setCommitBranch(branch);
       } catch (e) { note(e.message); }
     }
     async function openBranchMenu() {
@@ -1526,33 +1610,39 @@
       return groups;
     }
     const spriteOf = (path) => S.sprites.find((x) => x.path === path);
+    /* The change marker is always there, only its state differs, so a row going "not saved" → "kept" → clean changes a
+       class (and fades) instead of being rebuilt. */
+    const marker = (dirty, changed, d) => dirty ? '<i class="dot" title="not saved yet"></i>'
+      : changed ? `<i class="dot base" title="${keeping() && !(d && savesOut(d)) ? 'changed: kept in this browser, not in a pull request yet' : 'saved, not yet proposed'}"></i>` : '<i class="dot none"></i>';
     function tileHtml(s, label, fam, flat) {
       const d = S.docs.get(s.path), members = fam ? fam.members : [s.path], dirty = members.some((p) => { const x = S.docs.get(p); return x && (savesOut(x) ? x.unsaved : atRisk(x)); }), changed = members.some((p) => { const x = S.docs.get(p); return x && (x.changed || x.local || x.isNew); });
       const size = d ? d.w + '×' + d.h : (s.w || '?') + '×' + (s.h || '?'), dir = s.path.split('/').slice(0, -1).join('/') || '.';
       const badge = fam && fam.members.length > 1 ? `<i class="pf-badge${fam.animated ? ' anim' : ''}" title="${fam.animated ? 'animation: ' + fam.members.length + ' frames' : fam.members.length + ' images in this family'}">${fam.animated ? '▶' : ''}${fam.members.length}</i>` : '';
       const on = members.includes(S.cur);
-      return `<button class="pf-item${flat ? '' : ' pf-cell'}${on ? ' on' : ''}" role="option" data-path="${esc(s.path)}" title="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(label)}<small>${flat ? esc(dir) + ' · ' : ''}${size}</small></span>${badge}${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? `<i class="dot base" title="${keeping() && !(d && savesOut(d)) ? 'changed: kept in this browser, not in a pull request yet' : 'saved, not yet proposed'}"></i>` : ''}</button>`;
+      return `<button class="pf-item${flat ? '' : ' pf-cell'}${on ? ' on' : ''}" role="option" data-path="${esc(s.path)}" title="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(label)}<small>${flat ? esc(dir) + ' · ' : ''}${size}</small></span>${badge}${marker(dirty, changed, d)}</button>`;
     }
     function renderList() {
       const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'), groups = regroup();
       // Rows whose markup is unchanged keep their DOM nodes — and with them their painted thumbnails —
       // so drawing does not flash the whole explorer. Only the open sprite rebuilds (a live thumbnail).
       const old = new Map();
-      for (const b of list.querySelectorAll('.pf-item,.pf-dir')) {
-        const k = b.classList.contains('pf-dir') ? 'd:' + b.dataset.dir : 'i:' + b.dataset.path;
+      for (const b of list.querySelectorAll('.pf-item,.pf-dir,.pf-openrow')) {
+        const k = b.classList.contains('pf-dir') ? 'd:' + b.dataset.dir : b.classList.contains('pf-openrow') ? 'o:' + b.dataset.dir : 'i:' + b.dataset.path;
         if (!old.has(k)) old.set(k, b);
       }
       list.innerHTML = '';
       if (!folded) loadFolded();
-      // Same markup as an existing row: move that row over instead of repainting. Anything else is built fresh.
+      // An existing row is moved over and updated in place (see morph): its thumbnail keeps its pixels, so nothing blinks.
+      // The open sprite's thumbnail is repainted right away from the document; new rows paint as they scroll into view.
       const place = (parent, html, key, s) => {
-        const b = el(html), live = !!s && s.path === S.cur, o = !live && old.get(key);
+        const b = el(html), live = !!s && s.path === S.cur, o = old.get(key);
         if (o) old.delete(key);
-        if (o && o.outerHTML === b.outerHTML) { parent.appendChild(o); return o; }
-        parent.appendChild(b);
-        const cv = b.querySelector('canvas');
-        if (cv && s) { cv.__s = s; if (io) io.observe(cv); else paintThumb(cv, s); }
-        return b;
+        const row = o || b;
+        if (o && o.outerHTML !== b.outerHTML) morph(o, b);
+        parent.appendChild(row);
+        const cv = row.querySelector('canvas');
+        if (cv && s && (live || !o)) { cv.__s = s; if (live || !io) paintThumb(cv, s); else io.observe(cv); }
+        return row;
       };
       const add = (html, s) => place(list, html, 'i:' + s.path, s);
       list.classList.toggle('pf-flat', !!q);
@@ -1572,9 +1662,7 @@
           if (open) {
             const dd = S.docs.get(S.cur), label = S.cur.split('/').pop();
             const dirty = dd && (savesOut(dd) ? dd.unsaved : atRisk(dd)), changed = dd && (dd.changed || dd.local || dd.isNew);
-            const b = el(`<button class="pf-openrow" data-dir="${esc(g.dir)}" title="${esc(S.cur)} — unfold this folder"><canvas width="${open.w || 16}" height="${open.h || 16}"></canvas><span class="n">${esc(label)}</span>${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? '<i class="dot base" title="changed, not in a pull request yet"></i>' : ''}</button>`);
-            list.appendChild(b);
-            const cv = b.querySelector('canvas'); cv.__s = open; if (io) io.observe(cv); else paintThumb(cv, open);
+            place(list, `<button class="pf-openrow" data-dir="${esc(g.dir)}" title="${esc(S.cur)} — unfold this folder"><canvas width="${open.w || 16}" height="${open.h || 16}"></canvas><span class="n">${esc(label)}</span>${dirty ? '<i class="dot" title="not saved yet"></i>' : changed ? '<i class="dot base" title="changed, not in a pull request yet"></i>' : '<i class="dot none"></i>'}</button>`, 'o:' + g.dir, open);
           }
           continue;
         }
@@ -1586,6 +1674,21 @@
       }
       if (hidNote) list.appendChild(hidNote); // after the folders
       renderCommit();
+    }
+    /** Make row `o` look like `b` without replacing its canvas: attributes, then children (leaves are updated, the rest swapped). */
+    function morph(o, b) {
+      const attrs = (x, y) => { for (const a of [...x.attributes]) if (!y.hasAttribute(a.name)) x.removeAttribute(a.name); for (const a of [...y.attributes]) if (x.getAttribute(a.name) !== a.value) x.setAttribute(a.name, a.value); };
+      attrs(o, b);
+      const oc = [...o.children], bc = [...b.children];
+      if (oc.length !== bc.length || oc.some((c, i) => c.tagName !== bc[i].tagName)) {
+        const cv = o.querySelector(':scope > canvas'), nc = b.querySelector(':scope > canvas');
+        if (cv && nc) nc.replaceWith(cv);
+        o.replaceChildren(...b.childNodes); return;
+      }
+      oc.forEach((c, i) => {
+        const n = bc[i]; if (c.tagName === 'CANVAS' || c.outerHTML === n.outerHTML) return;
+        if (!c.children.length && !n.children.length) { attrs(c, n); if (c.textContent !== n.textContent) c.textContent = n.textContent; } else c.replaceWith(n);
+      });
     }
     function toggleDir(dir) { if (!folded) loadFolded(); folded.has(dir) ? folded.delete(dir) : folded.add(dir); saveFolded(); renderList(); }
     function setAllFolded(shut) { if (!folded) loadFolded(); if (shut) { for (const g of regroup()) folded.add(g.dir); } else folded.clear(); saveFolded(); renderList(); }
@@ -1705,30 +1808,49 @@
         for (const [ox, oy] of brushOffsets(S.size, S.shape)) { const c = cell(d, hv.x + ox, hv.y + oy); if (c) g.strokeRect(S.ox + c[0] * z + .5, S.oy + c[1] * z + .5, z - 1, z - 1); }
       }
     }
-    /* In context: the sprite at game scale on the project's background, standing next to its neighbours from the same folder
-       (one per family, nearest by name), so size, silhouette and contrast are judged as a player sees them. Live while drawing. */
+    /* In context: the sprite at game scale on the project's background, standing next to the sprites it is seen with, so size,
+       silhouette and contrast are judged as a player sees them. Live while drawing. The neighbours come from a group in the
+       project's config (`groups`: the enemies of one floor, the weapons of one class...) when one holds the sprite or its family,
+       in the group's order and on its background; otherwise from the same folder, one per family, nearest by name. */
+    const ctxGroupsOf = (d) => { const fam = famOf.get(d.path), mine = new Set(fam ? fam.members : [d.path]); return S.groups.filter((g) => g.sprites.some((p) => mine.has(p))); };
+    function ctxGroup(d) {
+      const mine = ctxGroupsOf(d);
+      if (S.ctxGroup === '') return null; // "same folder", chosen on purpose
+      return mine.find((g) => g.name === S.ctxGroup) || mine[0] || null;
+    }
+    let ctxHits = []; // where each neighbour sits in the strip, in canvas pixels: a click opens it
     function drawContext(d) {
+      ctxHits = [];
       const cv = $('.pf-ctx-cv'), dpr = window.devicePixelRatio || 1, W = Math.max(1, Math.round(cv.clientWidth * dpr)), H = Math.max(1, Math.round(cv.clientHeight * dpr));
       if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-      const k = cv.getContext('2d'), sc = S.ctxScale * Math.max(1, Math.round(dpr)), ground = H - Math.round(14 * dpr), gap = Math.round(12 * dpr);
-      k.imageSmoothingEnabled = false; k.fillStyle = projectBg() || bgColors()[0]; k.fillRect(0, 0, W, H);
-      k.fillStyle = luma(projectBg() || bgColors()[0]) > 0.55 ? 'rgba(20,10,40,.25)' : 'rgba(230,220,247,.18)'; k.fillRect(0, ground, W, Math.max(1, Math.round(dpr)));
+      const k = cv.getContext('2d'), px1 = Math.max(1, Math.round(dpr)), ground = H - Math.round(14 * dpr), gap = Math.round(12 * dpr);
+      const grp = ctxGroup(d), groups = ctxGroupsOf(d), bgc = (grp && grp.background) || projectBg() || bgColors()[0];
+      setHtml($('.pf-ctx-group'), groups.map((g) => `<option value="${esc(g.name)}"${g === grp ? ' selected' : ''}>${esc(g.name)}</option>`).join('') + `<option value=""${grp ? '' : ' selected'}>Same folder</option>`);
+      $('.pf-ctx-group').value = grp ? grp.name : ''; $('.pf-ctx-group').hidden = !groups.length;
+      k.imageSmoothingEnabled = false; k.fillStyle = bgc; k.fillRect(0, 0, W, H);
+      k.fillStyle = luma(bgc) > 0.55 ? 'rgba(20,10,40,.25)' : 'rgba(230,220,247,.18)'; k.fillRect(0, ground, W, Math.max(1, Math.round(dpr)));
       const cur = document.createElement('canvas'); cur.width = d.w; cur.height = d.h; cur.getContext('2d').putImageData(d.imageData(), 0, 0);
       const fam = famOf.get(d.path), dir = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/')) : '';
       const sameDir = [...new Set(S.sprites.map((x) => x.path).filter((p) => p !== d.path && (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '') === dir && (!fam || !fam.members.includes(p))).map((p) => { const f = famOf.get(p); return f ? f.members[0] : p; }))];
-      sameDir.sort((a, b) => a.localeCompare(b)); const at = sameDir.findIndex((p) => p.localeCompare(d.path) > 0), ordered = at < 0 ? sameDir.slice().reverse() : [...sameDir.slice(at), ...sameDir.slice(0, at).reverse()];
+      sameDir.sort((a, b) => a.localeCompare(b)); const at = sameDir.findIndex((p) => p.localeCompare(d.path) > 0);
+      // a group shows the sprites it names (the first it names of each family); the folder view shows each family's first member
+      const seenFam = new Set(), ordered = grp ? grp.sprites.filter((p) => { if (p === d.path || (fam && fam.members.includes(p))) return false; const k = famOf.get(p) || p; if (seenFam.has(k)) return false; seenFam.add(k); return true; })
+        : at < 0 ? sameDir.slice().reverse() : [...sameDir.slice(at), ...sameDir.slice(0, at).reverse()];
+      // Game scale, unless the tallest sprite in view would not fit the strip: then the largest scale that fits, said in the note.
+      const room = ground - Math.round(6 * dpr), tallest = Math.max(d.h, ...ordered.slice(0, 8).map((p) => { const im = memberImage(p); return im ? im.height : 0; }));
+      const fitScale = Math.max(1, Math.min(S.ctxScale, Math.floor(room / (tallest * px1)))), sc = fitScale * px1;
       const items = [{ img: cur, me: true }]; let used = d.w * sc + gap * 2, shown = 0;
-      for (const p of ordered) { const img = memberImage(p); if (!img) continue; if (used + img.width * sc + gap > W) break; used += img.width * sc + gap; items.push({ img }); shown++; if (shown >= 8) break; }
+      for (const p of ordered) { const img = memberImage(p); if (!img) continue; if (used + img.width * sc + gap > W) break; used += img.width * sc + gap; items.push({ img, path: p }); shown++; if (shown >= 8) break; }
       // the edited sprite in the middle, neighbours alternating left and right of it
       const row = [items[0]]; items.slice(1).forEach((it, i) => (i % 2 ? row.unshift(it) : row.push(it)));
       let x = Math.round((W - row.reduce((a, it) => a + it.img.width * sc, 0) - gap * (row.length - 1)) / 2);
       for (const it of row) {
         const w = it.img.width * sc, h = it.img.height * sc;
-        k.drawImage(it.img, x, ground - h, w, h);
+        k.drawImage(it.img, x, ground - h, w, h); if (it.path) ctxHits.push({ x, y: ground - h, w, h, path: it.path });
         if (it.me) { k.fillStyle = '#e08cff'; k.fillRect(x, ground + Math.round(4 * dpr), w, Math.max(1, Math.round(2 * dpr))); }
         x += w + gap;
       }
-      $('.pf-ctx-note').textContent = `${S.ctxScale}× · ${shown ? shown + ' neighbour' + (shown > 1 ? 's' : '') + ' from ' + (dir || 'the project root') : 'no other sprites in this folder'} · ${projectBg() ? 'project background' : 'background ' + bgColors()[0]}`;
+      $('.pf-ctx-note').textContent = `${fitScale < S.ctxScale ? fitScale + '× to fit' : S.ctxScale + '×'} · ${shown ? shown + ' neighbour' + (shown > 1 ? 's' : '') + ' from ' + (grp ? grp.name : dir || 'the project root') : grp ? 'nothing else in this group' : 'no other sprites in this folder'} · ${grp && grp.background ? 'group background' : projectBg() ? 'project background' : 'background ' + bgColors()[0]}`;
     }
     /* reference image: traced over or compared against, never saved */
     function drawRef(W, H) {
@@ -1746,7 +1868,7 @@
       setHtml($('.pf-s-info'), d ? `<button type="button" class="pf-s-size" title="Canvas size (Ctrl+Alt+C)">${d.w}×${d.h}</button> · zoom ${S.zoom}×` : '');
       const nt = $('.pf-s-note'); if (nt.textContent !== (S.notice || '')) { nt.textContent = S.notice || ''; nt.title = S.notice || ''; }
       $('.pf-zl').textContent = S.zoom + '×'; $('.pf-s-sel').textContent = S.sel ? `selection ${S.sel.w}×${S.sel.h}${S.float ? ' · floating' : ''}` : '';
-      $('.pf-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed; $('.pf-delete').hidden = !deletable(d); $('.pf-revert').hidden = !!d && (d.local || d.isNew) && !d.changed;
+      $('.pf-undo').disabled = $('.pf-fs-undo').disabled = !d || !d.undo.length; $('.pf-redo').disabled = $('.pf-fs-redo').disabled = !d || !d.redo.length; $('.pf-save').disabled = !d; $('.pf-download').disabled = !d; $('.pf-revert').disabled = !d || !d.changed; $('.pf-delete').hidden = !deletable(d); $('.pf-revert').hidden = !!d && (d.local || d.isNew) && !d.changed;
       const out = d && savesOut(d), pend = d && !out && needsKeep(d) && !isKept(d);
       $('.pf-save').textContent = !d || out || pend || !keeping() ? 'Save' : 'Saved'; $('.pf-save').classList.toggle('primary', !d || !!out || !!pend || !keeping());
       $('.pf-save').title = out ? 'Save to the project (Ctrl+S). Until then your edits are kept in this browser.' : keeping() ? 'Your edits are kept in this browser as you draw and survive reloads (Ctrl+S keeps them right away). Download or Propose PR to take them out.' : 'This browser cannot keep edits: use Download.';
@@ -1907,6 +2029,14 @@
     const redo = () => { const d = doc(); if (!d) return; commitFloat(); S.sel = null; if (d.redoOnce()) { if (!S.touched) fit(); changedUi(); } };
 
     /* ---------- saving & exporting ---------- */
+    /* The project's alpha rule, applied as an ordinary (undoable) edit just before a sprite leaves the editor, so the file
+       always matches what is on screen. Same-size originals give the hint for kept values. */
+    function tidyAlpha(d) {
+      if (!S.alpha) return 0;
+      const px = d.px.slice(), n = snapAlpha(px, S.alpha, d.base.w === d.w && d.base.h === d.h ? d.base.px : null);
+      if (n) { d.snapshot(); d.px = px; note(`${n} stray-alpha pixel${n > 1 ? 's' : ''} snapped to the project's alpha rule in ${fileName(d)} (undo brings them back)`); }
+      return n;
+    }
     async function pngOf(d, scale = 1) {
       if (hasStreams()) return new Blob([await encodePngBytes(d.w, d.h, d.px, scale)], { type: 'image/png' });
       const c = document.createElement('canvas'); drawPx(c, d, scale); return toBlob(c);
@@ -1917,9 +2047,9 @@
       const d = doc(); if (!d) return; commitFloat();
       try {
         if (savesOut(d)) {
-          const blob = await pngOf(d);
+          const snapped = tidyAlpha(d), blob = await pngOf(d);
           if (O.save) await O.save(d, blob); else await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
-          d.markSaved(); d.onDisk = true; note('saved ' + d.path);
+          d.markSaved(); d.onDisk = true; note('saved ' + d.path + (snapped ? ` · ${snapped} stray-alpha pixel${snapped > 1 ? 's' : ''} snapped to the project's alpha rule (undo brings them back)` : ''));
         } else {
           await flushDrafts(); if (!keeping()) note('This browser cannot keep edits: use Download.'); // otherwise the status bar already says "kept in this browser"
         }
@@ -1928,11 +2058,11 @@
     }
     function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000); }
     const fileName = (d) => d.path.split('/').pop();
-    async function downloadPng(scale = 1) { const d = doc(); if (!d) return; commitFloat(); download(await pngOf(d, scale), fileName(d).replace(/\.png$/i, '') + (scale > 1 ? '@' + scale + 'x' : '') + '.png'); }
+    async function downloadPng(scale = 1) { const d = doc(); if (!d) return; commitFloat(); tidyAlpha(d); download(await pngOf(d, scale), fileName(d).replace(/\.png$/i, '') + (scale > 1 ? '@' + scale + 'x' : '') + '.png'); }
     const changedDocs = () => [...S.docs.values()].filter((d) => d.changed || d.local || d.isNew);
     async function downloadAll() {
       commitFloat(); const list = changedDocs(); if (!list.length) return;
-      const files = []; for (const d of list) files.push({ name: d.path, bytes: new Uint8Array(await (await pngOf(d)).arrayBuffer()) });
+      const files = []; for (const d of list) { tidyAlpha(d); files.push({ name: d.path, bytes: new Uint8Array(await (await pngOf(d)).arrayBuffer()) }); }
       const proj = (S.src && S.src.kind === 'github' && S.src.repo.slug.split('/')[1]) || (S.src && S.src.name) || 'sprites';
       download(new Blob([zipFiles(files)], { type: 'application/zip' }), proj.replace(/[^\w.-]+/g, '-') + '-changed.zip'); note(`downloaded ${files.length} sprite${files.length > 1 ? 's' : ''} as a .zip (with their folders)`);
     }
@@ -2022,7 +2152,7 @@
       const files = [], previews = [];
       for (const d of docs) {
         const sc = previewScale(Math.max(d.w, d.base.w), Math.max(d.h, d.base.h)); // one scale for both sides so they compare 1:1
-        files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels(), scale: sc, baseW: d.base.w, isNew: !!(d.local || d.isNew) });
+        tidyAlpha(d); files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels(), scale: sc, baseW: d.base.w, isNew: !!(d.local || d.isNew) });
         previews.push({ before: d.local || d.isNew ? null : await pngOf(new Doc(d.path, d.base.w, d.base.h, d.base.px), sc), after: await pngOf(d, sc) });
       }
       return { files, previews };
@@ -2063,13 +2193,30 @@
        an existing one, or a new name that is created on push. The pull request for the branch is
        opened separately, when the work is ready — the panel offers it whenever the branch has none
        open, so chunks accumulate first and one pull request carries them all. */
-    let commitSig = null, branchesFor = null; // what the panel last rendered; which project the branch lists are for
+    let commitSig = null, branchesFor = null, commitBranchWant = ''; // what the panel last rendered; which project the branch lists are for; the branch the panel should target
     const workKey = () => 'pf:work:' + ((S.meta.repo && S.meta.repo.slug) || '');
     function saveWork() { try { if (S.work && S.work.branch) localStorage.setItem(workKey(), JSON.stringify(S.work)); else localStorage.removeItem(workKey()); } catch { /* the work still pushes, only the shortcut is not remembered */ } }
     function loadWork() {
       S.work = null; S.lastPush = null; S.commitSel = null; commitSig = null; branchesFor = null;
       try { const w = JSON.parse(localStorage.getItem(workKey()) || 'null'); if (w && w.branch) S.work = w; } catch { /* start without a remembered branch */ }
-      if (S.work && S.work.branch) $('.pf-commit-branch').value = S.work.branch;
+      commitBranchWant = (S.work && S.work.branch) || '';
+      setCommitBranch(commitBranchWant);
+    }
+    /** The branch the next commit goes to: the picked one, or the typed new name. */
+    function commitBranch() {
+      const sel = $('.pf-commit-branches');
+      if (sel && sel.value) return sel.value;
+      const typed = $('.pf-commit-branch').value.trim();
+      return typed || commitBranchWant || '';
+    }
+    /** Point the panel at a branch: pick it when listed, otherwise offer it as the new name. */
+    function setCommitBranch(name) {
+      const sel = $('.pf-commit-branches'), input = $('.pf-commit-branch');
+      commitBranchWant = name || '';
+      if (!sel || !input) return;
+      const has = !!name && [...sel.options].some((o) => o.value === name);
+      if (has) { sel.value = name; input.hidden = true; }
+      else { sel.value = ''; input.hidden = false; if (name) input.value = name; }
     }
     const commitToken = async () => (S.auth.token ? authToken().catch(() => '') : storedToken());
     function renderCommit() {
@@ -2084,31 +2231,39 @@
       commitSig = sig;
       if (S.commitSel) S.commitSel = new Set([...S.commitSel].filter((p) => changed.some((d) => d.path === p)));
       $('.pf-commit-list').innerHTML = changed.length ? changed.map((d) => `<label title="${esc(d.path)}"><input type="checkbox" data-path="${esc(d.path)}"${!S.commitSel || S.commitSel.has(d.path) ? ' checked' : ''}><span class="n">${esc(d.path)}<br><small>${d.w}×${d.h} · ${d.changedPixels()} px changed</small></span></label>`).join('')
-        : '<div class="pf-note">No changes. Draw something first.</div>';
+        : '<div class="pf-note">No changes.</div>';
     }
-    /** Branch names for the panel and connect datalists, fetched once per project. Quiet when signed out or offline. */
+    /** Branch names for the panel picker and the connect datalist, fetched once per project. Quiet when signed out or offline. */
     async function fillBranches() {
       if (branchesFor === S.src) return; branchesFor = S.src;
       const gh = S.meta.repo || {}, token = await commitToken();
-      for (const id of ['#pf-branchlist', '#pf-c-branchlist']) { const dl = $(id); if (dl && gh.slug && token) { try { dl.innerHTML = (await listBranches({ token, repo: gh.slug, apiBase: O.apiBase })).map((b) => `<option value="${esc(b)}">`).join(''); } catch { branchesFor = null; } } }
+      let names = [];
+      if (gh.slug && token) { try { names = await listBranches({ token, repo: gh.slug, apiBase: O.apiBase }); } catch { branchesFor = null; } }
+      const sel = $('.pf-commit-branches');
+      if (sel) sel.innerHTML = names.map((b) => `<option value="${esc(b)}">⎇ ${esc(b)}</option>`).join('') + '<option value="">+ New</option>';
+      const dl = $('#pf-c-branchlist');
+      if (dl && gh.slug && token && names.length) dl.innerHTML = names.map((b) => `<option value="${esc(b)}">`).join('');
+      setCommitBranch(commitBranchWant || (sel && sel.value) || '');
     }
     async function submitCommit() {
       commitFloat();
       const all = [...S.docs.values()].filter((d) => d.changed);
       const sel = !S.commitSel ? all : all.filter((d) => S.commitSel.has(d.path));
       const note = $('.pf-commit-note'), go = $('.pf-commit-go');
-      if (!sel.length) { note.textContent = all.length ? 'Tick at least one sprite to commit.' : 'No changes. Draw something first.'; return; }
+      if (!sel.length) { note.textContent = all.length ? 'Tick at least one sprite to commit.' : 'No changes.'; return; }
       const token = await commitToken();
       if (!token) { note.textContent = 'Sign in at the top of this panel, or open Propose PR once to add a token, then Commit again.'; return; }
       const gh = S.meta.repo || {};
       const message = $('.pf-commit-msg').value.trim() || (sel.length === 1 ? 'Update ' + sel[0].path.split('/').pop() : 'Update ' + sel.length + ' sprites');
-      const branch = $('.pf-commit-branch').value.trim() || (S.work && S.work.branch) || ('art/' + slug(message) + '-' + Date.now().toString(36));
+      const branch = commitBranch() || (S.work && S.work.branch) || ('art/' + slug(message) + '-' + Date.now().toString(36));
       go.disabled = true; note.textContent = '';
       try {
         const { files } = await filesAndPreviews(sel);
         const res = await pushSprites({ token, repo: gh.slug, base: gh.base || undefined, branch, prefix: gh.prefix || '', files: files.map((f) => ({ path: f.path, blob: f.blob })), message, apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
         markPushed(sel);
-        S.commitSel = null; commitSig = null; $('.pf-commit-msg').value = ''; $('.pf-commit-branch').value = res.branch;
+        S.commitSel = null; commitSig = null; $('.pf-commit-msg').value = '';
+        if (![...$('.pf-commit-branches').options].some((o) => o.value === res.branch)) $('.pf-commit-branches').insertAdjacentHTML('afterbegin', `<option value="${esc(res.branch)}">⎇ ${esc(res.branch)}</option>`);
+        setCommitBranch(res.branch);
         const meta = files.map((f) => ({ path: f.path, w: f.w, h: f.h, pixels: f.pixels, scale: f.scale, baseW: f.baseW, isNew: f.isNew }));
         const prev = S.lastPush && S.lastPush.branch === res.branch ? S.lastPush : null;
         S.lastPush = { branch: res.branch, message, files: (prev ? prev.files : []).filter((m) => !meta.some((x) => x.path === m.path)).concat(meta), baseSha: res.baseSha || (prev && prev.baseSha) || null, commit: res.commit };
@@ -2128,7 +2283,7 @@
     async function submitOpenPr() {
       const btn = $('.pf-commit-openpr'), note = $('.pf-commit-note');
       const work = S.work || {}, lp = S.lastPush || {};
-      const branch = work.branch || lp.branch || $('.pf-commit-branch').value.trim();
+      const branch = work.branch || lp.branch || commitBranch();
       if (!branch) { note.textContent = 'Commit something first.'; return; }
       const token = await commitToken();
       if (!token) { note.textContent = 'Sign in at the top of this panel, or open Propose PR once to add a token, then try again.'; return; }
@@ -2161,7 +2316,13 @@
     root.addEventListener('contextmenu', (e) => { const t = e.target.closest('.pf-sw button[data-c]'); if (t) { e.preventDefault(); setColor2(+t.dataset.c); } });
     $('.pf-q').oninput = renderList;
     $('.pf-commit-go').onclick = submitCommit;
-    $('.pf-commit-branch').addEventListener('focus', fillBranches);
+    $('.pf-commit').addEventListener('toggle', () => { if ($('.pf-commit').open) fillBranches(); });
+    $('.pf-commit-branches').addEventListener('focus', fillBranches);
+    $('.pf-commit-branches').addEventListener('change', () => {
+      const sel = $('.pf-commit-branches'), input = $('.pf-commit-branch');
+      input.hidden = sel.value !== '';
+      if (sel.value) commitBranchWant = sel.value;
+    });
     root.addEventListener('change', (e) => {
       const c = e.target.closest('.pf-commit-list input[type=checkbox]'); if (!c) return;
       if (!S.commitSel) S.commitSel = new Set([...S.docs.values()].filter((d) => d.changed).map((d) => d.path));
@@ -2331,6 +2492,11 @@
       catch (e) { note('Could not restore: ' + e.message); }
     };
     $('.pf-context').onclick = (e) => { S.ctx = !S.ctx; e.currentTarget.classList.toggle('on', S.ctx); $('.pf-ctx').hidden = !S.ctx; try { localStorage.setItem('pf:ctx', S.ctx ? '1' : '0'); } catch { /* ignore */ } requestAnimationFrame(() => { resizeView(); if (!S.touched) fit(); render(); }); };
+    const ctxHitAt = (e) => { const cv = $('.pf-ctx-cv'), r = cv.getBoundingClientRect(), x = (e.clientX - r.left) * (cv.width / r.width), y = (e.clientY - r.top) * (cv.height / r.height), pad = 4 * (window.devicePixelRatio || 1); return ctxHits.find((h) => x >= h.x - pad && x <= h.x + h.w + pad && y >= h.y - pad && y <= h.y + h.h + pad); };
+    $('.pf-ctx-cv').addEventListener('click', (e) => { const h = ctxHitAt(e); if (h) openSprite(h.path); });
+    $('.pf-ctx-cv').addEventListener('pointermove', (e) => { const h = ctxHitAt(e); e.currentTarget.classList.toggle('pf-ctx-hit', !!h); e.currentTarget.title = h ? 'Open ' + h.path : ''; });
+    $('.pf-ctx-group').onchange = (e) => { S.ctxGroup = e.target.value; try { localStorage.setItem('pf:ctxgroup', S.ctxGroup); } catch { /* ignore */ } render(); };
+    try { const v = localStorage.getItem('pf:ctxgroup'); if (v != null) S.ctxGroup = v; } catch { /* default */ }
     $$('.pf-ctx-scale button').forEach((b) => (b.onclick = () => { S.ctxScale = +b.dataset.scale; segOn('.pf-ctx-scale', b); render(); }));
     try { if (localStorage.getItem('pf:ctx') === '1') { S.ctx = true; $('.pf-context').classList.add('on'); $('.pf-ctx').hidden = false; } } catch { /* off */ }
     $('.pf-changes').onclick = (e) => { S.changes = !S.changes; e.currentTarget.classList.toggle('on', S.changes); render(); };
@@ -2349,6 +2515,38 @@
     $('.pf-zin').onclick = () => { S.zoom = Math.min(64, S.zoom + 1); S.touched = true; fit2(); }; $('.pf-zout').onclick = () => { S.zoom = Math.max(1, S.zoom - 1); S.touched = true; fit2(); };
     function fit2() { const d = doc(); if (d) { S.ox = Math.round((view.width - d.w * S.zoom) / 2); S.oy = Math.round((view.height - d.h * S.zoom) / 2); } render(); status(); }
     $('.pf-fit').onclick = () => { fit(); render(); status(); };
+    /* Fullscreen: the editor covers the screen (the browser's own fullscreen and a landscape lock where the browser allows
+       them; a fixed overlay where it does not, as on iPhone). The toolbar and tool options move into the right drawer
+       while it lasts and go back when it ends. */
+    let fsReal = false;
+    const fsOn = () => root.classList.contains('pf-fs');
+    const fsRail = () => root.style.setProperty('--pf-rail-w', $('.pf-rail').offsetWidth + 'px');
+    function fsDrawer(side) {
+      root.classList.toggle('pf-fs-lopen', side === 'l'); root.classList.toggle('pf-fs-ropen', side === 'r');
+      $('.pf-fs-hl').textContent = side === 'l' ? '‹' : '›'; $('.pf-fs-hr').textContent = side === 'r' ? '›' : '‹';
+      $('.pf-fs-hl').setAttribute('aria-expanded', String(side === 'l')); $('.pf-fs-hr').setAttribute('aria-expanded', String(side === 'r'));
+    }
+    function fsSet(on) {
+      if (on === fsOn()) return;
+      root.classList.toggle('pf-fs', on); fsDrawer(null);
+      if (on) $('.pf-right').prepend($('.pf-bar'), $('.pf-opts')); else $('.pf-main').prepend($('.pf-bar'), $('.pf-opts'));
+      if (on) {
+        const req = root.requestFullscreen && root.requestFullscreen({ navigationUI: 'hide' });
+        if (req && req.then) req.then(() => { fsReal = true; const o = screen.orientation; if (o && o.lock) o.lock('landscape').catch(() => {}); }).catch(() => {});
+      } else {
+        if (fsReal && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        fsReal = false; try { screen.orientation.unlock(); } catch { /* not locked */ }
+      }
+      requestAnimationFrame(() => { fsRail(); resizeView(); fit(); render(); status(); });
+    }
+    $('.pf-fs-go').onclick = () => fsSet(true); $('.pf-fs-exit').onclick = () => fsSet(false);
+    $('.pf-fs-hl').onclick = () => fsDrawer(root.classList.contains('pf-fs-lopen') ? null : 'l');
+    $('.pf-fs-hr').onclick = () => fsDrawer(root.classList.contains('pf-fs-ropen') ? null : 'r');
+    $('.pf-fs-scrim').onclick = () => fsDrawer(null);
+    $('.pf-fs-undo').onclick = undo; $('.pf-fs-redo').onclick = redo; $('.pf-fs-fit').onclick = () => $('.pf-fit').click();
+    $('.pf-side').addEventListener('click', (e) => { if (fsOn() && e.target.closest('.pf-item,.pf-openrow')) setTimeout(() => fsDrawer(null), 150); });
+    document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fsReal && fsOn()) { fsReal = false; fsSet(false); } }); // left with the back gesture or Esc
+    window.addEventListener('resize', () => { if (fsOn()) fsRail(); });
     $('.pf-grid').onclick = (e) => { S.grid = !S.grid; e.currentTarget.classList.toggle('on', S.grid); render(); };
     $('.pf-mx').onclick = (e) => { S.mx = !S.mx; e.currentTarget.classList.toggle('on', S.mx); render(); };
     $('.pf-my').onclick = (e) => { S.my = !S.my; e.currentTarget.classList.toggle('on', S.my); render(); };
@@ -2547,5 +2745,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, Doc } };
+  return { mount, createPullRequest, prBody, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });
