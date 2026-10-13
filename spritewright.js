@@ -826,7 +826,7 @@
 .pf{--pf-bg:#07040d;--pf-panel:#0e0918;--pf-panel2:#150e24;--pf-line:#2a1b45;--pf-line2:#443070;--pf-ink:#e6dcf7;--pf-muted:#9a86c4;--pf-faint:#6a5890;--pf-accent:#b98cff;--pf-accent2:#e08cff;--pf-on:#12081f;--pf-bad:#ff5470;--pf-good:#7dffb2;--pf-warn:#ffb000;
   --pf-ck1:#3a3150;--pf-ck2:#29223a;--pf-ckbg:repeating-conic-gradient(var(--pf-ck1) 0 25%,var(--pf-ck2) 0 50%) 0 0/8px 8px;
   --pf-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  position:relative;display:grid;grid-template-columns:220px minmax(0,1fr) 248px;grid-template-rows:minmax(0,1fr);height:100%;min-height:440px;background:var(--pf-bg);color:var(--pf-ink);font:12.5px/1.45 var(--pf-mono);border:1px solid var(--pf-line);box-sizing:border-box;font-variant-ligatures:none}
+  position:relative;display:grid;grid-template-columns:var(--pf-cl,220px) minmax(0,1fr) var(--pf-cr,248px);grid-template-rows:minmax(0,1fr);height:100%;min-height:440px;background:var(--pf-bg);color:var(--pf-ink);font:12.5px/1.45 var(--pf-mono);border:1px solid var(--pf-line);box-sizing:border-box;font-variant-ligatures:none}
 .pf *{box-sizing:border-box;border-radius:0}
 .pf [hidden]{display:none!important}
 .pf ::selection{background:var(--pf-accent);color:var(--pf-on)}
@@ -1015,7 +1015,7 @@
 .pf-chg{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--pf-line)}.pf-chg canvas{width:40px;height:40px;image-rendering:pixelated;background:var(--pf-ckbg)}
 .pf-keys{display:grid;grid-template-columns:1fr;gap:6px}.pf-key{display:grid;grid-template-columns:minmax(150px,auto) 1fr;gap:12px;align-items:baseline;padding:3px 0;border-bottom:1px dashed var(--pf-line)}.pf-key span{color:var(--pf-muted)}.pf-key kbd{justify-self:start}
 @media (max-width:1600px){.pf-grp-view button > span:not(.pf-bg-sw){display:none}.pf .pf-grp-view button{padding:4px 8px}}
-@media (max-width:1100px){.pf{grid-template-columns:200px minmax(0,1fr) 220px}.pf-bar button span,.pf-opt-end button span{display:none}}
+@media (max-width:1100px){.pf{--pf-cl:200px;--pf-cr:220px}.pf-bar button span,.pf-opt-end button span{display:none}}
 @media (max-width:900px){
   .pf-c-grid{grid-template-columns:1fr}.pf-c-other{grid-template-columns:1fr}
   .pf{grid-template-columns:1fr;grid-template-rows:auto minmax(420px,1fr) auto;height:auto}
@@ -1033,6 +1033,14 @@
 /* Fullscreen (touch and narrow screens): the canvas and the tool rail fill the screen; the sprite list slides in from the
    left and the colour panel (with the toolbar and tool options) from the right, on the › ‹ handles at the canvas edges. */
 .pf-fsbar,.pf .pf-fs-h,.pf-fs-scrim,.pf-grp-fs{display:none}
+/* Wide screens: the same handles fold the sprite list and the colour panel away, giving their column to the canvas. */
+@media (min-width:901px){
+  .pf:not(.pf-fs) .pf-fs-h{display:flex;align-items:center;justify-content:center;position:absolute;top:50%;width:18px;height:56px;margin-top:-28px;z-index:4;padding:0;min-height:0;font-size:18px;line-height:1;background:rgba(21,14,36,.88);border:1px solid var(--pf-line2);color:var(--pf-muted)}
+  .pf:not(.pf-fs) .pf-fs-hl{left:calc(var(--pf-cl,220px) + var(--pf-rail-w,52px));border-left:0;border-radius:0 7px 7px 0}
+  .pf:not(.pf-fs) .pf-fs-hr{right:var(--pf-cr,248px);border-right:0;border-radius:7px 0 0 7px}
+  .pf.pf-lhide:not(.pf-fs){--pf-cl:0px}.pf.pf-rhide:not(.pf-fs){--pf-cr:0px}
+  .pf.pf-lhide:not(.pf-fs) .pf-side,.pf.pf-rhide:not(.pf-fs) .pf-right{visibility:hidden;overflow:hidden;border:0;padding:0}
+}
 @media (pointer:coarse),(max-width:900px){.pf-grp-fs{display:inline-flex}}
 .pf.pf-fs{position:fixed;inset:0;z-index:2147483000;display:block;width:100vw;height:100vh;height:100dvh;max-height:none;overflow:hidden;background:var(--pf-bg)}
 .pf.pf-fs .pf-main{position:absolute;inset:0 env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px);display:flex;flex-direction:column}
@@ -2526,9 +2534,22 @@
     const fsRail = () => root.style.setProperty('--pf-rail-w', $('.pf-rail').offsetWidth + 'px');
     function fsDrawer(side) {
       root.classList.toggle('pf-fs-lopen', side === 'l'); root.classList.toggle('pf-fs-ropen', side === 'r');
-      $('.pf-fs-hl').textContent = side === 'l' ? '‹' : '›'; $('.pf-fs-hr').textContent = side === 'r' ? '›' : '‹';
-      $('.pf-fs-hl').setAttribute('aria-expanded', String(side === 'l')); $('.pf-fs-hr').setAttribute('aria-expanded', String(side === 'r'));
+      handles();
     }
+    /* The ‹ › handles point the way their panel will move: in fullscreen they slide a drawer in, on a wide screen they fold
+       a column away (remembered in this browser). */
+    function handles() {
+      const fs = fsOn(), l = fs ? root.classList.contains('pf-fs-lopen') : !root.classList.contains('pf-lhide'), r = fs ? root.classList.contains('pf-fs-ropen') : !root.classList.contains('pf-rhide');
+      const hl = $('.pf-fs-hl'), hr = $('.pf-fs-hr'); hl.textContent = l ? '‹' : '›'; hr.textContent = r ? '›' : '‹';
+      hl.setAttribute('aria-expanded', String(l)); hr.setAttribute('aria-expanded', String(r));
+      hl.title = fs ? '' : l ? 'Hide the sprite list' : 'Show the sprite list'; hr.title = fs ? '' : r ? 'Hide the colour panel' : 'Show the colour panel';
+    }
+    function fold(side, hide) {
+      root.classList.toggle(side === 'l' ? 'pf-lhide' : 'pf-rhide', hide); handles();
+      try { localStorage.setItem('pf:fold', (root.classList.contains('pf-lhide') ? 'l' : '') + (root.classList.contains('pf-rhide') ? 'r' : '')); } catch { /* not remembered */ }
+      requestAnimationFrame(() => { resizeView(); if (!S.touched) fit(); render(); });
+    }
+    try { const f = localStorage.getItem('pf:fold') || ''; root.classList.toggle('pf-lhide', f.includes('l')); root.classList.toggle('pf-rhide', f.includes('r')); } catch { /* both shown */ }
     function fsSet(on) {
       if (on === fsOn()) return;
       root.classList.toggle('pf-fs', on); fsDrawer(null);
@@ -2543,8 +2564,9 @@
       requestAnimationFrame(() => { fsRail(); resizeView(); fit(); render(); status(); });
     }
     $('.pf-fs-go').onclick = () => fsSet(true); $('.pf-fs-exit').onclick = () => fsSet(false);
-    $('.pf-fs-hl').onclick = () => fsDrawer(root.classList.contains('pf-fs-lopen') ? null : 'l');
-    $('.pf-fs-hr').onclick = () => fsDrawer(root.classList.contains('pf-fs-ropen') ? null : 'r');
+    $('.pf-fs-hl').onclick = () => (fsOn() ? fsDrawer(root.classList.contains('pf-fs-lopen') ? null : 'l') : fold('l', !root.classList.contains('pf-lhide')));
+    $('.pf-fs-hr').onclick = () => (fsOn() ? fsDrawer(root.classList.contains('pf-fs-ropen') ? null : 'r') : fold('r', !root.classList.contains('pf-rhide')));
+    handles();
     $('.pf-fs-scrim').onclick = () => fsDrawer(null);
     $('.pf-fs-undo').onclick = undo; $('.pf-fs-redo').onclick = redo; $('.pf-fs-fit').onclick = () => $('.pf-fit').click();
     $('.pf-side').addEventListener('click', (e) => { if (fsOn() && e.target.closest('.pf-item,.pf-openrow')) setTimeout(() => fsDrawer(null), 150); });
@@ -2737,7 +2759,7 @@
     const leaveGuard = (e) => { if ([...S.docs.values()].some(atRisk)) { flushDrafts(); e.preventDefault(); e.returnValue = ''; } }; /* work that is neither saved nor kept in the browser would be lost: ask first */
     const hideFlush = () => { if (document.visibilityState === 'hidden') flushDrafts(); }; document.addEventListener('visibilitychange', hideFlush);
     window.addEventListener('beforeunload', leaveGuard);
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const had = doc(); resizeView(); if (had && !S.touched) fit(); render(); }) : null; if (ro) ro.observe(stage);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const had = doc(); fsRail(); resizeView(); if (had && !S.touched) fit(); render(); }) : null; if (ro) ro.observe(stage);
     resizeView(); renderAuth(); applyBg(); init();
 
     const ctrl = {
