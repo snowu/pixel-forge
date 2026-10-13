@@ -16,6 +16,8 @@ jobs:
       # Installable app (Pages only, so the local server and the package stay request-free). Every app on snowu.github.io shares
       # one origin: without its own manifest (unique id, scope ./) Chrome matches another installed app and says "already installed".
       - run: cp -r pages/. site/ && sed -i 's#</head>#<link rel="manifest" href="manifest.webmanifest">\n<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">\n<script src="install.js" defer></script>\n</head>#' site/index.html && grep -q 'rel="manifest"' site/index.html
+      # Refresh install metadata and icons by content; keep the manifest id stable.
+      - run: node scripts/version-pages.mjs site
       # Pages lets browsers cache files for 10 minutes; a versioned script URL makes every deploy load the new editor at once.
       - run: sed -i "s#<script src=\"spritewright.js\"></script>#<script src=\"spritewright.js?v=${GITHUB_SHA::12}\"></script>#" site/index.html && grep -q "spritewright.js?v=" site/index.html
       # Rotate the offline shell on each deploy without deleting other Pages apps' caches.
