@@ -794,7 +794,7 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   ok((await fp.locator('.pf-cell', { hasText: 'hero' }).locator('.pf-badge.anim').innerText()) === '▶4' && (await fp.locator('.pf-cell', { hasText: 'floor' }).locator('.pf-badge').innerText()) === '2', 'badges: ▶ for animations, a count for variant families');
   await fp.locator('.pf-dir', { hasText: 'tiles' }).click();
   ok((await fp.locator('.pf-cell').count()) === 2 && /▸/.test(await fp.locator('.pf-dir', { hasText: 'tiles' }).innerText()), 'a folder folds');
-  await fp.reload(); await fp.waitForSelector('.pf-item');
+  await fp.reload(); await fp.waitForSelector('.pf-item', { state: 'attached' });
   ok((await fp.locator('.pf-cell').count()) === 2, 'and stays folded after a reload');
   await fp.locator('.pf-dir', { hasText: 'tiles' }).click(); ok((await fp.locator('.pf-cell').count()) === 3, 'click again to unfold');
   await fp.locator('.pf-dir', { hasText: 'chars' }).click();
@@ -883,7 +883,7 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   ok(await has([0x12, 0xab, 0x34]), 'an edit shows up in the context strip straight away');
   await fp.locator('.pf-ctx-scale button[data-scale="4"]').click(); ok(/^4×/.test(await fp.locator('.pf-ctx-note').innerText()), 'the scale buttons change the game scale');
   await fp.keyboard.press('Control+z');
-  await fp.reload(); await fp.waitForSelector('.pf-item'); ok(await fp.locator('.pf-ctx').isVisible(), 'the context strip stays on after a reload');
+  await fp.reload(); await fp.waitForSelector('.pf-item', { state: 'attached' }); ok(await fp.locator('.pf-ctx').isVisible(), 'the context strip stays on after a reload');
   await fp.keyboard.press('v'); ok(await fp.locator('.pf-ctx').isHidden(), 'V hides it');
   // the explorer does not blink while you draw and save: the open sprite's thumbnail keeps its canvas and is never blank
   await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(300);
@@ -901,7 +901,7 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   // context groups from the config: the sprites it is seen with, on the group's background; and the project's alpha rule
   fs.writeFileSync(path.join(r2, 'groups.json'), JSON.stringify({ 'Floor-mates': { background: '#203040', sprites: ['tiles/floor_moss.png', 'chars/bat.png'] }, Heroes: ['chars/hero_0.png'] }));
   fs.writeFileSync(path.join(r2, 'spritewright.config.json'), JSON.stringify({ groups: 'groups.json', alpha: { clear: 15, solid: 245, keep: [250] } }));
-  await fp.reload(); await fp.waitForSelector('.pf-item');
+  await fp.reload(); await fp.waitForSelector('.pf-item', { state: 'attached' });
   await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(200);
   await fp.keyboard.press('v'); await fp.waitForTimeout(300);
   ok((await fp.locator('.pf-ctx-group option').allInnerTexts()).join() === 'Floor-mates,Same folder' && await fp.locator('.pf-ctx-group').inputValue() === 'Floor-mates', 'Context opens on the config group that holds the sprite, and offers the folder too: ' + (await fp.locator('.pf-ctx-group option').allInnerTexts()).join(' | '));
@@ -915,7 +915,7 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   }
   await fp.locator('.pf-ctx-group').selectOption(''); await fp.waitForTimeout(150);
   ok(/neighbour from chars/.test(await fp.locator('.pf-ctx-note').innerText()), 'Same folder goes back to the folder neighbours');
-  await fp.reload(); await fp.waitForSelector('.pf-item'); await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(300);
+  await fp.reload(); await fp.waitForSelector('.pf-item', { state: 'attached' }); await fp.locator('.pf-cell', { hasText: 'bat' }).click(); await fp.waitForTimeout(300);
   ok(await fp.locator('.pf-ctx-group').inputValue() === '', 'the choice is remembered across a reload');
   await fp.locator('.pf-ctx-group').selectOption('Floor-mates'); await fp.waitForTimeout(150);
   await fp.locator('.pf-cell', { hasText: 'hero' }).click(); await fp.waitForTimeout(300);
@@ -929,7 +929,15 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.keyboard.press('Control+z'); ok(await fp.evaluate(() => document.getElementById('app').__pf.current.px[5] >>> 24) === 252, 'undo brings the stray value back');
   // fullscreen on a phone held sideways: canvas and tools fill the screen, menus slide in from the edges
   ok(await fp.locator('.pf-fs-go').isHidden(), 'no fullscreen button on a desktop with a mouse');
-  ok(await fp.locator('.pf-fs-hl').isHidden() && await fp.locator('.pf-fs-hr').isHidden(), 'no drawer handles outside fullscreen');
+  { const vw = async () => (await fp.locator('.pf-stage').boundingBox()).width, w0 = await vw();
+    await fp.locator('.pf-fs-hl').click(); await fp.waitForTimeout(200); const w1 = await vw();
+    ok(w1 > w0 + 150 && await fp.locator('.pf-side').evaluate((e) => getComputedStyle(e).visibility === 'hidden') && (await fp.locator('.pf-fs-hl').innerText()) === '›', `on a wide screen ‹ folds the sprite list away and the canvas takes its room (${Math.round(w0)} → ${Math.round(w1)}px)`);
+    await fp.locator('.pf-fs-hr').click(); await fp.waitForTimeout(200);
+    ok(await vw() > w1 + 150 && (await fp.locator('.pf-fs-hr').innerText()) === '‹', '› folds the colour panel away too');
+    await fp.reload(); await fp.waitForSelector('.pf-item', { state: 'attached' }); await fp.waitForTimeout(200);
+    ok(await fp.evaluate(() => document.querySelector('.pf').matches('.pf-lhide.pf-rhide')), 'the folded panels stay folded after a reload');
+    await fp.locator('.pf-fs-hl').click(); await fp.locator('.pf-fs-hr').click(); await fp.waitForTimeout(200);
+    ok(Math.abs(await vw() - w0) < 2 && await fp.locator('.pf-side').isVisible(), 'and come back'); }
   { const mctx = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true }), mp = await mctx.newPage(), merr = []; mp.on('pageerror', (e) => merr.push(e.message));
     await mp.goto(b2); await mp.waitForSelector('.pf-item'); await mp.locator('.pf-cell', { hasText: 'bat' }).tap(); await mp.waitForTimeout(300);
     await mp.locator('.pf-fs-go').tap(); await mp.waitForTimeout(500);
