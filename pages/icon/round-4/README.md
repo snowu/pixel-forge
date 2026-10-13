@@ -22,7 +22,7 @@ The light diagonal spine separates the feather's two vanes. A small colored nib 
 `designs.mjs` stores the quill matrix and imports the exact palette definitions from round three. The former body colors now color the feather and its shade; the former face colors define the spine and shaft highlight; the accent colors the nib and ink mark.
 
 ```sh
-node docs/pr-logo/proposals/round-4/generate.mjs
+node pages/icon/round-4/generate.mjs
 ```
 
 The generator writes six SVGs, 36 PNGs, and `index.html`. Each palette includes 16/32/48/192/512 px exports and a padded, opaque 512 px maskable study. Open `index.html` locally to see native-size icons, light/dark tab studies, and illustrative circular app crops. `comparison.png` is a browser capture at 1480 px width and device scale 1; refresh it after changes. View it at full resolution to assess small sizes.

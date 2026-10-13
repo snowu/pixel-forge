@@ -2,7 +2,7 @@
 // Uses the repository's PNG codec; no graphics package or build step required.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { encodePng } from '../../../../test/png.mjs';
+import { encodePng } from '../../../test/png.mjs';
 
 const out = fileURLToPath(new URL('.', import.meta.url));
 const palette = { L: '#e6dcf7', P: '#b98cff', D: '#8057bd', M: '#e08cff' };

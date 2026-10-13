@@ -22,7 +22,7 @@ Open `index.html` locally to see 16, 32 and 48 px exports at their actual CSS si
 `generate.mjs` contains the four editable 16×16 pixel matrices and palette. It writes an SVG master, PNGs at 16/32/48/192/512 px, an opaque 512 px maskable study, and the review HTML for each option. The generator uses the repository's existing PNG encoder, with no new dependencies.
 
 ```sh
-node docs/pr-logo/proposals/generate.mjs
+node pages/icon/generate.mjs
 ```
 
 Every normal export uses integer nearest-neighbour scaling. Maskable studies place the 16×16 master at 24 px per source pixel with a 64 px inset on a 512 px opaque canvas. Generation checks that all foreground pixels fit within the central circle of radius 40% of the canvas. SVGs preserve the grid using `shape-rendering="crispEdges"`.

@@ -37,7 +37,7 @@ Pick a shape and palette, for example **S1 + P1**. The color roles also transfer
 `designs.mjs` holds three shape matrices, the neutral palette, and six named palettes. `generate.mjs` imports the previous keeper for S0 and writes 10 SVGs, 60 PNGs, and two linked review pages:
 
 ```sh
-node docs/pr-logo/proposals/round-3/generate.mjs
+node pages/icon/round-3/generate.mjs
 ```
 
 - Open `index.html` for shapes and `colors.html` for colors. Both show 16/32/48 px icons at actual CSS size, light/dark browser tabs, and illustrative circular app crops.

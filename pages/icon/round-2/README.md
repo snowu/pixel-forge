@@ -18,7 +18,7 @@ Choose C1, C2 or C3 as the next master to refine. C2's raised arm can also be co
 `designs.mjs` contains the editable pixel matrices and design notes. `generate.mjs` writes the SVG masters, PNG exports at 16/32/48/192/512 px, opaque 512 px maskable studies, and `index.html`.
 
 ```sh
-node docs/pr-logo/proposals/round-2/generate.mjs
+node pages/icon/round-2/generate.mjs
 ```
 
 Open `index.html` locally for actual-size favicon studies, dark/light tab mockups and circular app crops. `comparison.png` is a browser screenshot at 1480 px width and device scale 1; refresh it after regeneration. GitHub may shrink the board, so open the image at full resolution to assess small icons.
