@@ -1,6 +1,6 @@
 # Spritewright icon proposals
 
-**Current round: [clearer Pixel keeper shapes and six color palettes](round-3/README.md).** [Round 2](round-2/README.md) developed direction C into the Pixel keeper. The four directions below are retained as the first-round exploration.
+**Current round: [return to the quill with the six color palettes](round-4/README.md).** [Round 3](round-3/README.md) introduced the palettes retained for the quill. The four directions below are retained as the first-round exploration.
 
 Four alternatives for PR #20, ready for choosing a direction and iterating.
 
