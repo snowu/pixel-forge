@@ -729,3 +729,9 @@ test('scan reads groups (inline or from a file) and the alpha rule into the mani
   assert.deepEqual(scan(dir).groups, { Inline: ['art/a.png'] });
   assert.equal(scan(dir).alpha, null);
 });
+
+test('countDiff: clear pixels are equal whatever colour they carry, so erasing nothing is no change', () => {
+  const a = new Uint32Array([0x00ffffff, 0x00000000, 0xff0000ff]), b = new Uint32Array([0x00000000, 0x00123456, 0xff0000ff]);
+  assert.equal(C.countDiff(a, b), 0);
+  b[2] = 0x00000000; assert.equal(C.countDiff(a, b), 1, 'opaque to clear still counts');
+});

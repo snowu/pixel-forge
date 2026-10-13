@@ -114,7 +114,10 @@
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (px[y * w + x] >>> 24) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
     return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
   }
-  const countDiff = (a, b) => { if (a.length !== b.length) return Math.max(a.length, b.length); let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
+  /* Pixels that look the same: fully clear counts as one value whatever colour it carries (a PNG's clear pixels often keep
+     an RGB, the eraser writes 0), so erasing nothing is not a change. */
+  const samePx = (a, b) => a === b || (a >>> 24 === 0 && b >>> 24 === 0);
+  const countDiff = (a, b) => { if (a.length !== b.length) return Math.max(a.length, b.length); let n = 0; for (let i = 0; i < a.length; i++) if (!samePx(a[i], b[i])) n++; return n; };
 
   /** The pixels of an ellipse inside the box between two corners. Filled = every pixel centre inside; outline = the filled
       pixels that touch the outside on a side (a clean 1-pixel, 8-connected ring, symmetric like hand-placed pixel art). */
@@ -821,7 +824,7 @@
      ===================================================================================================== */
   const CSS = `
 .pf{--pf-bg:#07040d;--pf-panel:#0e0918;--pf-panel2:#150e24;--pf-line:#2a1b45;--pf-line2:#443070;--pf-ink:#e6dcf7;--pf-muted:#9a86c4;--pf-faint:#6a5890;--pf-accent:#b98cff;--pf-accent2:#e08cff;--pf-on:#12081f;--pf-bad:#ff5470;--pf-good:#7dffb2;--pf-warn:#ffb000;
-  --pf-ck1:#1c1530;--pf-ck2:#130e22;--pf-ckbg:repeating-conic-gradient(var(--pf-ck1) 0 25%,var(--pf-ck2) 0 50%) 0 0/8px 8px;
+  --pf-ck1:#3a3150;--pf-ck2:#29223a;--pf-ckbg:repeating-conic-gradient(var(--pf-ck1) 0 25%,var(--pf-ck2) 0 50%) 0 0/8px 8px;
   --pf-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   position:relative;display:grid;grid-template-columns:220px minmax(0,1fr) 248px;grid-template-rows:minmax(0,1fr);height:100%;min-height:440px;background:var(--pf-bg);color:var(--pf-ink);font:12.5px/1.45 var(--pf-mono);border:1px solid var(--pf-line);box-sizing:border-box;font-variant-ligatures:none}
 .pf *{box-sizing:border-box;border-radius:0}
@@ -1029,7 +1032,7 @@
 }
 /* Fullscreen (touch and narrow screens): the canvas and the tool rail fill the screen; the sprite list slides in from the
    left and the colour panel (with the toolbar and tool options) from the right, on the › ‹ handles at the canvas edges. */
-.pf-fsbar,.pf-fs-h,.pf-fs-scrim,.pf-grp-fs{display:none}
+.pf-fsbar,.pf .pf-fs-h,.pf-fs-scrim,.pf-grp-fs{display:none}
 @media (pointer:coarse),(max-width:900px){.pf-grp-fs{display:inline-flex}}
 .pf.pf-fs{position:fixed;inset:0;z-index:2147483000;display:block;width:100vw;height:100vh;height:100dvh;max-height:none;overflow:hidden;background:var(--pf-bg)}
 .pf.pf-fs .pf-main{position:absolute;inset:0 env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px);display:flex;flex-direction:column}
@@ -1777,7 +1780,7 @@
       g.restore();
       if (S.changes && !S.peek && d.base.w === d.w && d.base.h === d.h) { /* dim what is untouched, outline what changed */
         const base = d.base.px, mask = new Uint32Array(d.w * d.h), dim = pack(7, 4, 13, 175), cells = [];
-        for (let i = 0; i < mask.length; i++) if (d.px[i] === base[i]) mask[i] = dim; else cells.push(i);
+        for (let i = 0; i < mask.length; i++) if (samePx(d.px[i], base[i])) mask[i] = dim; else cells.push(i);
         diffCanvas.width = d.w; diffCanvas.height = d.h; diffCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(mask.buffer), d.w, d.h), 0, 0);
         g.drawImage(diffCanvas, S.ox, S.oy, W, H);
         if (z >= 3 && cells.length < 20000) { g.strokeStyle = '#e08cff'; g.lineWidth = Math.max(1, Math.floor(z / 8)); for (const i of cells) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1); g.lineWidth = 1; }
@@ -2339,7 +2342,7 @@
       if (m === 'white') return ['#ffffff', '#ffffff'];
       if (m === 'custom') return [S.bgCustom, S.bgCustom];
       if (m === 'project') return [projectBg(), projectBg()];
-      return ['#1c1530', '#130e22'];
+      return ['#3a3150', '#29223a'];
     }
     function applyBg() {
       const [a, b] = bgColors(); root.style.setProperty('--pf-ck1', a); root.style.setProperty('--pf-ck2', b);
@@ -2348,7 +2351,7 @@
     }
     function setBg(mode, custom) { S.bg = mode; if (custom) S.bgCustom = custom; try { localStorage.setItem('pf:bg', JSON.stringify({ mode, custom: S.bgCustom })); } catch { /* not remembered */ } applyBg(); }
     try { const saved = JSON.parse(localStorage.getItem('pf:bg') || 'null'); if (saved) { S.bg = saved.mode || 'auto'; if (fromHex(saved.custom || '') != null) S.bgCustom = saved.custom; } } catch { /* defaults */ }
-    const swatchCss = (m) => { const [a, b] = m === 'dark' ? ['#1c1530', '#130e22'] : m === 'light' ? ['#d6d6de', '#f2f2f6'] : m === 'black' ? ['#000', '#000'] : m === 'white' ? ['#fff', '#fff'] : m === 'custom' ? [S.bgCustom, S.bgCustom] : [projectBg(), projectBg()]; return `background:repeating-conic-gradient(${a} 0 25%,${b} 0 50%) 0 0/8px 8px`; };
+    const swatchCss = (m) => { const [a, b] = m === 'dark' ? ['#3a3150', '#29223a'] : m === 'light' ? ['#d6d6de', '#f2f2f6'] : m === 'black' ? ['#000', '#000'] : m === 'white' ? ['#fff', '#fff'] : m === 'custom' ? [S.bgCustom, S.bgCustom] : [projectBg(), projectBg()]; return `background:repeating-conic-gradient(${a} 0 25%,${b} 0 50%) 0 0/8px 8px`; };
     function closeBgMenu() { const m = root.querySelector('.pf-bgmenu'); if (m) m.remove(); }
     function openBgMenu() {
       closeBgMenu();
