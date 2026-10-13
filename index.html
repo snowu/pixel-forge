@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>spritewright</title>
 <meta name="theme-color" content="#07040d">
-<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAY0lEQVR4nGNgZ+FlYGfh/U8mZqBEMxgTbcCzO9/hmCQDkDXu7Pn/vyF8L/EGoGsmyQBcmokygFjNBA0gpBmvAcRoJmgAPo04DYBpJishkaoZw4AHJGrGagAMk2UAOZiB0uwMAIemglGNHsOKAAAAAElFTkSuQmCC">
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAZElEQVR4nGNgZ+FlYGfh/U8mZqBEMxgTbcCzO9/hmCQDkDXu7Pn/vyF8L/EGoGsmyQBcmokygFjNBA0gpBmvAcRoJmgAPo04DYBpJishkaoZw4AHJGrGGQYgg4g1jCqZiaLsDADQWn/+9e58ywAAAABJRU5ErkJggg==">
 <!--PF_TOKEN-->
 <style>
   html,body{margin:0;height:100%;background:#07040d;color:#e6dcf7;font:13px 'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -43,35 +43,5 @@
   opts.githubApp = q.get('app') || 'spritewright'; // the GitHub App people install on their repositories (link shown under the repo list)
   Spritewright.mount(document.getElementById('app'), opts);
 </script>
-<!-- animated-quill:start -->
-<script>
-(() => {
-  const frames = ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAY0lEQVR4nGNgZ+FlYGfh/U8mZqBEMxgTbcCzO9/hmCQDkDXu7Pn/vyF8L/EGoGsmyQBcmokygFjNBA0gpBmvAcRoJmgAPo04DYBpJishkaoZw4AHJGrGagAMk2UAOZiB0uwMAIemglGNHsOKAAAAAElFTkSuQmCC","data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAXklEQVR4nGNgZ+FlYGfh/U8mZiBa87M73+EYWZygAcgad/b8/98Qvpd4A9A1k2QALs1EGUCsZoIGENKM1wBiNBM0AJ9GnAbANBObPhgo0YxhwAMSNROVEoeGARRlZwAwVntYIfbCsgAAAABJRU5ErkJggg==","data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAX0lEQVR4nGNgZ+FlYGfh/U8mZqBEMxjTz4Bnd77DMUkGIGvc2fP/f0P4XuINQNdMkgG4NBNlALGaCRpASDNeA4jRTNAAfBpxGgDTTFZCIlUzhgEPSNRMVEokxgCKsjMAOrN7WMVy7uQAAAAASUVORK5CYII=","data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgZ+FlYGfh/U8mZqBEMxjT14Bnd77DMUkGIGvc2fP/f0P4XuINQNdMkgG4NBNlADGaiTIAn2aCBhDSTJQBuDTiNQCmmayERIpmDAMe9PwHY5olZVwGUJSdAT45fatteWuWAAAAAElFTkSuQmCC","data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgZ+FlYGfh/U8mZqBEMxjT34Bnd77DMUkGIGvc2fP/f0P4XuINQNdMkgG4NBNlACHNRBuASzNRBuDTTLQB2DQSNACmmayERKxmDAMe9PyHY5olZWwGUJSdAThzf/56a9ChAAAAAElFTkSuQmCC","data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAZUlEQVR4nGNgZ+FlYGfh/U8mZqBEMxiTbMCzO9/hmCQDkDXu7Pn/vyF8L/EGoGsmyQBcmokygJBmog3ApZkoA/BpJtoAbBoJGgDTTFZCIlYzTgMeEKkZwwCQRhgmywByMAOl2RkARVmCUS4qcQoAAAAASUVORK5CYII=","data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAZklEQVR4nGNgZ+FlYGfh/U8mZiBJ87M73+EYJkaUAcgad/b8/98Qvpd4A9A1k2QALs1EGUCMZqIMwKeZoAGENBNlAC6NeA2AaSYmijEMIEUzVgMekKCZ6JRItAEg22GYri6gKDsDAGFRglHhSEeQAAAAAElFTkSuQmCC"];
-  const durations = [3200,180,180,180,180,180,180];
-  const icon = document.querySelector('link[rel="icon"]');
-  const preview = document.getElementById('favicon-preview');
-  const motion = matchMedia('(prefers-reduced-motion: reduce)');
-  let timer, frame = 0;
-  function draw() {
-    icon.href = frames[frame];
-    if (preview) preview.src = frames[frame];
-  }
-  function reset() {
-    clearTimeout(timer);
-    frame = 0;
-    draw();
-    if (!document.hidden && !motion.matches) timer = setTimeout(tick, durations[0]);
-  }
-  function tick() {
-    frame = (frame + 1) % frames.length;
-    draw();
-    timer = setTimeout(tick, durations[frame]);
-  }
-  document.addEventListener('visibilitychange', reset);
-  motion.addEventListener('change', reset);
-  reset();
-})();
-</script>
-<!-- animated-quill:end -->
 </body>
 </html>

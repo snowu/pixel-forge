@@ -1,6 +1,6 @@
 # Spritewright icon proposals
 
-**Current round: [return to the quill with the six color palettes](round-4/README.md).** [Round 3](round-3/README.md) introduced the palettes retained for the quill. The four directions below are retained as the first-round exploration.
+**Current round: [refining C2, our pixel keeper](round-5/README.md).** The earlier quill and palette studies remain available below.
 
 Four alternatives for PR #20, ready for choosing a direction and iterating.
 
@@ -29,4 +29,4 @@ Every normal export uses integer nearest-neighbour scaling. Maskable studies pla
 
 `comparison.png` is a browser capture of `index.html` at a 1480 px viewport and device scale 1. Refresh that capture after editing the masters or HTML. The review page was checked at 390, 768 and 1480 px for image loading and horizontal overflow.
 
-These assets are proposals under `docs/`. The existing PR's quill remains the wired favicon and app icon until a direction is chosen. After selection, refine that master and regenerate the production favicon, regular app icons, Apple touch icon and maskable icon together.
+These assets are proposals under `pages/icon/`. The existing PR's quill remains the wired favicon and app icon until a direction is chosen. After selection, refine that master and regenerate the production favicon, regular app icons, Apple touch icon and maskable icon together.
