@@ -929,6 +929,7 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   await fp.keyboard.press('Control+z'); ok(await fp.evaluate(() => document.getElementById('app').__pf.current.px[5] >>> 24) === 252, 'undo brings the stray value back');
   // fullscreen on a phone held sideways: canvas and tools fill the screen, menus slide in from the edges
   ok(await fp.locator('.pf-fs-go').isHidden(), 'no fullscreen button on a desktop with a mouse');
+  ok(await fp.locator('.pf-fs-hl').isHidden() && await fp.locator('.pf-fs-hr').isHidden(), 'no drawer handles outside fullscreen');
   { const mctx = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true }), mp = await mctx.newPage(), merr = []; mp.on('pageerror', (e) => merr.push(e.message));
     await mp.goto(b2); await mp.waitForSelector('.pf-item'); await mp.locator('.pf-cell', { hasText: 'bat' }).tap(); await mp.waitForTimeout(300);
     await mp.locator('.pf-fs-go').tap(); await mp.waitForTimeout(500);
