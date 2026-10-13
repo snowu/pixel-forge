@@ -1,6 +1,6 @@
 # Spritewright icon proposals
 
-**Current round: [refining C2, our pixel keeper](round-5/README.md).** The earlier quill and palette studies remain available below.
+**Current round: [detailed quills at 32 × 32](round-6/README.md).** Based on the original app icon in `pages/icons`; earlier explorations remain available.
 
 Four alternatives for PR #20, ready for choosing a direction and iterating.
 
