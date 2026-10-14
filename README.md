@@ -144,6 +144,8 @@ The **Background** button above the canvas (or `K`) chooses what shows behind tr
 
 `spritewright.config.json` in the project root. The local server, the folder mode and the GitHub mode all read it.
 
+No config yet? Opening a GitHub repository that has none, with PNGs in more than one place, asks **Which folders hold your art?** (docs, screenshots and test folders start unticked). The list narrows at once, the pick is remembered in that browser, and it goes into the next pull request or commit as `spritewright.config.json`, so everyone who opens the repository gets the same list. **Art folders…** in the project menu changes it later (keeping the rest of an existing config).
+
 ```json
 {
   "dirs": ["art-handoff", "public"],
