@@ -7,7 +7,7 @@ A pixel art editor that works **by itself in a browser** or **as a dependency in
 
 **Colour.** Primary and secondary colours (right click paints the secondary one, which starts out clear so right click erases; X swaps), hue-shifted 5-colour ramps you can add to the palette, recolour a colour everywhere, project palettes (.hex), palettes from **Lospec** by name or link (`endesga-32`), snap to palette.
 
-Also undo/redo, flip/rotate/shift/resize, a sprite-sheet animation preview, PNG import and export with nearest-neighbour upscaling, mouse, touch and keyboard (press `?` in the editor for every shortcut). Saves are **lossless**: PNGs are read and written byte for byte by the editor's own codec, so every channel of every pixel, including semi-transparent ones (for example alpha 250 "emissive" markers), comes back exactly as it went in.
+Also undo/redo, flip/rotate/shift/resize, **rotate by any angle** with RotSprite (lines stay clean instead of scattering), **smooth ×2** upscaling with Scale2x, a sprite-sheet animation preview, PNG import and export with nearest-neighbour upscaling, mouse, touch and keyboard (press `?` in the editor for every shortcut). Saves are **lossless**: PNGs are read and written byte for byte by the editor's own codec, so every channel of every pixel, including semi-transparent ones (for example alpha 250 "emissive" markers), comes back exactly as it went in.
 
 ![spritewright editing a sprite](docs/readme/editor.png)
 

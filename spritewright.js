@@ -341,6 +341,31 @@
     return { stray, doubles, near, nearPx };
   }
   const samePxL = (a, b) => a === b || (isClear(a) && isClear(b));
+  /** Scale2x (EPX): twice the size, rounding stair-steps instead of making 2x2 blocks. Edges repeat the edge pixel. */
+  function scale2x(px, w, h) {
+    const o = new Uint32Array(w * h * 4), W = w * 2, at = (x, y) => px[Math.max(0, Math.min(h - 1, y)) * w + Math.max(0, Math.min(w - 1, x))];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const P = px[y * w + x], A = at(x, y - 1), B = at(x + 1, y), C = at(x - 1, y), D = at(x, y + 1), i = y * 2 * W + x * 2;
+      o[i] = C === A && C !== D && A !== B ? A : P; o[i + 1] = A === B && A !== C && B !== D ? B : P;
+      o[i + W] = D === C && D !== B && C !== A ? C : P; o[i + W + 1] = B === D && B !== A && D !== C ? D : P;
+    }
+    return { px: o, w: W, h: h * 2 };
+  }
+  /** RotSprite: rotate by any angle without the scattered pixels a plain nearest-neighbour rotation leaves. The image is
+      enlarged 8x with Scale2x (which keeps lines and curves smooth), rotated, and sampled back at the original scale.
+      The result is outW x outH (default: big enough for the whole rotated image), centred. */
+  function rotSprite(px, w, h, deg, outW, outH) {
+    const t = (deg * Math.PI) / 180, cos = Math.cos(t), sin = Math.sin(t);
+    if (outW == null) { outW = Math.max(1, Math.round(Math.abs(w * cos) + Math.abs(h * sin))); outH = Math.max(1, Math.round(Math.abs(w * sin) + Math.abs(h * cos))); }
+    let big = { px, w, h }; for (let k = 0; k < 3; k++) big = scale2x(big.px, big.w, big.h);
+    const o = new Uint32Array(outW * outH), cx = outW / 2, cy = outH / 2;
+    for (let y = 0; y < outH; y++) for (let x = 0; x < outW; x++) {
+      const dx = x + 0.5 - cx, dy = y + 0.5 - cy, sx = dx * cos + dy * sin + w / 2, sy = -dx * sin + dy * cos + h / 2; // back to the source
+      const bx = Math.floor(sx * 8), by = Math.floor(sy * 8);
+      if (bx >= 0 && by >= 0 && bx < big.w && by < big.h) o[y * outW + x] = big.px[by * big.w + bx];
+    }
+    return { px: o, w: outW, h: outH };
+  }
   /** Normalise a drag between two cells into a rectangle clipped to the image (null when it misses the image). */
   function rectBetween(a, b, w, h) {
     const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y)), x1 = Math.min(w - 1, Math.max(a.x, b.x)), y1 = Math.min(h - 1, Math.max(a.y, b.y));
@@ -1252,6 +1277,8 @@
     fliph: '<path d="M12 3.5v17"/><path d="M9 7.5L4.5 12 9 16.5z" fill="currentColor"/><path d="M15 7.5l4.5 4.5-4.5 4.5z"/>',
     flipv: '<path d="M3.5 12h17"/><path d="M7.5 9L12 4.5 16.5 9z" fill="currentColor"/><path d="M7.5 15l4.5 4.5 4.5-4.5z"/>',
     rotate: '<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19.5 4v4.5H15"/>',
+    rotfree: '<path d="M4 20h16"/><path d="M4 20 16 8"/><path d="M11 20a7 7 0 0 0-2-5"/>',
+    x2: '<rect x="3.5" y="9.5" width="7" height="7"/><path d="M14 6h6v6M20 6l-6 6"/>',
     outline4: '<rect x="8.5" y="8.5" width="7" height="7" fill="currentColor"/><path d="M8.5 5h7M8.5 19h7M5 8.5v7M19 8.5v7"/>',
     outline8: '<rect x="8.5" y="8.5" width="7" height="7" fill="currentColor"/><rect x="5" y="5" width="14" height="14"/>',
     variant: '<rect x="3.5" y="3.5" width="10" height="10"/><rect x="10.5" y="10.5" width="10" height="10" fill="currentColor"/>',
@@ -1266,7 +1293,8 @@
   };
   /* The Image panel: one grid of icon buttons, named in a line below on hover. [class, icon, name, what it does, extra attributes] */
   const IMAGE_TOOLS = [
-    ['pf-fliph', 'fliph', 'Flip left-right', 'the image, or the selection'], ['pf-flipv', 'flipv', 'Flip up-down', 'the image, or the selection'], ['pf-rot', 'rotate', 'Rotate 90°', 'clockwise; the image, or the selection'],
+    ['pf-fliph', 'fliph', 'Flip left-right', 'the image, or the selection'], ['pf-flipv', 'flipv', 'Flip up-down', 'the image, or the selection'], ['pf-rot', 'rotate', 'Rotate 90°', 'clockwise; the image, or the selection'], ['pf-rotfree', 'rotfree', 'Rotate…', 'by any angle, with RotSprite so lines stay clean; the image, or the selection'],
+    ['pf-x2', 'x2', 'Smooth ×2', 'twice the size with Scale2x: diagonals and curves stay smooth instead of turning into 2×2 blocks; the image, or the selection'],
     ['pf-outline', 'outline4', 'Outline', '1 pixel in the primary colour around everything opaque, sides only'], ['pf-outline8', 'outline8', 'Outline with corners', 'like Outline, diagonals included'], ['pf-variant', 'variant', 'Make variant…', 'a recoloured copy as new files, with its whole family (every pose and frame), e.g. king → king_dark'],
     ['pf-sh', 'left', 'Shift left', 'by 1 pixel; what falls off comes back on the other side', ' data-d="-1,0"'], ['pf-sh', 'up', 'Shift up', 'by 1 pixel, wrapping around', ' data-d="0,-1"'], ['pf-sh', 'down', 'Shift down', 'by 1 pixel, wrapping around', ' data-d="0,1"'], ['pf-sh', 'right', 'Shift right', 'by 1 pixel, wrapping around', ' data-d="1,0"'],
     ['pf-resize', 'canvas', 'Canvas size…', 'grow or cut the canvas, or scale the image (Ctrl+Alt+C, or click the size in the status bar)'], ['pf-trim', 'trim', 'Trim', 'cut away the empty border'],
@@ -1543,6 +1571,13 @@
         </div>
         <div class="pf-log pf-c-msg" aria-live="polite"></div>
         <div class="pf-note pf-c-foot">Tip: drop PNG files onto the canvas at any time.</div></form></dialog>
+      <dialog class="pf-dlg-rot"><form method="dialog" class="pf-form">
+        <div class="pf-dlg-head"><h4>Rotate</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <div class="pf-row"><input type="range" class="pf-rot-a" min="-180" max="180" step="1" value="15" aria-label="Angle" style="flex:1;width:auto"><input type="number" class="pf-rot-n" min="-180" max="180" value="15" aria-label="Angle in degrees"><span class="pf-note">°</span></div>
+        <span class="pf-seg pf-rot-quick">${[-45, -30, -15, 15, 30, 45].map((a) => `<button type="button" data-a="${a}">${a > 0 ? '+' : ''}${a}°</button>`).join('')}</span>
+        <canvas class="pf-rot-prev" style="image-rendering:pixelated;background:var(--pf-ckbg);align-self:center;max-width:100%"></canvas>
+        <div class="pf-note pf-rot-what"></div>
+        <div class="pf-row"><button type="button" class="primary pf-rot-go">Rotate</button><button value="cancel">Cancel</button></div></form></dialog>
       <dialog class="pf-dlg-size"><form method="dialog" class="pf-form">
         <div class="pf-dlg-head"><h4>Canvas size</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
         <span class="pf-seg pf-sz-mode"><button type="button" data-mode="canvas" class="on" title="Add or cut away space around the image; the pixels stay the same size">resize canvas</button><button type="button" data-mode="scale" title="Stretch or shrink the image itself (nearest neighbour: pixels repeat or drop, never blur)">scale image</button></span>
@@ -3186,6 +3221,25 @@
       $('.pf-recolor-in').onchange = () => { session = null; }; }
     $('.pf-fliph').onclick = () => transformSel((px, w, h) => ({ px: flipH(px, w, h), w, h })) || edit((d) => { d.px = flipH(d.px, d.w, d.h); });
     $('.pf-flipv').onclick = () => transformSel((px, w, h) => ({ px: flipV(px, w, h), w, h })) || edit((d) => { d.px = flipV(d.px, d.w, d.h); });
+    /* Rotate by any angle (RotSprite): the selection grows to fit what it becomes; the whole image turns round its centre
+       inside the same canvas (corners that leave it are cut). Previewed live. */
+    function rotTarget() { const d = doc(); if (!d) return null; if (S.float) return { px: S.float.px, w: S.float.w, h: S.float.h, sel: true }; if (S.sel) return { px: copySelPxR(d), w: S.sel.w, h: S.sel.h, sel: true }; return { px: d.px, w: d.w, h: d.h, sel: false }; }
+    const copySelPxR = (d) => copyRect(d.px, d.w, d.h, S.sel);
+    function rotPreview() {
+      const t = rotTarget(); if (!t) return; const a = +$('.pf-rot-n').value || 0, r = t.sel ? rotSprite(t.px, t.w, t.h, a) : rotSprite(t.px, t.w, t.h, a, t.w, t.h);
+      const c = $('.pf-rot-prev'), sc = Math.max(1, Math.min(8, Math.floor(240 / Math.max(r.w, r.h)))); drawPx(c, { w: r.w, h: r.h, imageData: () => new ImageData(new Uint8ClampedArray(r.px.buffer.slice(0)), r.w, r.h) }, sc);
+      $('.pf-rot-what').textContent = t.sel ? `the selection, ${t.w}×${t.h} → ${r.w}×${r.h}` : `the whole image, round its centre (${t.w}×${t.h} stays)`;
+    }
+    const rotSet = (a) => { a = Math.max(-180, Math.min(180, Math.round(+a || 0))); $('.pf-rot-a').value = a; $('.pf-rot-n').value = a; rotPreview(); };
+    $('.pf-rotfree').onclick = () => { if (!doc()) return; rotPreview(); $('.pf-dlg-rot').showModal(); };
+    $('.pf-rot-a').oninput = (e) => rotSet(e.target.value); $('.pf-rot-n').oninput = (e) => rotSet(e.target.value);
+    $('.pf-rot-quick').onclick = (e) => { const b = e.target.closest('[data-a]'); if (b) rotSet(b.dataset.a); };
+    $('.pf-rot-go').onclick = () => {
+      const a = +$('.pf-rot-n').value || 0; $('.pf-dlg-rot').close(); if (!a) return;
+      transformSel((px, w, h) => rotSprite(px, w, h, a)) || edit((d) => { d.px = rotSprite(d.px, d.w, d.h, a, d.w, d.h).px; });
+      note(`rotated ${a}°`);
+    };
+    $('.pf-x2').onclick = () => transformSel((px, w, h) => scale2x(px, w, h)) || edit((d) => { const r = scale2x(d.px, d.w, d.h); d.px = r.px; d.w = r.w; d.h = r.h; fit(); });
     $('.pf-rot').onclick = () => transformSel((px, w, h) => ({ px: rotateCW(px, w, h), w: h, h: w })) || edit((d) => { d.px = rotateCW(d.px, d.w, d.h); [d.w, d.h] = [d.h, d.w]; fit(); });
     const outline = (corners) => { if (isClear(S.color)) return note('Pick an opaque primary colour for the outline.'); commitFloat(); edit((d) => { d.px = outlinePx(d.px, d.w, d.h, S.color, corners); }); };
     $('.pf-outline').onclick = () => outline(false); $('.pf-outline8').onclick = () => outline(true);
@@ -3395,5 +3449,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });
