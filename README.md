@@ -8,7 +8,7 @@ A pixel art editor that works **by itself in a browser** or **as a dependency in
 
 Also undo/redo, flip/rotate/shift/resize, a sprite-sheet animation preview, PNG import and export with nearest-neighbour upscaling, mouse, touch and keyboard (press `?` in the editor for every shortcut). Saves are **lossless**: PNGs are read and written byte for byte by the editor's own codec, so every channel of every pixel, including semi-transparent ones (for example alpha 250 "emissive" markers), comes back exactly as it went in.
 
-![spritewright editing a sprite](docs/pr-purple-tools/02-after.png)
+![spritewright editing a sprite](docs/readme/editor.png)
 
 And it can hand art back as a **GitHub pull request**, so an artist never needs git.
 
@@ -86,6 +86,8 @@ Works with Vite and other bundlers (checked with a Vite build). Options: `source
 ## Fullscreen on phones and tablets
 
 **Fullscreen** (in the toolbar on touch screens and narrow windows) gives the whole screen to the canvas and the tool rail. Where the browser allows it, it uses the browser's own fullscreen and turns the screen sideways; on iPhone it fills the page instead, in either orientation. Undo, redo, fit and exit float over the canvas. The menus wait at the edges: **›** on the left slides in the sprite list (picking a sprite closes it again), **‹** on the right slides in the colours, palette and preview with the toolbar (Save, Download, Propose PR) and the tool options on top. Tap the dimmed canvas to close them. Pinch to zoom, two fingers to pan.
+
+<img src="docs/readme/phone.png" width="260" alt="spritewright fullscreen on a phone: the canvas and the tool rail, with the sprite list and colour panel behind the › ‹ handles">
 
 ## Canvas size
 
