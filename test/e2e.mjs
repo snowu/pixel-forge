@@ -1118,6 +1118,37 @@ section('vision check, reference layer, variants and history');
   await mp2.close(); await s4.close();
 }
 
+section('feedback: a prefilled GitHub issue and a screenshot of the editor');
+{
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const fp = await ctx.newPage(); const ferrors = []; fp.on('pageerror', (e) => ferrors.push(e.message));
+  await fp.goto(base + '?auth=off'); await fp.waitForSelector('.pf-item'); await fp.locator('.pf-item', { hasText: 'slime.png' }).click(); await fp.waitForTimeout(150);
+  await fp.click('.pf-feedback');
+  ok(await fp.locator('.pf-dlg-feedback').evaluate((d) => d.open), 'the Feedback button opens the feedback dialog');
+  ok(await fp.waitForSelector('.pf-fb-shot img', { timeout: 10000 }).then(() => true, () => false), 'a screenshot of the editor is shown');
+  const shot = await fp.locator('.pf-fb-shot img').evaluate((img) => ({ w: img.naturalWidth, h: img.naturalHeight, ew: document.querySelector('.pf').getBoundingClientRect().width }));
+  ok(shot.w >= shot.ew - 1 && shot.h > 300, 'the screenshot is the whole editor: ' + shot.w + 'x' + shot.h);
+  const facts = await fp.locator('.pf-fb-facts').textContent(); // folded away under <details>, so not innerText
+  ok(/local server/.test(facts) && /16×16/.test(facts) && /Browser/.test(facts), 'the details name the project kind, the sprite size and the browser');
+  ok(!/slime\.png/.test(facts), 'no file names from a project that is not a public GitHub repository');
+  await fp.locator('.pf-fb-text').fill('The fill tool leaks through diagonal gaps');
+  await fp.click('.pf-fb-kind [data-kind=idea]');
+  const href = new URL(await fp.getAttribute('.pf-fb-go', 'href'));
+  ok(href.pathname === '/snowu/spritewright/issues/new' && href.searchParams.get('template') === 'feedback.yml', 'the link opens the feedback issue form: ' + href.pathname);
+  ok(href.searchParams.get('title') === 'Idea: The fill tool leaks through diagonal gaps' && href.searchParams.get('what') === 'The fill tool leaks through diagonal gaps', 'what was typed is the title and the description');
+  ok(/\| Sprite \| 16×16/.test(href.searchParams.get('details')), 'the details go along as a table');
+  await ctx.route('https://github.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<p>issue form</p>' }));
+  const [tab] = await Promise.all([ctx.waitForEvent('page'), fp.click('.pf-fb-go')]);
+  await tab.waitForLoadState().catch(() => {}); ok(tab.url().startsWith('https://github.com/snowu/spritewright/issues/new?'), 'Open on GitHub opens the issue form in a new tab: ' + tab.url().slice(0, 60)); await tab.close(); await ctx.unroute('https://github.com/**');
+  ok((await fp.evaluate(async () => (await navigator.clipboard.read()).flatMap((i) => i.types))).includes('image/png'), 'and puts the screenshot on the clipboard to paste');
+  ok(/Screenshot copied/.test(await fp.locator('.pf-fb-note').innerText()) && !/blocked/.test(await fp.locator('.pf-fb-note').innerText()), 'it says so (and does not cry popup blocker)');
+  ok(ferrors.length === 0, 'no errors around feedback ' + ferrors.join('|'));
+  await fp.close();
+  const hp = await ctx.newPage(); await hp.goto('about:blank'); await hp.addScriptTag({ path: path.resolve('spritewright.js') });
+  ok(await hp.evaluate(() => { const a = document.createElement('div'), b = document.createElement('div'); document.body.append(a, b); window.Spritewright.mount(a, { feedback: false }); window.Spritewright.mount(b, { feedback: 'me/game' }); return a.querySelector('.pf-feedback').hidden && !b.querySelector('.pf-feedback').hidden; }), 'feedback: false hides the button, a repository keeps it');
+  await hp.close();
+}
+
 section('mobile');
 const phone = await browser.newContext({ viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 const mp = await phone.newPage(); const merrors = []; mp.on('pageerror', (e) => merrors.push(e.message));
@@ -1131,6 +1162,10 @@ await mp.touchscreen.tap(vb.x + (mS.ox + 10.5 * mS.zoom) / mS.k, vb.y + (mS.oy +
 const mpx = await mp.evaluate(() => document.getElementById('app').__pf.current.px[12 * 16 + 10]);
 ok(mpx !== 0, 'a tap draws a pixel');
 ok((await mp.locator('.pf-save').boundingBox()).height >= 36, 'buttons are touch sized');
+await mp.locator('.pf-feedback').tap(); await mp.waitForSelector('.pf-fb-shot img', { timeout: 10000 }).catch(() => {});
+const fbBox = await mp.locator('.pf-dlg-feedback').boundingBox(); ok(fbBox && fbBox.x >= 0 && fbBox.x + fbBox.width <= 391, 'the feedback dialog fits a phone');
+const mshot = await mp.locator('.pf-fb-shot img').evaluate((i) => i.naturalWidth / i.naturalHeight).catch(() => 0); ok(Math.abs(mshot - 390 / 800) < 0.1, 'on a phone the screenshot is what is on the screen, not the whole long page: ' + mshot.toFixed(2));
+await mp.screenshot({ path: path.join(os.tmpdir(), 'pf-mobile-feedback.png') }); await mp.keyboard.press('Escape');
 ok(merrors.length === 0, 'no errors on mobile ' + merrors.join('|'));
 await mp.screenshot({ path: path.join(os.tmpdir(), 'pf-mobile.png'), fullPage: true });
 await phone.close();

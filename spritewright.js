@@ -741,7 +741,7 @@
       if (rawUrl) { try { const r = await doFetch(`${rawBase.replace(/\/$/, '')}/${o.repo}/${sha}/${path.split('/').map(encodeURIComponent).join('/')}`); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* use the API */ } }
       const f = await call(`/repos/${o.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`); return b64ToBytes(f.content.replace(/\n/g, ''));
     };
-    return { kind: 'github', thumbs: true, history, readAt, sprites, hidden, palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
+    return { kind: 'github', public: info.private === false, thumbs: true, history, readAt, sprites, hidden, palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Edits are kept in this browser; Propose PR sends them back.',
       repo: { slug: o.repo, base: branch, defaultBranch: info.default_branch || null, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
@@ -1013,6 +1013,11 @@
 .pf dialog::backdrop{background:rgba(7,4,13,.78);backdrop-filter:blur(2px)}
 .pf-form{display:flex;flex-direction:column;gap:10px}.pf-log:empty{display:none}.pf-log{white-space:pre-wrap;color:var(--pf-muted);max-height:140px;overflow:auto;border:1px solid var(--pf-line);padding:6px;min-height:34px;background:#05030a}
 .pf-chg{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--pf-line)}.pf-chg canvas{width:40px;height:40px;image-rendering:pixelated;background:var(--pf-ckbg)}
+.pf a.pf-btn{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:4px 9px;border:1px solid var(--pf-accent);background:var(--pf-accent);color:var(--pf-on);font-weight:700;text-decoration:none;cursor:pointer}.pf a.pf-btn:hover{background:#cba8ff}.pf a.pf-btn:focus-visible{outline:1px solid var(--pf-accent);outline-offset:1px}
+.pf-fb-shot img{display:block;width:100%;max-height:30vh;object-fit:contain;background:#05030a;border:1px solid var(--pf-line)}
+.pf .pf-fb-text{width:100%;box-sizing:border-box;resize:vertical}
+.pf-fb-more{max-height:24vh;overflow:auto}.pf-fb-more summary{cursor:pointer}
+.pf-fb-facts{border-collapse:collapse;margin:4px 0;font-size:12px}.pf-fb-facts th{text-align:left;font-weight:normal;color:var(--pf-muted);padding:1px 12px 1px 0;white-space:nowrap;vertical-align:top}.pf-fb-facts td{padding:1px 0;word-break:break-word}
 .pf-keys{display:grid;grid-template-columns:1fr;gap:6px}.pf-key{display:grid;grid-template-columns:minmax(150px,auto) 1fr;gap:12px;align-items:baseline;padding:3px 0;border-bottom:1px dashed var(--pf-line)}.pf-key span{color:var(--pf-muted)}.pf-key kbd{justify-self:start}
 @media (max-width:1600px){.pf-grp-view button > span:not(.pf-bg-sw){display:none}.pf .pf-grp-view button{padding:4px 8px}}
 @media (max-width:1100px){.pf{--pf-cl:200px;--pf-cr:220px}.pf-bar button span,.pf-opt-end button span{display:none}}
@@ -1072,6 +1077,7 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   /* Interface icons: simple 24-unit line drawings (currentColor, so they follow the theme). */
   const ICONS = {
+    feedback: '<path d="M4 5h16v11h-9l-4.5 3.5V16H4z"/><path d="M8 9h8"/><path d="M8 12h5"/>',
     pen: '<path d="M4 20l1.2-4.2L16.4 4.6a2.1 2.1 0 0 1 3 3L8.2 18.8z"/><path d="M14.4 6.6l3 3"/>',
     erase: '<path d="M9 20h11"/><path d="M5.7 15.3l8.8-8.8a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 19H8.4l-2.7-2.7a1 1 0 0 1 0-1z"/><path d="M9.6 11.4l5 5"/>',
     fill: '<path d="M10.5 3.5l8.4 8.4-6.7 6.7a2 2 0 0 1-2.8 0l-5.6-5.6a2 2 0 0 1 0-2.8z"/><path d="M4.2 11.9H17"/><path d="M20 15.2s1.9 2.3 1.9 3.6a1.9 1.9 0 0 1-3.8 0c0-1.3 1.9-3.6 1.9-3.6z"/>',
@@ -1170,6 +1176,117 @@
   /** No project: sprites uploaded or drawn from scratch, living only in this browser until they are downloaded. */
   const browserSource = (id = '', name = '') => ({ kind: 'browser', id, name: name || (id ? 'Untitled' : 'Sketches'), thumbs: false, sprites: [], hidden: [], note: 'A project in this browser: nothing is linked, the sprites are kept here (they survive reloads). Download them when done.', async read(path) { throw new Error(path + ' only exists in this browser'); } });
 
+  /* ---------- feedback: a prefilled GitHub issue (.github/ISSUE_TEMPLATE/feedback.yml) ----------
+     No token and no server: GitHub's issues/new?template=…&field=… link opens the form already filled in, the person reads exactly
+     what will be posted and submits it themselves. A link cannot carry an image, so the editor copies its screenshot to the
+     clipboard for a paste into the form (and offers it as a download). */
+  const FEEDBACK_REPO = 'snowu/spritewright', FEEDBACK_TEMPLATE = 'feedback.yml', FEEDBACK_MAX_URL = 7500; // GitHub answers 414 a little past 8k characters
+  const FEEDBACK_KINDS = { bug: 'Bug', idea: 'Idea', other: 'Feedback' };
+  /** A starting title: the kind, then the first ten words (capped in characters too: a pasted run with no spaces is one word). */
+  function feedbackTitle(text, kind = 'bug', n = 10, max = 100) {
+    const words = String(text).trim().split(/\s+/).filter(Boolean), head = (FEEDBACK_KINDS[kind] || FEEDBACK_KINDS.other) + ': ';
+    if (!words.length) return '';
+    const t = head + (words.length > n ? words.slice(0, n).join(' ') + '…' : words.join(' '));
+    return t.length > max ? t.slice(0, max - 1) + '…' : t;
+  }
+  /** [label, value] rows as a markdown table, for the issue's "details" field. */
+  const feedbackDetails = (rows) => ['| | |', '|---|---|', ...rows.map(([k, v]) => `| ${k} | ${String(v).replace(/\|/g, '\\|').replace(/\n/g, ' ')} |`)].join('\n');
+  /** The prefilled "new issue" link. The description is trimmed (with a note) only if it alone would push the link past GitHub's
+      limit; the details stay whole, they are the part nobody can retype later. */
+  function feedbackUrl({ what = '', details = '', kind = 'bug', repo = FEEDBACK_REPO } = {}) {
+    what = String(what).trim(); const title = feedbackTitle(what, kind);
+    const build = (text, withBody) => {
+      const q = new URLSearchParams({ template: FEEDBACK_TEMPLATE });
+      if (title) q.set('title', title);
+      q.set('what', text); q.set('details', details);
+      // The same text as a plain body too: GitHub fills the form when the template exists on the default branch and ignores body;
+      // when it does not (a fork, a renamed file) it opens a blank issue with the body in it, so the report never arrives empty.
+      if (withBody) q.set('body', ['### What happened?', '', text, '', '### Screenshot', '', '_Paste it here (Ctrl+V)._', '', '### Details', '', details].join('\n'));
+      return `https://github.com/${repo}/issues/new?${q}`;
+    };
+    for (const withBody of [true, false]) {
+      let keep = what.length, url = build(what, withBody);
+      while (keep > 0 && url.length > FEEDBACK_MAX_URL) { keep = Math.floor(keep * 0.8); url = build(what.slice(0, keep) + '\n\n[…trimmed to fit the link; please paste the rest]', withBody); }
+      if (url.length <= FEEDBACK_MAX_URL || !withBody) return url;
+    }
+  }
+
+  /* ---------- screenshot of the editor, for feedback ----------
+     Browsers have no way to photograph their own page without a permission prompt, so the DOM is redrawn: cloned with every
+     element's computed style inlined (only what differs from both the browser default and the parent, to keep it small), each
+     canvas swapped for a picture of itself, form values and scroll positions carried over, then drawn through an SVG
+     foreignObject. Two steps: capture() is synchronous, so the picture is of the moment it is called (before a dialog opens);
+     the returned function rasterises it to a PNG blob, or null if the browser refuses (some taint the canvas). */
+  const UA_STYLE = new Map(); let uaFrame = null;
+  function uaStyle(el) {
+    const key = el.namespaceURI + ' ' + el.localName;
+    if (!UA_STYLE.has(key)) {
+      if (!uaFrame) { uaFrame = document.createElement('iframe'); uaFrame.setAttribute('aria-hidden', 'true'); uaFrame.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden'; document.body.appendChild(uaFrame); }
+      const d = uaFrame.contentDocument, e = d.createElementNS(el.namespaceURI, el.localName); (el.namespaceURI === 'http://www.w3.org/2000/svg' ? d.body.appendChild(d.createElementNS(e.namespaceURI, 'svg')) : d.body).appendChild(e);
+      const cs = uaFrame.contentWindow.getComputedStyle(e), o = {}; for (let i = 0; i < cs.length; i++) o[cs[i]] = cs.getPropertyValue(cs[i]);
+      UA_STYLE.set(key, o); e.remove();
+    }
+    return UA_STYLE.get(key);
+  }
+  function captureDom(rootEl) {
+    // What is on screen: on a phone the editor is taller than the window, and the part scrolled away is not what was seen.
+    const full = rootEl.getBoundingClientRect(), pr = Math.min(2, window.devicePixelRatio || 1);
+    const box = { left: Math.max(full.left, 0), top: Math.max(full.top, 0), right: Math.min(full.right, innerWidth), bottom: Math.min(full.bottom, innerHeight) };
+    if (box.right - box.left < 1 || box.bottom - box.top < 1) return null;
+    const seen = (r) => (!r.width && !r.height) || (r.right > box.left && r.left < box.right && r.bottom > box.top && r.top < box.bottom); // no box (display: contents): its children decide
+    const copy = (src, parentCs, shift) => {
+      if (src.nodeType === 3) return document.createTextNode(src.data);
+      if (src.nodeType !== 1 || src.localName === 'script' || src.localName === 'style' || src.localName === 'dialog') return null;
+      const cs = getComputedStyle(src); if (cs.display === 'none') return null;
+      const rect = src.getBoundingClientRect(), shown = seen(rect);
+      let out;
+      if (src.localName === 'canvas') { out = document.createElement('img'); try { if (shown && src.width && src.height) out.setAttribute('src', src.toDataURL()); } catch { /* tainted: leave it blank */ } }
+      else if (src.localName === 'img' && src.complete && src.naturalWidth) { out = document.createElement('img'); try { const c = document.createElement('canvas'); c.width = src.naturalWidth; c.height = src.naturalHeight; c.getContext('2d').drawImage(src, 0, 0); out.setAttribute('src', c.toDataURL()); } catch { /* cross-origin */ } }
+      else out = src.cloneNode(false);
+      for (const a of ['id', 'class', 'title', 'aria-label', 'data-tip']) if (out.removeAttribute) out.removeAttribute(a); // nothing in the picture refers to them
+      if (src.localName === 'input' && src.type !== 'file') { if (src.type === 'checkbox' || src.type === 'radio') { if (src.checked) out.setAttribute('checked', ''); } else out.setAttribute('value', src.value); }
+      if (src.localName === 'option' && src.selected) out.setAttribute('selected', '');
+      const inline = (st, ua, parent) => { const css = []; for (let i = 0; i < st.length; i++) { const p = st[i], v = st.getPropertyValue(p); if (v !== ua[p] || (parent && v !== parent.getPropertyValue(p))) css.push(`${p}:${v}`); } return css; };
+      const css = inline(cs, uaStyle(src), parentCs);
+      // Computed sizes are rounded to 3 decimals (179.40625px reads 179.406px): a hair too narrow, and text that just fitted
+      // wraps. The layout box has the exact size, so use that where it maps straight onto width and height.
+      if (src.namespaceURI === 'http://www.w3.org/1999/xhtml' && cs.display !== 'inline' && cs.transform === 'none' && /px$/.test(cs.width)) {
+        const n = (v) => parseFloat(v) || 0, bb = cs.boxSizing === 'border-box';
+        const w = rect.width - (bb ? 0 : n(cs.paddingLeft) + n(cs.paddingRight) + n(cs.borderLeftWidth) + n(cs.borderRightWidth)), h = rect.height - (bb ? 0 : n(cs.paddingTop) + n(cs.paddingBottom) + n(cs.borderTopWidth) + n(cs.borderBottomWidth));
+        css.push(`box-sizing:${cs.boxSizing}`, `width:${w}px`, `height:${h}px`); // box-sizing too: the picture's document has its own defaults for form controls
+      }
+      if (shift) css.push(`translate:${-shift.x}px ${-shift.y}px`); // the parent was scrolled: an SVG picture cannot scroll, so move its children instead
+      if (src === rootEl) css.push('margin:0');
+      out.setAttribute('style', css.join(';'));
+      if (src.localName === 'textarea') out.textContent = src.value;
+      else if (src.localName !== 'canvas' && src.localName !== 'img' && (shown || src.namespaceURI === 'http://www.w3.org/2000/svg')) {
+        const sc = src.scrollTop || src.scrollLeft ? { x: src.scrollLeft, y: src.scrollTop } : null;
+        for (const ch of src.childNodes) { const c = copy(ch, cs, sc && ch.nodeType === 1 ? sc : null); if (c) out.appendChild(c); }
+        for (const at of src.namespaceURI === 'http://www.w3.org/1999/xhtml' ? ['::before', '::after'] : []) { // generated content such as the "//" before panel titles
+          const ps = getComputedStyle(src, at); if (!ps.content || ps.content === 'none' || ps.content === 'normal') continue;
+          const span = document.createElement('span'), m = /^"((?:[^"\\]|\\.)*)"$/.exec(ps.content); span.textContent = m ? m[1].replace(/\\(.)/g, '$1') : '';
+          span.setAttribute('style', inline(ps, uaStyle(span), cs).filter((d) => !d.startsWith('content:')).join(';')); at === '::before' ? out.prepend(span) : out.appendChild(span);
+        }
+      }
+      return out;
+    };
+    let tree;
+    try { tree = copy(rootEl, rootEl.parentElement ? getComputedStyle(rootEl.parentElement) : null, null); } catch (err) { console.warn('spritewright: screenshot failed', err); return null; }
+    if (!tree) return null;
+    tree.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    const noBars = document.createElement('style'); noBars.textContent = '*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}'; tree.prepend(noBars); // the picture cannot scroll anyway
+    const w = Math.round(box.right - box.left), h = Math.round(box.bottom - box.top), bg = getComputedStyle(document.body).backgroundColor;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${box.left - full.left} ${box.top - full.top} ${w} ${h}"><foreignObject x="0" y="0" width="${full.width}" height="${full.height}">${new XMLSerializer().serializeToString(tree)}</foreignObject></svg>`;
+    return async () => {
+      try {
+        const img = new Image(); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); await img.decode();
+        const c = document.createElement('canvas'); c.width = Math.round(w * pr); c.height = Math.round(h * pr);
+        const k = c.getContext('2d'); k.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' ? bg : '#07040d'; k.fillRect(0, 0, c.width, c.height); k.drawImage(img, 0, 0, c.width, c.height);
+        return await new Promise((res) => { try { c.toBlob(res, 'image/png'); } catch { res(null); } });
+      } catch (err) { console.warn('spritewright: screenshot failed', err); return null; }
+    };
+  }
+
   function mount(host, options = {}) {
     if (!document.getElementById('pf-vision-defs')) { // colour-blind simulations (Machado, Oliveira & Fernandes 2009, full severity), used by CSS filters
       const m = { protan: '0.152286 1.052583 -0.204868 0 0 0.114503 0.786281 0.099216 0 0 -0.003882 -0.048116 1.051998 0 0', deutan: '0.367322 0.860646 -0.227968 0 0 0.280085 0.672501 0.047413 0 0 -0.011820 0.042940 0.968881 0 0', tritan: '1.255528 -0.076749 -0.178779 0 0 -0.078411 0.930809 0.147602 0 0 0.004733 0.691367 0.303900 0 0' };
@@ -1196,7 +1313,7 @@
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
           <span class="pf-grp pf-grp-fs"><button class="pf-fs-go" title="Fullscreen: canvas and tools only, menus slide in from the sides">${icon('fullscreen')}<span>Fullscreen</span></button></span>
           <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
-          <span class="pf-grp pf-grp-end"><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
+          <span class="pf-grp pf-grp-end"><button class="pf-feedback" title="Send feedback or report a bug: opens a GitHub issue with a screenshot of the editor">${icon('feedback')}<span>Feedback</span></button><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
         <div class="pf-opts">
           <span class="pf-opt" data-for="pen erase shade line rect ellipse"><span class="pf-ol">size</span><input type="range" class="pf-size" min="1" max="16" value="1" aria-label="Brush size"><b class="pf-sizev">1</b>
@@ -1293,6 +1410,14 @@
         <div class="pf-v-swap" hidden><div class="pf-v-cols"></div></div>
         <div class="pf-v-preview"></div>
         <div class="pf-row"><button type="button" class="primary pf-v-go">Create</button><button value="cancel">Cancel</button></div></form></dialog>
+      <dialog class="pf-dlg-feedback"><form method="dialog" class="pf-form">
+        <div class="pf-dlg-head"><h4>Send feedback</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <span class="pf-seg pf-fb-kind" role="group" aria-label="What kind of feedback">${Object.entries(FEEDBACK_KINDS).map(([k, n], i) => `<button type="button" data-kind="${k}"${i ? '' : ' class="on"'}>${n === 'Feedback' ? 'other' : n.toLowerCase()}</button>`).join('')}</span>
+        <div class="pf-fb-shot"><span class="pf-note">Taking a screenshot…</span></div>
+        <textarea class="pf-fb-text" rows="5" maxlength="4000" aria-label="Your feedback"></textarea>
+        <details class="pf-fb-more"><summary class="pf-note">Details that will be attached</summary><table class="pf-fb-facts"></table></details>
+        <div class="pf-row"><a class="pf-btn primary pf-fb-go" target="_blank" rel="noopener">Open on GitHub</a><button type="button" class="pf-fb-copy" disabled>Copy screenshot</button><button type="button" class="pf-fb-save" disabled>Save screenshot</button></div>
+        <div class="pf-note pf-fb-note">Opens a GitHub issue in a new tab with all of this filled in, and copies the screenshot so you can paste it there (Ctrl+V). You need a GitHub account, and issues are public. Your sprites never leave this browser.</div></form></dialog>
       <dialog class="pf-dlg-keys"><form method="dialog" class="pf-form"><h4>Keyboard shortcuts</h4><div class="pf-keys"></div><div class="pf-row"><button value="cancel" class="primary">Close</button></div></form></dialog>
       <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><div class="pf-dlg-head"><h4>New sprite</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
         <div class="pf-n-line"><span class="pf-seg pf-n-quick" role="group" aria-label="Common sizes"></span><span class="pf-n-or">or</span><input type="number" class="pf-nw" min="1" max="1024" value="16" aria-label="Width" title="Width"><span class="pf-n-or">×</span><input type="number" class="pf-nh" min="1" max="1024" value="16" aria-label="Height" title="Height"></div>
@@ -2386,6 +2511,68 @@
     $('.pf-tile').onclick = (e) => { S.tile = !S.tile; e.currentTarget.classList.toggle('on', S.tile); if (S.tile && !S.touched && doc()) { const d = doc(), r = stage.getBoundingClientRect(), dpr = window.devicePixelRatio || 1; S.zoom = Math.max(1, Math.min(64, Math.floor(Math.min((r.width * dpr - 40) / (d.w * 3), (r.height * dpr - 40) / (d.h * 3))))); S.ox = Math.round((view.width - d.w * S.zoom) / 2); S.oy = Math.round((view.height - d.h * S.zoom) / 2); } else if (!S.tile && !S.touched) fit(); render(); status(); };
     $('.pf-onion').onclick = (e) => { S.onion = !S.onion; e.currentTarget.classList.toggle('on', S.onion); const d = doc(), f = frameSize(d); if (S.onion && d && !(f.w < d.w || f.h < d.h) && !famFor(d)) note('Onion skin needs animation frames: a sprite sheet (set the frame size under Preview) or numbered files like walk_0, walk_1.'); render(); };
     $('.pf-help').onclick = () => $('.pf-dlg-keys').showModal();
+    /* feedback: a prefilled GitHub issue plus a screenshot of the editor as it was when the dialog opened (see feedbackUrl) */
+    const fbRepo = O.feedback === false ? null : typeof O.feedback === 'string' ? O.feedback : (O.feedback && O.feedback.repo) || FEEDBACK_REPO;
+    let fbKind = 'bug', fbShot = null, fbDetails = '', fbCopied = false;
+    const FB_HINT = { bug: 'What happened, and what did you expect instead?', idea: 'What would make spritewright better for you?', other: 'Anything you would like to tell us.' };
+    function feedbackRows() {
+      const d = doc(), src = S.src, pub = !!(src && src.kind === 'github' && src.public), f = d && frameSize(d), fam = d && famFor(d);
+      const project = !src ? 'none' : src.kind === 'github' ? (pub ? `${src.repo.slug} @ ${src.branch}` : 'GitHub repository (private or unknown, name left out)') : ({ folder: 'folder on this computer', browser: 'project in this browser', server: 'local server (npx spritewright)', static: 'static manifest' }[src.kind] || src.kind);
+      const changed = [...S.docs.values()].filter((x) => x.changed).length;
+      const rows = [['Page', location.hostname === 'snowu.github.io' ? 'hosted (snowu.github.io)' : src && src.kind === 'server' ? 'local server' : 'self-hosted or embedded'], ['Project', project], ['Sprites', `${S.sprites.length} listed · ${changed} changed`]];
+      if (d) rows.push(['Sprite', `${pub ? d.path + ' · ' : ''}${d.w}×${d.h}${f && (f.w < d.w || f.h < d.h) ? ` · frames ${f.w}×${f.h}` : ''}${fam ? ' · in a family' : ''}${d.changed ? ` · ${d.changedPixels()} px changed` : ''}`]);
+      rows.push(['Tool', `${S.tool} · size ${S.size} ${S.shape}${S.pattern !== 'solid' ? ' · ' + S.pattern : ''}${S.mx || S.my ? ' · mirror ' + (S.mx ? 'X' : '') + (S.my ? 'Y' : '') : ''}${S.sel ? ` · selection ${S.sel.w}×${S.sel.h}` : ''}`],
+        ['View', [`zoom ${S.zoom}×`, S.grid && 'grid', S.tile && 'tile', S.onion && 'onion skin', S.ctx && 'context', S.vision !== 'normal' && 'vision ' + S.vision, 'background ' + S.bg, root.classList.contains('pf-fs') && 'fullscreen'].filter(Boolean).join(' · ')],
+        ['Signed in', S.auth.token ? 'yes' : 'no'], ['Kept in browser', keeping() ? 'yes' : 'no (storage blocked)']);
+      if (S.notice) rows.push(['Last message', S.notice]);
+      const standalone = typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches;
+      rows.push(['Screen', `${innerWidth}×${innerHeight} @${window.devicePixelRatio || 1}x${navigator.maxTouchPoints > 0 ? ' · touch' : ''}${standalone ? ' · installed app' : ''}`], ['Browser', navigator.userAgent]);
+      return rows;
+    }
+    const fbLink = () => { $('.pf-fb-go').href = feedbackUrl({ what: $('.pf-fb-text').value, details: fbDetails, kind: fbKind, repo: fbRepo }); };
+    /** Chrome and Safari take a promise here, which keeps the write inside the click that asked for it. */
+    async function fbCopy() {
+      try {
+        if (!fbShot || !navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === 'undefined') return false;
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': fbShot.then((b) => b || Promise.reject(new Error('no screenshot'))) })]); return true;
+      } catch { return false; }
+    }
+    const fbNote = (ok) => { $('.pf-fb-note').textContent = ok ? 'Screenshot copied: paste it into the issue on GitHub with Ctrl+V (⌘V).' : 'Could not copy the screenshot: use Save screenshot and attach the file to the issue.'; };
+    function openFeedback() {
+      if (!fbRepo) return;
+      const capture = captureDom(root); // before the dialog opens, so the picture is of the editor, not of the form
+      fbShot = capture ? capture().then(async (b) => b || (doc() ? await toBlob(view).catch(() => null) : null)) : Promise.resolve(null); // a browser that will not draw the DOM: the sprite canvas alone
+      const rows = feedbackRows(); fbDetails = feedbackDetails(rows);
+      $('.pf-fb-facts').innerHTML = '<tbody>' + rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('') + '</tbody>';
+      const shot = $('.pf-fb-shot'), old = shot.querySelector('img'); if (old) URL.revokeObjectURL(old.src);
+      shot.innerHTML = '<span class="pf-note">Taking a screenshot…</span>'; $('.pf-fb-copy').disabled = $('.pf-fb-save').disabled = true;
+      const mine = fbShot;
+      fbShot.then((b) => {
+        if (mine !== fbShot) return;
+        if (!b) { shot.innerHTML = '<span class="pf-note">The screenshot did not work in this browser: take one yourself and paste it into the issue.</span>'; return; }
+        const img = document.createElement('img'); img.alt = 'Screenshot that goes with the issue'; img.src = URL.createObjectURL(b); shot.replaceChildren(img);
+        $('.pf-fb-copy').disabled = $('.pf-fb-save').disabled = false;
+      });
+      $('.pf-fb-note').textContent = 'Opens a GitHub issue in a new tab with all of this filled in, and copies the screenshot so you can paste it there (Ctrl+V). You need a GitHub account, and issues are public. Your sprites never leave this browser.';
+      fbCopied = false; fbLink(); $('.pf-dlg-feedback').showModal(); $('.pf-fb-text').focus();
+    }
+    $('.pf-feedback').hidden = !fbRepo;
+    $('.pf-feedback').onclick = openFeedback;
+    $$('.pf-fb-kind button').forEach((b) => (b.onclick = () => { fbKind = b.dataset.kind; segOn('.pf-fb-kind', b); $('.pf-fb-text').placeholder = FB_HINT[fbKind]; fbLink(); }));
+    $('.pf-fb-text').placeholder = FB_HINT.bug; $('.pf-fb-text').oninput = fbLink;
+    // Copy first, then open: opening the tab first moves focus away, and a clipboard write from an unfocused page is refused,
+    // silently. The click's user activation outlives the copy, so the tab still opens as the person's own action.
+    $('.pf-fb-go').onclick = (e) => {
+      if (fbCopied) return; // already on the clipboard: a plain link again
+      e.preventDefault(); const href = $('.pf-fb-go').href;
+      fbCopy().then((ok) => {
+        fbCopied = true; fbNote(ok); setTimeout(() => (fbCopied = false), 3000);
+        const w = window.open(href, '_blank'); // not 'noopener' in the features: with it, window.open returns null even when the tab opened
+        if (w) w.opener = null; else $('.pf-fb-note').textContent += ' Your browser blocked the new tab: press Open on GitHub again.';
+      });
+    };
+    $('.pf-fb-copy').onclick = () => fbCopy().then(fbNote);
+    $('.pf-fb-save').onclick = () => fbShot && fbShot.then((b) => { if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `spritewright-feedback-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); });
     /* vision check: how the art reads by value alone, and to players with the three main kinds of colour blindness */
     const VISION = [['normal', ''], ['grey', 'values (greyscale)'], ['protan', 'protanopia · red-blind'], ['deutan', 'deuteranopia · green-blind'], ['tritan', 'tritanopia · blue-blind']];
     function setVision(mode) {
@@ -2770,5 +2957,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });
