@@ -56,7 +56,8 @@ export function createServer({ root, port = 5173, host = '127.0.0.1', config } =
           return send(res, 200, JSON.stringify(list), MIME['.json']);
         }
         const sha = url.searchParams.get('sha') || '';
-        if (!/^[0-9a-f]{7,40}$/.test(sha)) return send(res, 400, 'Bad commit');
+        if (!/^([0-9a-f]{7,40}|HEAD)$/.test(sha)) return send(res, 400, 'Bad commit'); // HEAD: the file as committed on the checked-out branch
+        try { git(['rev-parse', '--verify', '-q', 'HEAD']); } catch { return send(res, 409, 'Not a git repository (or nothing committed yet)'); }
         try { return send(res, 200, git(['show', `${sha}:./${rel}`]), MIME['.png']); } catch { return send(res, 404, 'Not in that commit'); }
       }
       if (p.startsWith('/project/')) {
