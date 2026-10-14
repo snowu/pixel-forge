@@ -127,6 +127,8 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
 - **History** panel (GitHub repositories and the local server): earlier versions of the open sprite from git, with thumbnails; pick one and **Restore** it as an edit you can undo.
 - **Make variant…** (Image panel): a recoloured copy of the sprite and its whole family as new files, e.g. `king_0`, `king_atk` → `king_dark_0`, `king_dark_atk`. Shift hue, saturation and brightness (keeping near-black outlines), or swap colours one by one, with a live preview.
 
+**Notes** (right column): **+ note**, then click a pixel, pins a numbered note to it, for a reviewer or for yourself (“left eye one pixel lower?”). Notes are kept in the browser per sprite, and go into the description of your next pull request as a *Notes* section with their coordinates; then they clear.
+
 ## Art check for pull requests
 
 `spritewright check [dir] [--since <git ref>]` reads every sprite (or only the ones changed since the ref) and reports them in a table. Unreadable or oversized PNGs are errors (exit code 1). These are warnings, which fail the check only with `--strict`:
