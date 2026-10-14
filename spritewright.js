@@ -3223,8 +3223,7 @@
     $('.pf-flipv').onclick = () => transformSel((px, w, h) => ({ px: flipV(px, w, h), w, h })) || edit((d) => { d.px = flipV(d.px, d.w, d.h); });
     /* Rotate by any angle (RotSprite): the selection grows to fit what it becomes; the whole image turns round its centre
        inside the same canvas (corners that leave it are cut). Previewed live. */
-    function rotTarget() { const d = doc(); if (!d) return null; if (S.float) return { px: S.float.px, w: S.float.w, h: S.float.h, sel: true }; if (S.sel) return { px: copySelPxR(d), w: S.sel.w, h: S.sel.h, sel: true }; return { px: d.px, w: d.w, h: d.h, sel: false }; }
-    const copySelPxR = (d) => copyRect(d.px, d.w, d.h, S.sel);
+    function rotTarget() { const d = doc(); if (!d) return null; if (S.float) return { px: S.float.px, w: S.float.w, h: S.float.h, sel: true }; if (S.sel) return { px: copySelPx(d), w: S.sel.w, h: S.sel.h, sel: true }; return { px: d.px, w: d.w, h: d.h, sel: false }; } // a lasso or wand selection previews just its pixels
     function rotPreview() {
       const t = rotTarget(); if (!t) return; const a = +$('.pf-rot-n').value || 0, r = t.sel ? rotSprite(t.px, t.w, t.h, a) : rotSprite(t.px, t.w, t.h, a, t.w, t.h);
       const c = $('.pf-rot-prev'), sc = Math.max(1, Math.min(8, Math.floor(240 / Math.max(r.w, r.h)))); drawPx(c, { w: r.w, h: r.h, imageData: () => new ImageData(new Uint8ClampedArray(r.px.buffer.slice(0)), r.w, r.h) }, sc);
