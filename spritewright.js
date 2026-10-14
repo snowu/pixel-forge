@@ -413,27 +413,95 @@
   }
 
   /* =====================================================================================================
+     Layers. A sprite can be drawn in layers (line art, colour, shading); the game only ever sees them flattened, in the
+     sprite's own PNG. The layers go next to it in name.layers.png: the layers stacked top to bottom (the first is the bottom
+     layer) and their names, visibility and opacity in a tEXt chunk, so they travel with the PNG through git and pull requests.
+     ===================================================================================================== */
+  const LAYERS_KEY = 'spritewright-layers';
+  const layersPath = (path) => path.replace(/(\.png)?$/i, '.layers.png');
+  const isLayersFile = (path) => /\.layers\.png$/i.test(path);
+  const layerOf = (l) => ({ name: l.name, visible: l.visible !== false, opacity: l.opacity == null ? 100 : Math.max(0, Math.min(100, Math.round(l.opacity))), px: l.px });
+  /** The layers drawn bottom to top (hidden ones skipped, opacity applied) into one image: straight-alpha "normal" blending. */
+  function flattenLayers(layers, n) {
+    const out = new Uint32Array(n);
+    for (const l of layers) {
+      if (l.visible === false || l.opacity === 0) continue;
+      const op = (l.opacity == null ? 100 : l.opacity) / 100, src = l.px;
+      for (let i = 0; i < n; i++) {
+        const s = src[i], sa = ((s >>> 24) * op) / 255; if (!sa) continue;
+        const d = out[i], da = (d >>> 24) / 255;
+        if (sa === 1 || !da) { out[i] = sa === 1 ? s : ((Math.round(sa * 255) << 24) | (s & 0xffffff)) >>> 0; continue; }
+        const a = sa + da * (1 - sa), mix = (k) => Math.round((((s >>> k) & 255) * sa + ((d >>> k) & 255) * da * (1 - sa)) / a);
+        out[i] = ((Math.round(a * 255) << 24) | (mix(16) << 16) | (mix(8) << 8) | mix(0)) >>> 0;
+      }
+    }
+    return out;
+  }
+  /** Layers to the sidecar image: one w×h band per layer, bottom layer first, and what the bands are in the text. */
+  function packLayers(layers, w, h) {
+    const px = new Uint32Array(w * h * layers.length); layers.forEach((l, k) => px.set(l.px, k * w * h));
+    const meta = { version: 1, layers: layers.map((l) => ({ name: l.name, ...(l.visible === false ? { visible: false } : {}), ...(l.opacity != null && l.opacity !== 100 ? { opacity: l.opacity } : {}) })) };
+    return { w, h: h * layers.length, px, text: { [LAYERS_KEY]: JSON.stringify(meta).replace(/[\u0080-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) } };
+  }
+  /** The sidecar image back to layers of w×h, or null when it is not one (no text, or bands that do not fit). */
+  function unpackLayers(img, w, h) {
+    let meta; try { meta = JSON.parse((img.text || {})[LAYERS_KEY]); } catch { return null; }
+    const list = meta && Array.isArray(meta.layers) ? meta.layers : null;
+    if (!list || !list.length || img.w !== w || img.h !== h * list.length) return null;
+    return list.map((l, k) => layerOf({ name: String(l.name || 'Layer ' + (k + 1)), visible: l.visible, opacity: l.opacity, px: img.px.slice(k * w * h, (k + 1) * w * h) }));
+  }
+  /** A short fingerprint of layers (names, visibility, opacity and pixels), to tell whether they changed. */
+  function layersSig(layers) {
+    if (layers.length < 2) return '';
+    let hsh = 0x811c9dc5; const mixIn = (v) => { hsh = Math.imul(hsh ^ v, 0x01000193) >>> 0; };
+    for (const l of layers) { for (const c of l.name) mixIn(c.charCodeAt(0)); mixIn(l.visible === false ? 1 : 2); mixIn(l.opacity == null ? 100 : l.opacity); for (let i = 0; i < l.px.length; i++) mixIn(l.px[i]); }
+    return layers.length + ':' + hsh.toString(36);
+  }
+  const copyLayers = (layers) => layers.map((l) => ({ ...l, px: l.px.slice() }));
+
+  /* =====================================================================================================
      A document is one image being edited, with undo history.
      base    = the pixels when this session loaded it (what a pull request is measured against)
      saved   = the pixels at the last save (what "unsaved changes" is measured against)
      ===================================================================================================== */
+  /* layers  = bottom first; px is the current layer's pixels (what every tool draws on), flat() what the file holds.
+     A sprite with one plain layer is exactly its PNG: flat() is px itself. */
   class Doc {
     constructor(path, w, h, px, extra = {}) {
-      this.path = path; this.w = w; this.h = h; this.px = px;
-      this.base = { w, h, px: px.slice() }; this.saved = { w, h, px: px.slice() };
+      this.path = path; this.w = w; this.h = h; this.layers = [layerOf({ name: 'Layer 1', px })]; this.active = 0;
+      this.base = { w, h, px: px.slice(), sig: '' }; this.saved = { w, h, px: px.slice(), sig: '' };
       this.undo = []; this.redo = []; this.local = !!extra.local; this.frames = extra.frames || null; this.isNew = !!extra.isNew;
-      if (this.isNew) this.base = { w, h, px: new Uint32Array(w * h) }; // a new file: every pixel counts as a change
+      if (this.isNew) this.base = { w, h, px: new Uint32Array(w * h), sig: '' }; // a new file: every pixel counts as a change
     }
-    snapshot() { this.undo.push({ w: this.w, h: this.h, px: this.px.slice() }); if (this.undo.length > 100) this.undo.shift(); this.redo.length = 0; }
-    swap(from, to) { to.push({ w: this.w, h: this.h, px: this.px.slice() }); const s = from.pop(); this.w = s.w; this.h = s.h; this.px = s.px; }
+    get px() { return this.layers[this.active].px; }
+    set px(v) { this.layers[this.active].px = v; }
+    get layered() { return this.layers.length > 1; }
+    get layer() { return this.layers[this.active]; }
+    flat() { const ls = this.layers; return ls.length === 1 && ls[0].visible && ls[0].opacity === 100 ? ls[0].px : flattenLayers(ls, this.w * this.h); }
+    sig() { return layersSig(this.layers); }
+    /** Replace every layer by one image (a version from history, the original). */
+    setFlat(w, h, px) { this.w = w; this.h = h; this.layers = [layerOf({ name: 'Layer 1', px })]; this.active = 0; }
+    setLayers(layers, active = layers.length - 1) { this.layers = layers.map(layerOf); this.active = Math.max(0, Math.min(this.layers.length - 1, active)); }
+    /** Run an edit of the whole image (resize, flip, rotate…) on every layer: fn(doc) changes px, w and h as for one image. */
+    allLayers(fn) {
+      const a = this.active, w = this.w, h = this.h; let W = w, H = h;
+      for (let k = 0; k < this.layers.length; k++) { this.active = k; this.w = w; this.h = h; fn(this); W = this.w; H = this.h; }
+      this.active = a; this.w = W; this.h = H;
+    }
+    state() { const layers = copyLayers(this.layers); return { w: this.w, h: this.h, active: this.active, layers, px: layers[this.active].px }; }
+    restore(s) { this.w = s.w; this.h = s.h; this.layers = s.layers; this.active = s.active; }
+    snapshot() { this.undo.push(this.state()); if (this.undo.length > 100) this.undo.shift(); this.redo.length = 0; }
+    swap(from, to) { to.push(this.state()); this.restore(from.pop()); }
     undoOnce() { if (!this.undo.length) return false; this.swap(this.undo, this.redo); return true; }
     redoOnce() { if (!this.redo.length) return false; this.swap(this.redo, this.undo); return true; }
-    same(ref) { return ref.w === this.w && ref.h === this.h && countDiff(ref.px, this.px) === 0; }
+    same(ref) { return ref.w === this.w && ref.h === this.h && countDiff(ref.px, this.flat()) === 0 && (ref.sig || '') === this.sig(); }
     get unsaved() { return !this.same(this.saved); }
     get changed() { return !this.same(this.base); }
-    markSaved() { this.saved = { w: this.w, h: this.h, px: this.px.slice() }; }
-    changedPixels() { return this.base.w === this.w && this.base.h === this.h ? countDiff(this.base.px, this.px) : this.w * this.h; }
-    imageData() { return new ImageData(new Uint8ClampedArray(this.px.buffer.slice(0)), this.w, this.h); }
+    /** The state to compare against later (base, saved): the flat pixels, and the layers when there are several. */
+    mark() { return { w: this.w, h: this.h, px: this.flat().slice(), sig: this.sig(), ...(this.layered ? { layers: copyLayers(this.layers) } : {}) }; }
+    markSaved() { this.saved = this.mark(); }
+    changedPixels() { return this.base.w === this.w && this.base.h === this.h ? countDiff(this.base.px, this.flat()) : this.w * this.h; }
+    imageData() { return new ImageData(new Uint8ClampedArray(this.flat().buffer.slice(0)), this.w, this.h); }
   }
 
   /* =====================================================================================================
@@ -493,8 +561,8 @@
     };
     const tree = [];
     for (const f of o.files) {
-      log('Uploading ' + f.path + '…');
-      tree.push({ path: (o.prefix || '') + f.path, mode: '100644', type: 'blob', sha: await upload(f.blob) });
+      log((f.delete ? 'Removing ' : 'Uploading ') + f.path + '…');
+      tree.push({ path: (o.prefix || '') + f.path, mode: '100644', type: 'blob', sha: f.delete ? null : await upload(f.blob) }); // sha null deletes the file
     }
     const branch = o.branch || 'art/update-' + Date.now().toString(36);
     /* Upscaled previews for the description (GitHub smooths small images it scales up; these need no scaling).
@@ -609,8 +677,8 @@
     };
     const tree = [];
     for (const f of o.files) {
-      log('Uploading ' + f.path + '…');
-      tree.push({ path: (o.prefix || '') + f.path, mode: '100644', type: 'blob', sha: await upload(f.blob) });
+      log((f.delete ? 'Removing ' : 'Uploading ') + f.path + '…');
+      tree.push({ path: (o.prefix || '') + f.path, mode: '100644', type: 'blob', sha: f.delete ? null : await upload(f.blob) }); // sha null deletes the file
     }
     log('Creating the commit…');
     const newTree = await call('POST', '/repos/' + headRepo + '/git/trees', { base_tree: baseTree, tree });
@@ -659,11 +727,11 @@
   async function decodePngBytes(u8) {
     if (u8.length < 33 || PNG_SIG.some((v, i) => u8[i] !== v)) throw new Error('not a PNG file');
     const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
-    let off = 8, ihdr = null, plte = null, trns = null; const idat = [];
+    let off = 8, ihdr = null, plte = null, trns = null; const idat = [], text = {};
     while (off + 12 <= u8.length) {
       const len = dv.getUint32(off), type = String.fromCharCode(u8[off + 4], u8[off + 5], u8[off + 6], u8[off + 7]), data = u8.subarray(off + 8, off + 8 + len);
       if (type === 'IHDR') ihdr = { w: dv.getUint32(off + 8), h: dv.getUint32(off + 12), depth: data[8], ct: data[9], interlace: data[12] };
-      else if (type === 'PLTE') plte = data; else if (type === 'tRNS') trns = data; else if (type === 'IDAT') idat.push(data); else if (type === 'IEND') break;
+      else if (type === 'PLTE') plte = data; else if (type === 'tRNS') trns = data; else if (type === 'IDAT') idat.push(data); else if (type === 'tEXt') { const z = data.indexOf(0); if (z > 0) { const l1 = new TextDecoder('latin1'); text[l1.decode(data.subarray(0, z))] = l1.decode(data.subarray(z + 1)); } } else if (type === 'IEND') break;
       off += 12 + len;
     }
     if (!ihdr || !idat.length) throw new Error('damaged PNG');
@@ -698,11 +766,11 @@
       else { r = sample(y, x, 0); g = sample(y, x, 1); b = sample(y, x, 2); if (ct === 6) a = sample(y, x, 3); else if (key && depth === 8 && r === key[0] && g === key[1] && b === key[2]) a = 0; }
       rgba[i] = r; rgba[i + 1] = g; rgba[i + 2] = b; rgba[i + 3] = a;
     }
-    return { w, h, px: new Uint32Array(rgba.buffer) };
+    return { w, h, px: new Uint32Array(rgba.buffer), text };
   }
 
-  /** { w, h, px } to PNG bytes: 8-bit RGBA, no ancillary chunks. scale > 1 repeats each pixel (nearest neighbour). */
-  async function encodePngBytes(w, h, px, scale = 1) {
+  /** { w, h, px } to PNG bytes: 8-bit RGBA. scale > 1 repeats each pixel (nearest neighbour). text: { keyword: Latin-1 string } as tEXt chunks. */
+  async function encodePngBytes(w, h, px, scale = 1, text = null) {
     if (scale > 1) { const W = w * scale, H = h * scale, out = new Uint32Array(W * H); for (let y = 0; y < H; y++) { const sy = ((y / scale) | 0) * w; for (let x = 0; x < W; x++) out[y * W + x] = px[sy + ((x / scale) | 0)]; } px = out; w = W; h = H; }
     const rgba = new Uint8Array(px.buffer, px.byteOffset, px.length * 4), row = w * 4, raw = new Uint8Array((row + 1) * h);
     for (let y = 0; y < h; y++) raw.set(rgba.subarray(y * row, (y + 1) * row), y * (row + 1) + 1);
@@ -712,7 +780,10 @@
     chunk(8, 'IHDR', 13); dv.setUint32(16, w); dv.setUint32(20, h); out[24] = 8; out[25] = 6; out[26] = out[27] = out[28] = 0; dv.setUint32(29, crc32(out, 12, 29));
     chunk(33, 'IDAT', z.length); out.set(z, 41); dv.setUint32(41 + z.length, crc32(out, 37, 41 + z.length));
     const e = 45 + z.length; chunk(e, 'IEND', 0); dv.setUint32(e + 8, crc32(out, e + 4, e + 8));
-    return out;
+    if (!text) return out;
+    const parts = Object.entries(text).map(([k, v]) => { const b = Uint8Array.from(k + '\0' + v, (c) => c.charCodeAt(0) & 255), t = new Uint8Array(12 + b.length), tv = new DataView(t.buffer); tv.setUint32(0, b.length); t.set([116, 69, 88, 116], 4); t.set(b, 8); tv.setUint32(8 + b.length, crc32(t, 4, 8 + b.length)); return t; });
+    const all = new Uint8Array(out.length + parts.reduce((n, t) => n + t.length, 0)); all.set(out.subarray(0, e)); let at = e; for (const t of parts) { all.set(t, at); at += t.length; } all.set(out.subarray(e), at);
+    return all;
   }
 
   /** A .zip of files ({ name, bytes }), stored without compression (PNGs are compressed already). Folders in names are kept. */
@@ -867,7 +938,8 @@
     const readAt = async (path, sha) => { const r = await fetch(`api/file-at?path=${encodeURIComponent(path)}&sha=${sha}`); if (!r.ok) throw new Error('not in that commit'); return new Uint8Array(await r.arrayBuffer()); };
     return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, indexed: !!mf.indexed, maxColors: mf.maxColors || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
-      async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
+      async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); },
+      async remove(path) { const r = await fetch(url(path), { method: 'DELETE', headers: { 'x-spritewright': token || '' } }); if (!r.ok && r.status !== 404) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
   }
 
   /** A GitHub repository, read through the REST API (a token is only needed for private repos and for pull requests). */
@@ -945,6 +1017,10 @@
       async write(path, bytes) {
         const parts = path.split('/'); let dir = root; for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
         const h = await dir.getFileHandle(parts.at(-1), { create: true }), w = await h.createWritable(); await w.write(bytes); await w.close(); files.set(path, h);
+      },
+      async remove(path) { // only ever a layers file, after its sprite went back to one layer
+        if (!isLayersFile(path)) throw new Error('only layers files are removed'); const parts = path.split('/'); let dir = root; for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p);
+        await dir.removeEntry(parts.at(-1)); files.delete(path);
       } };
   }
 
@@ -1101,7 +1177,18 @@
 .pf-v-shift{display:flex;flex-direction:column;gap:4px}.pf-v-shift input[type=range]{flex:1;width:auto}.pf-v-shift b{min-width:3.2em;text-align:right;color:var(--pf-accent)}
 .pf-v-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.pf-v-col{display:flex;align-items:center;gap:4px;font-size:11.5px}.pf-v-col i{width:20px;height:20px;border:1px solid var(--pf-line2);flex:none}.pf-v-col input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--pf-line2);background:none}
 .pf-v-preview{display:flex;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-v-preview canvas{image-rendering:pixelated;height:72px}
-.pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}.pf-hist summary h4{display:inline}.pf-hist summary h4::after{content:" ▸";color:var(--pf-faint)}.pf-hist[open] summary h4::after{content:" ▾"}
+.pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}
+/* Right column: every section folds away by its title (remembered), with a chevron at the right. */
+.pf-right{scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:var(--pf-line2) transparent}
+.pf-right>.pf-panel>h4,.pf-hist summary h4{display:flex;align-items:baseline;white-space:nowrap;gap:0;cursor:pointer;user-select:none;-webkit-user-select:none;margin:0}
+.pf-right>.pf-panel>h4::before,.pf-hist summary h4::before{white-space:pre}.pf-right>.pf-panel>h4>span{overflow:hidden;text-overflow:ellipsis}
+.pf-right>.pf-panel>h4::after,.pf-hist summary h4::after{content:"";margin-left:auto;align-self:center;flex:none;width:6px;height:6px;border-right:1.5px solid var(--pf-faint);border-bottom:1.5px solid var(--pf-faint);transform:translateY(-2px) rotate(45deg);transition:transform .15s ease}
+.pf-right>.pf-panel.pf-shut>h4::after,.pf-hist:not([open]) summary h4::after{transform:rotate(-45deg)}
+.pf-right>.pf-panel>h4:hover::after,.pf-hist summary h4:hover::after{border-color:var(--pf-ink)}
+.pf-right>.pf-panel>h4:focus-visible{outline:1px dashed var(--pf-accent);outline-offset:3px}
+.pf-right>.pf-panel.pf-shut>:not(h4){display:none!important}
+.pf .pf-right .pf-quiet{gap:2px}.pf .pf-right .pf-quiet button:not(:disabled){border-color:transparent;color:var(--pf-muted);padding:2px 6px!important}.pf .pf-right .pf-quiet button:hover:not(:disabled){color:var(--pf-ink)}
+.pf-prev .pf-p2{margin:0 auto}.pf-prev .pf-p1{max-height:120px;width:auto}.pf-anim-row input[type=number]{width:46px}
 .pf-hist-list{display:flex;flex-direction:column;gap:3px;max-height:260px;overflow:auto;margin-top:6px}
 .pf .pf-hist-e{display:grid;grid-template-columns:36px 1fr;gap:2px 8px;text-align:left;justify-content:stretch;align-items:center;background:none;border-color:transparent;padding:4px;min-height:0}
 .pf .pf-hist-e canvas{grid-row:span 2;width:36px;height:36px;image-rendering:pixelated;object-fit:contain;background:var(--pf-ckbg)}
@@ -1167,7 +1254,11 @@
 .pf-cur{display:flex;gap:8px;align-items:center}.pf-cur input[type=color]{width:44px;height:32px;padding:0;border:1px solid var(--pf-line2);background:none;flex:none;cursor:pointer}
 .pf-ramp{display:flex;flex-direction:column;gap:6px}.pf-ramp[hidden]{display:none}.pf .pf-ramp .pf-sw button{width:34px;height:24px}
 .pf-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.pf-sub{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--pf-muted);margin-top:2px}
 .pf-ccount{font-weight:400;letter-spacing:0;text-transform:none;color:var(--pf-muted);margin-left:4px}.pf-ccount.over{color:var(--pf-bad)}
+.pf-ly-list{display:flex;flex-direction:column;gap:2px}.pf-ly{display:flex;gap:6px;align-items:center;padding:2px;border:1px solid transparent;cursor:pointer}.pf-ly.on{border-color:var(--pf-accent);background:rgba(224,140,255,.10)}
+.pf .pf-ly canvas{flex:none;width:28px;height:28px;image-rendering:pixelated;background:repeating-conic-gradient(#3a2d55 0 25%,#1c1530 0 50%) 0 0/8px 8px}.pf .pf-ly input{flex:1;min-width:0;min-height:26px;padding:3px 6px}.pf .pf-ly .pf-ly-eye{min-height:26px;width:28px;padding:0;flex:none}.pf .pf-ly.off canvas,.pf .pf-ly.off input{opacity:.45}
+.pf-ly-tip[hidden],.pf-ly-oprow[hidden]{display:none}
 .pf-notes-n{font-weight:400;letter-spacing:0;text-transform:none;color:var(--pf-muted);margin-left:4px}
 .pf-note-list{display:flex;flex-direction:column;gap:4px}.pf-note-item{display:flex;gap:6px;align-items:center}.pf-note-item b{flex:none;min-width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;background:var(--pf-accent2);color:var(--pf-on);font-size:11px}
 .pf .pf-note-item input{flex:1;min-width:0;min-height:26px;padding:3px 6px}.pf .pf-note-item button{min-height:26px;padding:0 7px}.pf-note-add.on{background:rgba(224,140,255,.18)!important;color:var(--pf-accent2)!important}
@@ -1560,23 +1651,30 @@
         <div class="pf-status"><span class="pf-s-name"></span><span class="pf-s-pos"></span><span class="pf-s-sel"></span><span class="pf-s-note"></span><span class="pf-s-info"></span></div>
       </section>
       <aside class="pf-right">
+        <div class="pf-panel pf-layers"><h4>Layers <span class="pf-notes-n pf-ly-n"></span></h4><div class="pf-ly-list" role="listbox" aria-label="Layers, top first"></div>
+          <div class="pf-row"><button class="pf-ly-add" title="A new empty layer above this one">+ layer</button><button class="pf-ly-dup" title="A copy of this layer, above it">Copy</button><button class="pf-ly-up" title="Move this layer up">▲</button><button class="pf-ly-down" title="Move this layer down">▼</button><button class="pf-ly-merge" title="Merge this layer into the one below">Merge ↓</button><button class="pf-ly-del" title="Delete this layer">✕</button></div>
+          <div class="pf-row pf-ly-oprow" hidden><label>opacity <input type="range" class="pf-ly-op" min="0" max="100" value="100" aria-label="Layer opacity"></label><span class="pf-note pf-ly-opv"></span></div>
+          <div class="pf-note pf-ly-tip">Saved flat, with the layers in <code class="pf-ly-file"></code>.</div></div>
         <div class="pf-panel"><h4>Colour</h4><div class="pf-cur"><input type="color" class="pf-cpick" aria-label="Current colour"><input type="text" class="pf-chex" maxlength="9" aria-label="Hex colour"></div>
-          <div class="pf-row"><button class="pf-ramp-btn" title="A 5-colour ramp around this colour: cool, darker shadows and warm highlights">Hue-shift ramp</button><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour all…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div>
+          <div class="pf-row"><button class="pf-ramp-btn" title="A 5-colour ramp around this colour: cool, darker shadows and warm highlights">Hue ramp</button><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div>
           <div class="pf-ramp" hidden><div class="pf-sw pf-ramp-colors"></div><button class="pf-ramp-add" title="Add these colours to the palette">+ add to palette</button></div></div>
-        <div class="pf-panel"><h4>In this image <span class="pf-ccount"></span></h4><div class="pf-sw pf-img-colors"></div></div>
-        <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load a .hex (Lospec), or add colours with +.</div><div class="pf-note pf-off"></div></div>
-          <div class="pf-row"><button class="pf-pal-lock" title="Indexed: every colour you pick snaps to the palette, and double-clicking a palette colour changes it everywhere it is used in this image">Indexed</button><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><input type="color" class="pf-slot-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"><button class="pf-palload">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
+        <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load one, or add colours.</div></div>
+          <div class="pf-sub">In this image<span class="pf-ccount"></span></div><div class="pf-sw pf-img-colors"></div><div class="pf-note pf-off"></div>
+          <div class="pf-row"><button class="pf-pal-lock" title="Indexed: every colour you pick snaps to the palette, and double-clicking a palette colour changes it everywhere it is used in this image">Indexed</button><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><input type="color" class="pf-slot-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button></div>
+          <div class="pf-row pf-quiet"><button class="pf-palload" title="Load a palette file (.hex, one colour per line)">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave" title="Download this palette as a .hex file">Save .hex</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
           <form class="pf-row pf-lospec" hidden><input type="text" class="pf-lospec-name" placeholder="endesga-32, or a lospec.com link" aria-label="Lospec palette name" autocomplete="off" style="flex:1;min-width:0"><button type="submit" class="primary">Load</button></form></div>
-        <div class="pf-panel pf-prev"><h4>Preview</h4>
-          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note"><kbd>,</kbd> <kbd>.</kbd> previous / next · Play flips through them</div></div>
-          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">click a frame to select it · the ×n badge sets how long it holds</div></div>
-          <canvas class="pf-p1"></canvas>
-          <div class="pf-row pf-sheet-row"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
-          <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button><button class="pf-sheet-out" title="Download the animation as one sprite sheet PNG with a JSON of its frames and timings (Aseprite json-array format, read by most engines)">Sheet + JSON</button></div>
-          <canvas class="pf-p2"></canvas></div>
+        <div class="pf-panel pf-prev"><h4>Animation</h4>
+          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note pf-fam-hint"><kbd>,</kbd> <kbd>.</kbd> previous / next</div></div>
+          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">the ×n badge: how long a frame holds</div></div>
+          <canvas class="pf-p2"></canvas>
+          <canvas class="pf-p1" title="The whole sheet"></canvas>
+          <div class="pf-row pf-anim-row"><label class="pf-sheet-row" title="Frame size: smaller than the image makes it a sprite sheet">frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label><label class="pf-fps-l">fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
+          <div class="pf-row"><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button><button class="pf-sheet-out" title="Download the animation as one sprite sheet PNG with a JSON of its frames and timings (Aseprite json-array format, read by most engines)">Sheet + JSON</button></div></div>
+        <div class="pf-panel pf-imgpanel"><h4>Image</h4><div class="pf-imgtools">${IMAGE_TOOLS.map(([cls, ic, name, tip, extra]) => `<button class="${cls}" aria-label="${name}" data-tip="${esc(name + ': ' + tip)}" title="${esc(name)}"${extra || ''}>${icon(ic)}</button>`).join('')}</div>
+          <div class="pf-note pf-imgtip" aria-live="polite">Point at a button to see what it does</div></div>
         <div class="pf-panel pf-notes"><h4>Notes <span class="pf-notes-n"></span></h4><div class="pf-note-list"></div>
           <div class="pf-row"><button class="pf-note-add" title="Pin a note to a pixel: click here, then on the canvas">+ note</button></div>
-          <div class="pf-note">Pinned to a pixel. They go into the description of your next pull request, then clear.</div></div>
+          <div class="pf-note pf-notes-tip">Pinned to a pixel; they go in your next pull request.</div></div>
         <div class="pf-panel pf-refpanel"><h4>Reference</h4>
           <div class="pf-row"><button class="pf-ref-load" title="Any image: concept art, a photo, a screenshot of the game">Image…</button><select class="pf-ref-sprite" aria-label="Or a sprite from this project"><option value="">or a sprite…</option></select><input type="file" class="pf-ref-file" accept="image/*" hidden></div>
           <div class="pf-ref-on" hidden><div class="pf-note pf-ref-name"></div>
@@ -1584,8 +1682,6 @@
             <div class="pf-row"><span class="pf-seg pf-ref-place"><button data-place="under" class="on" title="Behind your pixels">under</button><button data-place="over" title="On top of your pixels">over</button></span><span class="pf-seg pf-ref-fit"><button data-fit="pixels" class="on" title="One image pixel per sprite pixel, from the top-left">1:1</button><button data-fit="fit" title="Scaled to fit the canvas">fit</button></span></div>
             <div class="pf-row"><button class="pf-ref-toggle" title="Show or hide the reference (H)">hide</button><button class="pf-ref-clear">remove</button></div></div></div>
         <details class="pf-panel pf-hist" hidden><summary><h4>History</h4></summary><div class="pf-hist-list"></div><div class="pf-row pf-hist-act" hidden><button class="primary pf-hist-restore">Restore this version</button><span class="pf-note pf-hist-sel"></span></div></details>
-        <div class="pf-panel pf-imgpanel"><h4>Image</h4><div class="pf-imgtools">${IMAGE_TOOLS.map(([cls, ic, name, tip, extra]) => `<button class="${cls}" aria-label="${name}" data-tip="${esc(name + ': ' + tip)}" title="${esc(name)}"${extra || ''}>${icon(ic)}</button>`).join('')}</div>
-          <div class="pf-note pf-imgtip" aria-live="polite">Point at a button to see what it does</div></div>
       </aside>
       <div class="pf-fs-scrim"></div><button class="pf-fs-h pf-fs-hl" aria-label="Sprites" aria-expanded="false">›</button><button class="pf-fs-h pf-fs-hr" aria-label="Colours, options and actions" aria-expanded="false">‹</button>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
@@ -1803,7 +1899,7 @@
     async function pickFolders(picked) {
       const src = S.src; $('.pf-dlg-folders').close(); if (!src || src.kind !== 'github') return;
       const cfg = applyFolders(src, picked); writeFolders(src, { picked, cfg, sent: false });
-      S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
+      S.sprites = spriteList(src); thumbs.clear();
       renderList(); if (!S.sprites.some((x) => x.path === S.cur) && S.sprites.length) await openSprite(S.sprites[0].path);
       note(src.all.length ? `${S.sprites.length} sprite${S.sprites.length === 1 ? '' : 's'} in the folders you picked. ${CONFIG_PATH} goes with your next pull request.` : `New sprites go in ${cfg.dirs[0]}/. ${CONFIG_PATH} goes with your first pull request.`);
       renderSetup();
@@ -1822,7 +1918,7 @@
       if (!keeping() && [...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
       const askFolders = foldersOnOpen(src);
       S.loading = null;
-      play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; folded = null; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
+      play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; folded = null; S.sprites = spriteList(src); thumbs.clear();
       S.anim.t = 0; drawPreview(); renderFamily(); renderColors(); resetHistory(); // the side panels drop the old project's sprite right away
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       loadWork(); // the branch this repository was being committed to, if any
@@ -1859,16 +1955,48 @@
         else if (!S.docs.size && O.connect !== false) openConnect(why || (last && last.kind === 'folder' ? `Choose the folder "${last.name}" again to pick up where you left off (your unsaved edits are kept in this browser).` : ''));
       } catch (e) { note('Could not start: ' + e.message); }
     }
+    /** A source's sprites, without the layers files (name.layers.png): those are noted in S.layerFiles and open with their sprite. */
+    function spriteList(src) {
+      S.layerFiles = new Set([...(src.sprites || []), ...(src.hidden || []), ...(src.all || [])].map((x) => x.path).filter(isLayersFile));
+      return (src.sprites || []).filter((x) => !isLayersFile(x.path)).map((x) => ({ ...x }));
+    }
     /** The document for a sprite, loading it if needed (without opening it). Null if it cannot be read. */
     async function loadDoc(path) {
       if (S.docs.has(path)) return S.docs.get(path);
       const meta = S.sprites.find((s) => s.path === path);
       try {
         const img = await decodePng(new Blob([await S.src.read(path)], { type: 'image/png' }));
-        S.docs.set(path, new Doc(path, img.w, img.h, img.px, { frames: meta && meta.frames }));
-        return S.docs.get(path);
+        const d = new Doc(path, img.w, img.h, img.px, { frames: meta && meta.frames });
+        S.docs.set(path, d);
+        if (S.layerFiles && S.layerFiles.has(layersPath(path))) await loadLayers(d);
+        return d;
       } catch (e) { note('Could not open ' + path + ': ' + e.message); return null; }
     }
+    /* The layers next to a sprite. They only count while they still flatten to the PNG: a PNG changed somewhere else (another
+       editor, a merge) wins, the sprite opens flat and the old layers file is left as it is. */
+    async function loadLayers(d) {
+      const lp = layersPath(d.path), name = lp.split('/').pop();
+      try {
+        const ls = unpackLayers(await decodePng(new Blob([await S.src.read(lp)], { type: 'image/png' })), d.w, d.h);
+        if (!ls) return note(`${name} does not hold layers for ${fileName(d)} (a different size?): opened without layers`);
+        const flat = flattenLayers(ls, d.w * d.h); if (S.alpha) snapAlpha(flat, S.alpha, null);
+        if (countDiff(flat, d.px) !== 0) return note(`${fileName(d)} was changed without its layers (${name} is older): opened without layers`);
+        d.setLayers(ls); d.hadLayers = true; d.base = d.mark(); d.saved = d.mark();
+      } catch (e) { note('Could not read the layers of ' + fileName(d) + ': ' + e.message); }
+    }
+    /** The layers file for a sprite (PNG bytes). */
+    async function layersPng(d) {
+      if (!hasStreams()) throw new Error('this browser cannot write the layers file');
+      const p = packLayers(d.layers, d.w, d.h); return encodePngBytes(p.w, p.h, p.px, 1, p.text);
+    }
+    /** What a sprite's layers need from a commit: write them, delete the file (merged back to one layer), or nothing. */
+    async function layerFile(d) {
+      const lp = layersPath(d.path);
+      if (d.layered) return { path: lp, blob: await layersPng(d) };
+      if (d.hadLayers && S.layerFiles && S.layerFiles.has(lp)) return { path: lp, delete: true };
+      return null;
+    }
+    function layersSent(d, f) { if (!f) return; if (f.delete) { S.layerFiles.delete(f.path); d.hadLayers = false; } else { S.layerFiles.add(f.path); d.hadLayers = true; } }
     async function openSprite(path) {
       if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; S.sheetK = 0; }
       if (!(await loadDoc(path))) return;
@@ -1877,7 +2005,7 @@
       // leaves you looking at a shut door. An explicit fold still hides it.
       const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
       if (folded && folded.has(dir)) { folded.delete(dir); saveFolded(); }
-      S.placingNote = false; renderList(); renderColors(); status(); render(); drawPreview(); renderFamily(); resetHistory(); renderNotes();
+      S.placingNote = false; renderList(); renderColors(); status(); render(); drawPreview(); renderFamily(); resetHistory(); renderNotes(); renderLayers();
     }
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
@@ -1992,7 +2120,7 @@
     const deletable = (d) => !!d && (d.local || d.isNew) && !d.onDisk;
     async function deleteSprite() {
       const d = doc(); if (!deletable(d)) return;
-      if (d.px.some((v) => v >>> 24) && !confirm(`Delete ${fileName(d)}? It only exists in this browser, so this cannot be undone.`)) return;
+      if (d.flat().some((v) => v >>> 24) && !confirm(`Delete ${fileName(d)}? It only exists in this browser, so this cannot be undone.`)) return;
       commitFloat(); S.sel = null; S.float = null;
       S.docs.delete(d.path); S.sprites = S.sprites.filter((x) => x.path !== d.path); thumbs.delete(d.path);
       if (drafts && d.kept) try { await drafts.remove(projectKey(), d.path); } catch { /* gone anyway on the next flush */ }
@@ -2016,10 +2144,11 @@
     };
     /** Does this sprite hold work that only exists here? Then it needs a browser copy. */
     const needsKeep = (d) => (savesOut(d) ? d.unsaved || (d.isNew && !d.onDisk) : d.changed || d.local || d.isNew);
-    const pixelsNow = (d) => { if (d !== doc() || !S.float) return d.px; const px = d.px.slice(), f = S.float; pasteRect(px, d.w, d.h, f.px, f.w, f.h, f.x, f.y, false); return px; };
+    const pixelsNow = (d) => { if (d !== doc() || !S.float) return d.px; const px = d.px.slice(), f = S.float; pasteRect(px, d.w, d.h, f.px, f.w, f.h, f.x, f.y, false); return px; }; // the current layer, with a lifted selection put down
+    const layersNow = (d) => { if (!d.layered) return null; const ls = copyLayers(d.layers); ls[d.active].px = pixelsNow(d).slice(); return ls; };
     /* The kept copy is fresh only while the pixels still match: a push replaces the base under it
        (markPushed), so the next flush stores the new base instead of skipping on matching pixels. */
-    const isKept = (d) => !!d.kept && d.kept.w === d.w && d.kept.h === d.h && d.kept.base === d.base && countDiff(d.kept.px, pixelsNow(d)) === 0;
+    const isKept = (d) => !!d.kept && d.kept.w === d.w && d.kept.h === d.h && d.kept.base === d.base && d.kept.active === d.active && d.kept.sig === d.sig() && countDiff(d.kept.px, pixelsNow(d)) === 0;
     /** Work that would be lost if the tab closed now. */
     const atRisk = (d) => (keeping() ? needsKeep(d) && !isKept(d) : savesOut(d) ? d.unsaved : d.changed || d.local);
     const keepSoon = () => { if (!drafts) return; clearTimeout(draftTimer); draftTimer = setTimeout(flushDrafts, 250); };
@@ -2032,9 +2161,9 @@
           for (const d of list) {
             if (needsKeep(d)) {
               if (isKept(d)) continue;
-              const px = pixelsNow(d).slice();
-              await drafts.put(key, { path: d.path, w: d.w, h: d.h, px, base: d.base, saved: d.saved, local: d.local, isNew: d.isNew, onDisk: !!d.onDisk, frames: d.frames, at: Date.now() });
-              d.kept = { w: d.w, h: d.h, px, base: d.base }; touched = true;
+              const px = pixelsNow(d).slice(), layers = layersNow(d);
+              await drafts.put(key, { path: d.path, w: d.w, h: d.h, px, layers, active: d.active, base: d.base, saved: d.saved, local: d.local, isNew: d.isNew, onDisk: !!d.onDisk, frames: d.frames, at: Date.now() });
+              d.kept = { w: d.w, h: d.h, px, base: d.base, active: d.active, sig: d.sig() }; touched = true;
             } else if (d.kept) { await drafts.remove(key, d.path); d.kept = null; touched = true; }
           }
         } catch (e) { draftsOk = false; note('This browser cannot keep your edits (' + e.message + '): use Save, Download or Propose PR before closing the tab.'); }
@@ -2049,7 +2178,8 @@
       recs.sort((a, b) => (b.at || 0) - (a.at || 0));
       for (const r of recs) {
         const d = new Doc(r.path, r.w, r.h, r.px, { local: r.local, isNew: r.isNew, frames: r.frames });
-        d.base = r.base; d.saved = r.saved || { w: r.w, h: r.h, px: r.px.slice() }; d.onDisk = !!r.onDisk; d.kept = { w: r.w, h: r.h, px: r.px.slice(), base: d.base };
+        if (r.layers && r.layers.length > 1) d.setLayers(r.layers, r.active);
+        d.base = r.base; d.saved = r.saved || { w: r.w, h: r.h, px: r.px.slice() }; d.onDisk = !!r.onDisk; d.kept = { w: r.w, h: r.h, px: d.px.slice(), base: d.base, active: d.active, sig: d.sig() };
         S.docs.set(r.path, d);
         const meta = S.sprites.find((x) => x.path === r.path); if (meta) { meta.w = r.w; meta.h = r.h; } else S.sprites.push({ path: r.path, w: r.w, h: r.h, local: !!r.local });
       }
@@ -2201,8 +2331,8 @@
     /* ---------- palette / colours ---------- */
     function renderColors() {
       const d = doc(); if (!d) { $('.pf-img-colors').innerHTML = '<span class="pf-note">no image open</span>'; return; }
-      const all = colorsOf(d.px).filter(([c]) => !isClear(c)), cols = all.slice(0, 64), max = S.maxColors; swatches();
-      const cc = $('.pf-ccount'); cc.textContent = `· ${all.length} colour${all.length === 1 ? '' : 's'}${max ? ' of ' + max : ''}`; cc.classList.toggle('over', !!max && all.length > max);
+      const all = colorsOf(d.flat()).filter(([c]) => !isClear(c)), cols = all.slice(0, 64), max = S.maxColors; swatches();
+      const cc = $('.pf-ccount'); cc.textContent = `· ${all.length}${max ? ' / ' + max : ''}`; cc.title = `${all.length} colour${all.length === 1 ? '' : 's'}${max ? ', of a budget of ' + max : ''}`; cc.classList.toggle('over', !!max && all.length > max);
       cc.title = max ? (all.length > max ? `Over the project's limit of ${max} colours` : `The project allows ${max} colours ("maxColors" in spritewright.config.json)`) : '';
       $('.pf-img-colors').innerHTML = cols.map(([c, n]) => `<button data-c="${c}" title="${toHex(c)} · ${n}px" class="${c === S.color ? 'on' : ''}" style="background:${toHex(c)}"></button>`).join('') || '<span class="pf-note">transparent</span>';
       $('.pf-cpick').value = toHex(S.color); if (document.activeElement !== $('.pf-chex')) $('.pf-chex').value = toHex(S.color);
@@ -2269,7 +2399,7 @@
       g.restore();
       if (S.changes && !S.peek && d.base.w === d.w && d.base.h === d.h) { /* dim what is untouched, outline what changed */
         const base = d.base.px, mask = new Uint32Array(d.w * d.h), dim = pack(7, 4, 13, 175), cells = [];
-        for (let i = 0; i < mask.length; i++) if (samePx(d.px[i], base[i])) mask[i] = dim; else cells.push(i);
+        const now = d.flat(); for (let i = 0; i < mask.length; i++) if (samePx(now[i], base[i])) mask[i] = dim; else cells.push(i);
         diffCanvas.width = d.w; diffCanvas.height = d.h; diffCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(mask.buffer), d.w, d.h), 0, 0);
         g.drawImage(diffCanvas, S.ox, S.oy, W, H);
         if (z >= 3 && cells.length < 20000) { g.strokeStyle = '#e08cff'; g.lineWidth = Math.max(1, Math.floor(z / 8)); for (const i of cells) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1); g.lineWidth = 1; }
@@ -2407,7 +2537,8 @@
     }
     $('.pf-tools').innerHTML = TOOLS.filter((x) => !x[3]).map(([k, n, key]) => `<button data-t="${k}" title="${n} (${key})" aria-label="${n}">${icon(k)}</button>`).join('');
     $('.pf-keys').innerHTML = KEYS.map(([k, v]) => `<div class="pf-key"><kbd>${esc(k)}</kbd><span>${esc(v)}</span></div>`).join('');
-    const changedUi = () => { keepSoon(); renderColors(); status(); renderListSoon(); drawPreview(); render(); renderFamilySoon(); };
+    const changedUi = () => { keepSoon(); renderColors(); status(); renderListSoon(); drawPreview(); render(); renderFamilySoon(); renderLayersSoon(); };
+    let lyTimer = 0; const renderLayersSoon = () => { clearTimeout(lyTimer); lyTimer = setTimeout(renderLayers, 120); };
     let famTimer = 0; const renderFamilySoon = () => { clearTimeout(famTimer); famTimer = setTimeout(renderFamily, 150); };
     let listTimer = 0; const renderListSoon = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 120); };
     /** Where a pixel lands: wrapped around the edges in tile mode, else null when outside the image. */
@@ -2440,7 +2571,7 @@
       if (countDiff(tmp, d.px) === 0) return false; d.px = tmp; return true;
     }
     function pickAt(d, c, secondary) {
-      const p = cell(d, c.x, c.y); if (!p) return; const v = d.px[p[1] * d.w + p[0]];
+      const p = cell(d, c.x, c.y); if (!p) return; const v = d.flat()[p[1] * d.w + p[0]]; // what you see, whichever layer it is on
       if (secondary) { S.color2 = isClear(v) ? 0 : v; renderColors(); return; }
       if (isClear(v)) setTool('erase'); else { setColor(v); setTool('pen'); }
     }
@@ -2494,7 +2625,7 @@
     function undoTouch() {
       const t = touchEdit; touchEdit = null; if (!t || performance.now() - t.at > TOUCH_GRACE) return;
       const d = t.d, i = t.snap ? d.undo.lastIndexOf(t.snap) : -1;
-      if (i >= 0) { d.w = t.snap.w; d.h = t.snap.h; d.px = t.snap.px; d.undo.length = i; }
+      if (i >= 0) { d.restore(t.snap); d.undo.length = i; }
       S.color = t.color; S.color2 = t.color2; if (!S.float) S.sel = t.sel; overlay = null;
       changedUi(); renderColors();
     }
@@ -2552,7 +2683,7 @@
       if (pinch && pointers.size === 2) { const [a, b] = [...pointers.values()]; const nd = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); const r = view.getBoundingClientRect(), dpr = view.width / r.width; const z = Math.max(1, Math.min(64, Math.round(pinch.zoom * nd / pinch.dist))); if (z !== S.zoom) { const cx = (pinch.cx - r.left) * dpr, cy = (pinch.cy - r.top) * dpr, px = (cx - S.ox) / S.zoom, py = (cy - S.oy) / S.zoom; S.zoom = z; S.ox = Math.round(cx - px * z); S.oy = Math.round(cy - py * z); render(); status(); } return; }
       if (pan) { S.touched = true; const r = view.getBoundingClientRect(), dpr = view.width / r.width; S.ox = Math.round(pan.ox + (e.clientX - pan.x) * dpr); S.oy = Math.round(pan.oy + (e.clientY - pan.y) * dpr); render(); return; }
       const c = toCell(e), p = cell(d, c.x, c.y);
-      $('.pf-s-pos').textContent = p ? `x ${p[0]}  y ${p[1]}  ${toHex(d.px[p[1] * d.w + p[0]])}${isClear(d.px[p[1] * d.w + p[0]]) ? ' (clear)' : ''}` : '';
+      $('.pf-s-pos').textContent = p ? `x ${p[0]}  y ${p[1]}  ${toHex(d.flat()[p[1] * d.w + p[0]])}${isClear(d.flat()[p[1] * d.w + p[0]]) ? ' (clear)' : ''}` : '';
       const hovered = !S.hover || S.hover.x !== c.x || S.hover.y !== c.y; S.hover = c;
       if (!drag) { if (hovered && sized(S.tool)) render(); return; }
       if (drag.tool === 'select') {
@@ -2601,6 +2732,8 @@
 
     /* ---------- operations ---------- */
     function edit(fn) { const d = doc(); if (!d) return; d.snapshot(); fn(d); changedUi(); }
+    /** An edit of the whole image (flip, rotate, resize…): every layer, as one undo step. */
+    function editAll(fn) { const d = doc(); if (!d) return; d.snapshot(); d.allLayers(fn); changedUi(); }
     const undo = () => { const d = doc(); if (!d) return; S.float = null; S.sel = null; if (d.undoOnce()) { if (!S.touched) fit(); changedUi(); } else render(); };
     const redo = () => { const d = doc(); if (!d) return; commitFloat(); S.sel = null; if (d.redoOnce()) { if (!S.touched) fit(); changedUi(); } };
 
@@ -2609,12 +2742,12 @@
        always matches what is on screen. Same-size originals give the hint for kept values. */
     function tidyAlpha(d) {
       if (!S.alpha) return 0;
-      const px = d.px.slice(), n = snapAlpha(px, S.alpha, d.base.w === d.w && d.base.h === d.h ? d.base.px : null);
-      if (n) { d.snapshot(); d.px = px; note(`${n} stray-alpha pixel${n > 1 ? 's' : ''} snapped to the project's alpha rule in ${fileName(d)} (undo brings them back)`); }
+      const hint = !d.layered && d.base.w === d.w && d.base.h === d.h ? d.base.px : null, out = d.layers.map((l) => { const px = l.px.slice(); return { px, n: snapAlpha(px, S.alpha, hint) }; }), n = out.reduce((t, o) => t + o.n, 0);
+      if (n) { d.snapshot(); d.layers.forEach((l, k) => { l.px = out[k].px; }); note(`${n} stray-alpha pixel${n > 1 ? 's' : ''} snapped to the project's alpha rule in ${fileName(d)} (undo brings them back)`); }
       return n;
     }
     async function pngOf(d, scale = 1) {
-      if (hasStreams()) return new Blob([await encodePngBytes(d.w, d.h, d.px, scale)], { type: 'image/png' });
+      if (hasStreams()) return new Blob([await encodePngBytes(d.w, d.h, d.flat(), scale)], { type: 'image/png' });
       const c = document.createElement('canvas'); drawPx(c, d, scale); return toBlob(c);
     }
     /* Save: writes to the project when it can be written (local server, folder, the page's save hook). Everything else stays in
@@ -2624,7 +2757,10 @@
       try {
         if (savesOut(d)) {
           const snapped = tidyAlpha(d), blob = await pngOf(d);
-          if (O.save) await O.save(d, blob); else await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
+          if (O.save) await O.save(d, blob); else {
+            await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
+            const lf = await layerFile(d); if (lf && lf.delete && S.src.remove) await S.src.remove(lf.path); else if (lf && !lf.delete) await S.src.write(lf.path, lf.blob); if (lf && (!lf.delete || S.src.remove)) layersSent(d, lf);
+          }
           d.markSaved(); d.onDisk = true; note('saved ' + d.path + (snapped ? ` · ${snapped} stray-alpha pixel${snapped > 1 ? 's' : ''} snapped to the project's alpha rule (undo brings them back)` : ''));
         } else {
           await flushDrafts(); if (!keeping()) note('This browser cannot keep edits: use Download.'); // otherwise the status bar already says "kept in this browser"
@@ -2638,7 +2774,7 @@
     const changedDocs = () => [...S.docs.values()].filter((d) => d.changed || d.local || d.isNew);
     async function downloadAll() {
       commitFloat(); const list = changedDocs(); if (!list.length) return;
-      const files = []; for (const d of list) { tidyAlpha(d); files.push({ name: d.path, bytes: new Uint8Array(await (await pngOf(d)).arrayBuffer()) }); }
+      const files = []; for (const d of list) { tidyAlpha(d); files.push({ name: d.path, bytes: new Uint8Array(await (await pngOf(d)).arrayBuffer()) }); if (d.layered) files.push({ name: layersPath(d.path), bytes: await layersPng(d) }); }
       const proj = (S.src && S.src.kind === 'github' && S.src.repo.slug.split('/')[1]) || (S.src && S.src.name) || 'sprites';
       download(new Blob([zipFiles(files)], { type: 'application/zip' }), proj.replace(/[^\w.-]+/g, '-') + '-changed.zip'); note(`downloaded ${files.length} sprite${files.length > 1 ? 's' : ''} as a .zip (with their folders)`);
     }
@@ -2683,8 +2819,9 @@
     const memberLabel = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length).replace(/^[_-]/, ''); return r || 'base'; };
     function renderFamily() {
       renderSheet();
-      const d = doc(), fam = famOrSingle(d), box = $('.pf-fam:not(.pf-sheet)'); box.hidden = !fam; if (!fam) return;
-      const at = fam.members.indexOf(d.path); $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
+      const d = doc(), fam = famOrSingle(d), box = $('.pf-fam:not(.pf-sheet)'); box.hidden = !fam || (fam.members.length < 2 && isSheet(d)); if (box.hidden) return;
+      const at = fam.members.indexOf(d.path), one = fam.members.length < 2; $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
+      $('.pf-fam-left').hidden = $('.pf-fam-right').hidden = $('.pf-fam-hint').hidden = one; $('.pf-fam-strip:not(.pf-sheet-strip)').hidden = one;
       $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.members.length > 1 ? (fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`) : 'single sprite';
       const strip = $('.pf-fam-strip:not(.pf-sheet-strip)'); strip.innerHTML = '';
       for (const p of fam.members) {
@@ -2700,7 +2837,7 @@
       if (!d) { p1.width = p1.height = p2.width = p2.height = 0; return; } // nothing open: no picture left over from the last project
       drawPx(p1, d, d.w <= 32 ? 2 : 1);
       const sheet = frameSize(d), fam = famFor(d);
-      const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h); p1.hidden = flip; $('.pf-sheet-row').hidden = flip;
+      const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h); p1.hidden = !isSheet(d); $('.pf-sheet-row').hidden = flip;
       if (flip) { // flipbook through the family's images
         const i = S.anim.timer ? holdFrame(S.anim.t, holdsOf(d), fam.members.length) : fam.members.indexOf(d.path), img = memberImage(fam.members[i]);
         $$('.pf-fam-m:not(.pf-sheet-m)').forEach((b, k) => b.classList.toggle('playing', !!S.anim.timer && k === i));
@@ -2729,16 +2866,17 @@
     /* ---------- pull request dialog ---------- */
     /** PNG blobs plus description previews for a set of changed documents. */
     async function filesAndPreviews(docs) {
-      const files = [], previews = [];
+      const files = [], previews = [], extra = [];
       for (const d of docs) {
+        const lf = await layerFile(d); if (lf) extra.push({ ...lf, doc: d });
         const sc = previewScale(Math.max(d.w, d.base.w), Math.max(d.h, d.base.h)); // one scale for both sides so they compare 1:1
         tidyAlpha(d); files.push({ path: d.path, blob: await pngOf(d), w: d.w, h: d.h, pixels: d.changedPixels(), scale: sc, baseW: d.base.w, isNew: !!(d.local || d.isNew) });
         previews.push({ before: d.local || d.isNew ? null : await pngOf(new Doc(d.path, d.base.w, d.base.h, d.base.px), sc), after: await pngOf(d, sc) });
       }
-      return { files, previews };
+      return { files, previews, extra };
     }
     /** After a push: the work lives on the branch, so the documents read clean from here on. */
-    function markPushed(docs) { for (const d of docs) { d.base = { w: d.w, h: d.h, px: d.px.slice() }; d.isNew = false; if (!canWrite()) d.local = false; } }
+    function markPushed(docs) { for (const d of docs) { d.base = d.mark(); d.isNew = false; if (!canWrite()) d.local = false; } }
     function openPr() {
       commitFloat(); const changed = [...S.docs.values()].filter((d) => d.changed); if (!changed.length) return;
       const gh = S.meta.repo || {}, dlg = $('.pf-dlg-pr');
@@ -2758,12 +2896,12 @@
       try {
         const token = (S.auth.token && !typed ? await authToken() : typed) || '';
         if (!token) throw new Error(authBase ? 'Sign in with GitHub first.' : 'Paste a GitHub token first.');
-        const { files, previews } = await filesAndPreviews(changed), cfgOut = pendingConfig(), sentNotes = allNotes();
+        const { files, previews, extra } = await filesAndPreviews(changed), cfgOut = pendingConfig(), sentNotes = allNotes();
         const prefix = (S.meta.repo && S.meta.repo.prefix) || '', desc = [$('.pf-pr-desc').value.trim(), cfgOut && configNote(cfgOut)].filter(Boolean).join('\n\n');
-        const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })).concat(cfgOut ? [configFile(cfgOut)] : []), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
+        const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })).concat(extra.map(({ path, blob, delete: del }) => ({ path, blob, delete: del })), cfgOut ? [configFile(cfgOut)] : []), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
           body: (ctx) => prBody({ files, repo, prefix, description: desc, notes: sentNotes, baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha, previewDir: ctx.previewDir }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
         log.innerHTML = `${esc(log.textContent)}Done${res.forked ? ' (from your fork)' : ''}: <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">${esc(res.url)}</a>`;
-        markPushed(changed); // the work now lives in the pull request
+        markPushed(changed); for (const f of extra) layersSent(f.doc, f); // the work now lives in the pull request
         if (sentNotes.length) clearSentNotes(sentNotes);
         if (cfgOut) writeFolders(S.src, { ...cfgOut, sent: true });
         keepSoon(); status(); renderList();
@@ -2840,9 +2978,9 @@
       const branch = commitBranch() || (S.work && S.work.branch) || ('art/' + slug(message) + '-' + Date.now().toString(36));
       go.disabled = true; note.textContent = '';
       try {
-        const { files } = await filesAndPreviews(sel), cfgOut = pendingConfig();
-        const res = await pushSprites({ token, repo: gh.slug, base: gh.base || undefined, branch, prefix: gh.prefix || '', files: files.map((f) => ({ path: f.path, blob: f.blob })).concat(cfgOut ? [configFile(cfgOut)] : []), message, apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
-        markPushed(sel); if (cfgOut) writeFolders(S.src, { ...cfgOut, sent: true });
+        const { files, extra } = await filesAndPreviews(sel), cfgOut = pendingConfig();
+        const res = await pushSprites({ token, repo: gh.slug, base: gh.base || undefined, branch, prefix: gh.prefix || '', files: files.map((f) => ({ path: f.path, blob: f.blob })).concat(extra.map(({ path, blob, delete: del }) => ({ path, blob, delete: del })), cfgOut ? [configFile(cfgOut)] : []), message, apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
+        markPushed(sel); for (const f of extra) layersSent(f.doc, f); if (cfgOut) writeFolders(S.src, { ...cfgOut, sent: true });
         S.commitSel = null; commitSig = null; $('.pf-commit-msg').value = '';
         if (![...$('.pf-commit-branches').options].some((o) => o.value === res.branch)) $('.pf-commit-branches').insertAdjacentHTML('afterbegin', `<option value="${esc(res.branch)}">⎇ ${esc(res.branch)}</option>`);
         setCommitBranch(res.branch);
@@ -2892,10 +3030,10 @@
       if (t.classList.contains('pf-fold-all')) return setAllFolded(true);
       if (t.classList.contains('pf-unfold-all')) return setAllFolded(false);
       if (t.classList.contains('pf-commit-openpr')) return submitOpenPr();
-      if (t.classList.contains('pf-hidden-toggle')) { const hid = S.src.hidden || []; if (S.sprites.some((x) => x.hiddenByDefault)) S.sprites = S.sprites.filter((x) => !x.hiddenByDefault); else S.sprites = S.sprites.concat(hid.map((x) => ({ ...x, hiddenByDefault: true }))); return renderList(); }
+      if (t.classList.contains('pf-hidden-toggle')) { const hid = S.src.hidden || []; if (S.sprites.some((x) => x.hiddenByDefault)) S.sprites = S.sprites.filter((x) => !x.hiddenByDefault); else S.sprites = S.sprites.concat(hid.filter((x) => !isLayersFile(x.path)).map((x) => ({ ...x, hiddenByDefault: true }))); return renderList(); }
       if (t.classList.contains('pf-fam-m')) return openSprite(t.dataset.path);
       if (t.dataset.c !== undefined && t.closest('.pf-sw')) return e.shiftKey ? setColor2(+t.dataset.c) : setColor(+t.dataset.c);
-      if (t.dataset.d) { const [dx, dy] = t.dataset.d.split(',').map(Number); return edit((d) => { d.px = shiftWrap(d.px, d.w, d.h, dx, dy); }); }
+      if (t.dataset.d) { const [dx, dy] = t.dataset.d.split(',').map(Number); return editAll((d) => { d.px = shiftWrap(d.px, d.w, d.h, dx, dy); }); }
     });
     root.addEventListener('contextmenu', (e) => { const t = e.target.closest('.pf-sw button[data-c]'); if (t) { e.preventDefault(); setColor2(+t.dataset.c); } });
     $('.pf-q').oninput = renderList;
@@ -3072,7 +3210,8 @@
       const nums = fam.members.map((p) => frameNo(fam, p)).filter(Boolean), sep = nums[0] ? nums[0].sep : '_', pad = nums[0] ? nums[0].pad : 1, n = nums.length ? Math.max(...nums.map((x) => x.n)) + 1 : 1;
       const dir = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/') + 1) : '', path = `${dir}${fam.key}${sep}${String(n).padStart(pad, '0')}.png`;
       if (S.sprites.some((x) => x.path === path)) return note(path + ' already exists');
-      await addLocal(path, d.w, d.h, d.px.slice(), canWrite(), true);
+      await addLocal(path, d.w, d.h, d.flat().slice(), canWrite(), true);
+      const nd = S.docs.get(path); if (nd && d.layered) { nd.setLayers(copyLayers(d.layers), d.active); changedUi(); } // the copy keeps the layers
       note(`new frame ${path.split('/').pop()}: a copy of ${d.path.split('/').pop()}${canWrite() ? '' : ' (kept in this browser; Propose PR adds it)'}`);
     };
     async function moveFrame(dir) {
@@ -3080,7 +3219,7 @@
       const i = fam.members.indexOf(d.path), j = i + dir; if (j < 0 || j >= fam.members.length) return;
       const o = await loadDoc(fam.members[j]); if (!o) return;
       d.snapshot(); o.snapshot();
-      [d.px, o.px] = [o.px, d.px]; [d.w, o.w] = [o.w, d.w]; [d.h, o.h] = [o.h, d.h];
+      [d.layers, o.layers] = [o.layers, d.layers]; [d.active, o.active] = [o.active, d.active]; [d.w, o.w] = [o.w, d.w]; [d.h, o.h] = [o.h, d.h];
       await openSprite(o.path); note(`moved ${dir < 0 ? 'earlier' : 'later'}: now ${o.path.split('/').pop()}`); changedUi(); renderList();
     }
     $('.pf-fam-left').onclick = () => moveFrame(-1); $('.pf-fam-right').onclick = () => moveFrame(1);
@@ -3107,7 +3246,7 @@
       const strip = $('.pf-sheet-strip'); strip.innerHTML = '';
       for (let k = 0; k < n; k++) {
         const b = el(`<button class="pf-fam-m pf-sheet-m${k === k0 ? ' on' : ''}" data-k="${k}" role="option" title="frame ${k + 1}"><canvas></canvas><span>${k + 1}</span><i class="pf-hold${(hs[k] || 1) > 1 ? ' x' : ''}" data-k="${k}" title="How long this frame holds: click for ×1 to ×4">×${hs[k] || 1}</i></button>`);
-        strip.appendChild(b); const px = copyRect(d.px, d.w, d.h, { x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h }), c = b.querySelector('canvas');
+        strip.appendChild(b); const px = copyRect(d.flat(), d.w, d.h, { x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h }), c = b.querySelector('canvas');
         c.width = f.w; c.height = f.h; c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer), f.w, f.h), 0, 0);
       }
     }
@@ -3120,7 +3259,7 @@
       const d = doc(); if (!isSheet(d)) return; commitFloat(); const { f, n } = sheetInfo(d), k = S.sheetK || 0, j = k + (dir || 0);
       if (op === 'swap' && (j < 0 || j >= n)) return; if (op === 'del' && n <= 1) return;
       const hs = holdsOf(d).slice(); while (hs.length < n) hs.push(1);
-      edit((dd) => { const r = sheetEdit(dd.px, dd.w, dd.h, f.w, f.h, op, k, j); dd.px = r.px; dd.w = r.w; dd.h = r.h; });
+      editAll((dd) => { const r = sheetEdit(dd.px, dd.w, dd.h, f.w, f.h, op, k, j); dd.px = r.px; dd.w = r.w; dd.h = r.h; });
       if (op === 'swap') [hs[k], hs[j]] = [hs[j], hs[k]]; else if (op === 'dup') hs.splice(k + 1, 0, hs[k]); else if (op === 'del') hs.splice(k, 1);
       setHolds(d, hs); if (!S.touched) fit();
       pickSheetFrame(op === 'swap' ? j : op === 'dup' ? k + 1 : Math.max(0, Math.min(k, n - 2)));
@@ -3132,8 +3271,8 @@
     $('.pf-sheet-out').onclick = async () => {
       const d = doc(); if (!d) return; commitFloat(); const fam = famFor(d), ms = Math.round(1000 / Math.max(1, +$('.pf-fps').value || 8)), hs = holdsOf(d);
       let img, rects, names, name;
-      if (isSheet(d)) { const { f, cols, n } = sheetInfo(d); img = { px: d.px, w: d.w, h: d.h }; rects = [...Array(n).keys()].map((k) => ({ x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h })); name = stem(d.path); names = rects.map((_, k) => `${name} ${k}`); }
-      else if (fam) { const fr = []; for (const p of fam.members) { const x = await loadDoc(p); if (x) fr.push({ px: x.px, w: x.w, h: x.h }); } const pk = packSheet(fr); img = pk; rects = pk.rects; name = fam.key; names = fam.members.map(stem); }
+      if (isSheet(d)) { const { f, cols, n } = sheetInfo(d); img = { px: d.flat(), w: d.w, h: d.h }; rects = [...Array(n).keys()].map((k) => ({ x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h })); name = stem(d.path); names = rects.map((_, k) => `${name} ${k}`); }
+      else if (fam) { const fr = []; for (const p of fam.members) { const x = await loadDoc(p); if (x) fr.push({ px: x.flat(), w: x.w, h: x.h }); } const pk = packSheet(fr); img = pk; rects = pk.rects; name = fam.key; names = fam.members.map(stem); }
       else return note('Sheet + JSON is for animations: a sprite sheet, or numbered frames like walk_0, walk_1.');
       const png = new Uint8Array(await (await pngOf(new Doc(name + '.png', img.w, img.h, img.px))).arrayBuffer());
       const json = new TextEncoder().encode(JSON.stringify(sheetJson(name + '.png', img.w, img.h, rects, rects.map((_, i) => ms * (hs[i] || 1)), names), null, 2) + '\n');
@@ -3142,9 +3281,9 @@
     };
     $('.pf-gif').onclick = async () => {
       const d = doc(); if (!d) return; const fam = famFor(d), sheet = frameSize(d), frames = [];
-      if (sheet.w < d.w || sheet.h < d.h) { const cols = Math.floor(d.w / sheet.w), rows = Math.floor(d.h / sheet.h); for (let k = 0; k < cols * rows; k++) frames.push({ w: sheet.w, h: sheet.h, px: copyRect(d.px, d.w, d.h, { x: (k % cols) * sheet.w, y: Math.floor(k / cols) * sheet.h, w: sheet.w, h: sheet.h }) }); }
-      else if (fam) { for (const p of fam.members) { const x = await loadDoc(p); if (x) frames.push({ w: x.w, h: x.h, px: x.px }); } }
-      else frames.push({ w: d.w, h: d.h, px: d.px });
+      if (sheet.w < d.w || sheet.h < d.h) { const cols = Math.floor(d.w / sheet.w), rows = Math.floor(d.h / sheet.h); for (let k = 0; k < cols * rows; k++) frames.push({ w: sheet.w, h: sheet.h, px: copyRect(d.flat(), d.w, d.h, { x: (k % cols) * sheet.w, y: Math.floor(k / cols) * sheet.h, w: sheet.w, h: sheet.h }) }); }
+      else if (fam) { for (const p of fam.members) { const x = await loadDoc(p); if (x) frames.push({ w: x.w, h: x.h, px: x.flat() }); } }
+      else frames.push({ w: d.w, h: d.h, px: d.flat() });
       const s = +(prompt(`GIF of ${frames.length} frame${frames.length > 1 ? 's' : ''} at ${+$('.pf-fps').value || 8} fps. Scale (1 = original size):`, String(Math.max(1, Math.min(8, Math.floor(256 / Math.max(d.w, d.h)))))) || 0);
       if (!s || s < 1 || s > 32) return;
       const base = Math.max(2, Math.round(100 / Math.max(1, +$('.pf-fps').value || 8))), hs = holdsOf(d); if (frames.length > 1) frames.forEach((f, i) => { f.delay = base * (hs[i] || 1); });
@@ -3154,7 +3293,7 @@
     };
     function setRef(img, name, pixel) {
       S.ref = { img, name, pixel, opacity: +$('.pf-ref-op').value / 100, over: $('.pf-ref-place button.on').dataset.place === 'over', fit: $('.pf-ref-fit button.on').dataset.fit, visible: true };
-      $('.pf-ref-on').hidden = false; $('.pf-ref-name').textContent = `${name} · ${img.width}×${img.height}`; $('.pf-ref-toggle').textContent = 'hide'; render();
+      $('.pf-ref-on').hidden = false; foldPanel($('.pf-refpanel'), false, false); $('.pf-ref-name').textContent = `${name} · ${img.width}×${img.height}`; $('.pf-ref-toggle').textContent = 'hide'; render();
     }
     $('.pf-ref-load').onclick = () => $('.pf-ref-file').click();
     $('.pf-ref-file').onchange = async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { setRef(await createImageBitmap(f), f.name, false); } catch (err) { note('Could not read that image: ' + err.message); } };
@@ -3172,7 +3311,7 @@
       const d = doc(); if (!d) return;
       const fam = famFor(d), key = fam ? fam.key : d.path.split('/').pop().replace(/\.png$/i, ''), members = fam ? fam.members : [d.path], docs = [];
       for (const p of members) { const x = await loadDoc(p); if (x) docs.push(x); }
-      const counts = new Map(); for (const x of docs) for (const c of x.px) if (!isClear(c)) counts.set(c, (counts.get(c) || 0) + 1);
+      const counts = new Map(); for (const x of docs) for (const c of x.flat()) if (!isClear(c)) counts.set(c, (counts.get(c) || 0) + 1);
       variant = { key, docs, cols: [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 48).map(([c]) => c), swap: new Map() };
       $('.pf-v-what').textContent = `${docs.length > 1 ? `The whole "${key}" family: ${docs.length} images` : d.path.split('/').pop()}, recoloured into new files.`;
       $('.pf-v-cols').innerHTML = variant.cols.map((c, i) => `<label class="pf-v-col"><i style="background:${toHex(c)}"></i>→<input type="color" data-i="${i}" value="${toHex(c)}"></label>`).join('');
@@ -3190,7 +3329,7 @@
       $('.pf-v-hv').textContent = $('.pf-v-h').value + '°'; $('.pf-v-sv').textContent = $('.pf-v-s').value; $('.pf-v-lv').textContent = $('.pf-v-l').value;
       $('.pf-v-names').textContent = '→ ' + variant.docs.map((x) => variantPath(x.path, variant.key, sfx).split('/').pop()).join(', ');
       const box = $('.pf-v-preview'); box.innerHTML = '';
-      for (const x of variant.docs) { const c = document.createElement('canvas'); box.appendChild(c); drawPx(c, { w: x.w, h: x.h, imageData: () => new ImageData(new Uint8ClampedArray(x.px.map(fn).buffer), x.w, x.h) }); c.style.width = Math.round(72 * x.w / x.h) + 'px'; }
+      for (const x of variant.docs) { const c = document.createElement('canvas'); box.appendChild(c); drawPx(c, { w: x.w, h: x.h, imageData: () => new ImageData(new Uint8ClampedArray(x.flat().map(fn).buffer), x.w, x.h) }); c.style.width = Math.round(72 * x.w / x.h) + 'px'; }
     }
     $('.pf-variant').onclick = openVariant;
     ['.pf-v-h', '.pf-v-s', '.pf-v-l', '.pf-v-keep', '.pf-v-suffix'].forEach((sel) => ($(sel).oninput = variantPreview));
@@ -3203,7 +3342,7 @@
         if (S.sprites.some((s) => s.path === path)) { note(path.split('/').pop() + ' already exists: pick another name'); return; }
       }
       $('.pf-dlg-variant').close();
-      for (const x of variant.docs) { const path = variantPath(x.path, variant.key, sfx); await addLocal(path, x.w, x.h, x.px.map(fn), canWrite(), true); made.push(path); }
+      for (const x of variant.docs) { const path = variantPath(x.path, variant.key, sfx); await addLocal(path, x.w, x.h, x.flat().map(fn), canWrite(), true); made.push(path); }
       await openSprite(made[0]); note(`variant: ${made.length} new file${made.length > 1 ? 's' : ''} (${canWrite() ? 'Save writes each' : 'kept in this browser; Propose PR adds them'})`);
     };
     /* history: earlier versions of the open sprite from git (GitHub repositories and the local server) */
@@ -3226,7 +3365,7 @@
     $('.pf-hist-list').onclick = (e) => { const b = e.target.closest('.pf-hist-e'); if (!b || b.disabled) return; $$('.pf-hist-e').forEach((x) => x.classList.toggle('on', x === b)); histPick = b.dataset.sha; $('.pf-hist-act').hidden = false; $('.pf-hist-sel').textContent = histPick.slice(0, 7); };
     $('.pf-hist-restore').onclick = async () => {
       const d = doc(); if (!d || !histPick) return;
-      try { const img = await decodePng(new Blob([await S.src.readAt(d.path, histPick)], { type: 'image/png' })); d.snapshot(); d.px = img.px; d.w = img.w; d.h = img.h; fit(); changedUi(); note(`restored the version from ${histPick.slice(0, 7)} (Ctrl+Z undoes it)`); }
+      try { const img = await decodePng(new Blob([await S.src.readAt(d.path, histPick)], { type: 'image/png' })); d.snapshot(); d.setFlat(img.w, img.h, img.px); fit(); changedUi(); note(`restored the version from ${histPick.slice(0, 7)} (Ctrl+Z undoes it)`); }
       catch (e) { note('Could not restore: ' + e.message); }
     };
     $('.pf-context').onclick = (e) => { S.ctx = !S.ctx; e.currentTarget.classList.toggle('on', S.ctx); $('.pf-ctx').hidden = !S.ctx; try { localStorage.setItem('pf:ctx', S.ctx ? '1' : '0'); } catch { /* ignore */ } requestAnimationFrame(() => { resizeView(); if (!S.touched) fit(); render(); }); };
@@ -3303,8 +3442,8 @@
     /* pixel check: recomputed only when the pixels changed since the last check, not on every redraw while panning or zooming */
     let lintMemo = null;
     function lintCache(d) {
-      if (lintMemo && lintMemo.d === d && lintMemo.px.length === d.px.length && lintMemo.w === d.w && countDiff(lintMemo.px, d.px) === 0) return lintMemo.res;
-      lintMemo = { d, w: d.w, px: d.px.slice(), res: lintPixels(d.px, d.w, d.h) }; return lintMemo.res;
+      const flat = d.flat(); if (lintMemo && lintMemo.d === d && lintMemo.px.length === flat.length && lintMemo.w === d.w && countDiff(lintMemo.px, flat) === 0) return lintMemo.res;
+      lintMemo = { d, w: d.w, px: flat.slice(), res: lintPixels(flat, d.w, d.h) }; return lintMemo.res;
     }
     $('.pf-lint').onclick = (e) => { S.lint = !S.lint; e.currentTarget.classList.toggle('on', S.lint); $('.pf-lint-tag').hidden = !S.lint; render(); };
     /* ---------- review notes: pinned to a pixel of a sprite, kept in this browser, sent with the next pull request ---------- */
@@ -3317,9 +3456,51 @@
     function addNote(d, x, y) { const list = notesOf(d); list.push({ x, y, text: '' }); setNotes(d.path, list); S.placingNote = false; renderNotes(); render(); const ins = $$('.pf-note-item input'); if (ins.length) ins[ins.length - 1].focus(); }
     function renderNotes() {
       const d = doc(), list = notesOf(d); $('.pf-note-add').classList.toggle('on', !!S.placingNote); $('.pf-note-add').disabled = !d;
-      $('.pf-notes-n').textContent = list.length ? '· ' + list.length : '';
+      $('.pf-notes-n').textContent = list.length ? '· ' + list.length : ''; $('.pf-notes-tip').hidden = !!list.length; if (list.length && $('.pf-notes').classList.contains('pf-shut')) foldPanel($('.pf-notes'), false, false);
       $('.pf-note-list').innerHTML = list.map((n, i) => `<div class="pf-note-item"><b>${i + 1}</b><input type="text" data-i="${i}" value="${esc(n.text)}" placeholder="what to look at (${n.x}, ${n.y})" aria-label="Note ${i + 1}"><button type="button" class="pf-note-del" data-i="${i}" title="Remove this note">✕</button></div>`).join('');
     }
+    /* ---------- layers: line art, colour, shading… drawn apart, saved flattened (and kept in name.layers.png) ---------- */
+    function renderLayers() {
+      const d = doc(), list = $('.pf-ly-list'); $$('.pf-layers .pf-row button').forEach((b) => { b.disabled = !d; });
+      if (!d) { list.innerHTML = ''; $('.pf-ly-n').textContent = ''; $('.pf-ly-oprow').hidden = true; return; }
+      const n = d.layers.length, a = d.active;
+      $('.pf-ly-n').textContent = n > 1 ? '· ' + n : ''; $('.pf-ly-del').disabled = n < 2; $('.pf-ly-merge').disabled = a === 0; $('.pf-ly-down').disabled = a === 0; $('.pf-ly-up').disabled = a === n - 1;
+      $('.pf-ly-oprow').hidden = n < 2; for (const c of ['.pf-ly-up', '.pf-ly-down', '.pf-ly-merge', '.pf-ly-del']) $(c).hidden = n < 2; $('.pf-ly-op').value = d.layer.opacity; $('.pf-ly-opv').textContent = d.layer.opacity + '%';
+      $('.pf-ly-tip').hidden = n < 2; $('.pf-ly-file').textContent = layersPath(fileName(d));
+      list.innerHTML = n < 2 ? '' : d.layers.map((l, k) => [l, k]).reverse().map(([l, k]) => `<div class="pf-ly${k === a ? ' on' : ''}${l.visible ? '' : ' off'}" data-k="${k}" role="option" aria-selected="${k === a}"><button type="button" class="pf-ly-eye" data-k="${k}" aria-pressed="${l.visible}" title="${l.visible ? 'Hide' : 'Show'} this layer">${l.visible ? '◉' : '○'}</button><canvas data-k="${k}"></canvas><input type="text" data-k="${k}" value="${esc(l.name)}" aria-label="Layer name"></div>`).join('');
+      $$('.pf-ly canvas').forEach((c) => { const l = d.layers[+c.dataset.k]; drawPx(c, { w: d.w, h: d.h, imageData: () => new ImageData(new Uint8ClampedArray(l.px.buffer.slice(0)), d.w, d.h) }); });
+    }
+    /** A change to the layers (not their pixels): one undo step. */
+    function layerEdit(fn) { const d = doc(); if (!d) return; commitFloat(); S.sel = null; d.snapshot(); fn(d); changedUi(); renderLayers(); }
+    const blank = (d, name) => layerOf({ name, px: new Uint32Array(d.w * d.h) });
+    const freeName = (d) => { let k = d.layers.length + 1; while (d.layers.some((l) => l.name === 'Layer ' + k)) k++; return 'Layer ' + k; };
+    $('.pf-ly-add').onclick = () => layerEdit((d) => { d.layers.splice(d.active + 1, 0, blank(d, freeName(d))); d.active++; });
+    $('.pf-ly-dup').onclick = () => layerEdit((d) => { const l = d.layer; d.layers.splice(d.active + 1, 0, { ...l, name: l.name + ' copy', px: l.px.slice() }); d.active++; });
+    const moveLayer = (dir) => layerEdit((d) => { const a = d.active, b = a + dir; if (b < 0 || b >= d.layers.length) return; [d.layers[a], d.layers[b]] = [d.layers[b], d.layers[a]]; d.active = b; });
+    $('.pf-ly-up').onclick = () => moveLayer(1); $('.pf-ly-down').onclick = () => moveLayer(-1);
+    $('.pf-ly-merge').onclick = () => { const d = doc(); if (!d || d.active === 0) return; layerEdit((x) => { const a = x.active, below = x.layers[a - 1]; below.px = flattenLayers([{ ...below, visible: true, opacity: 100 }, x.layers[a]], x.w * x.h); x.layers.splice(a, 1); x.active = a - 1; }); note('merged into the layer below (Ctrl+Z undoes it)'); };
+    $('.pf-ly-del').onclick = () => { const d = doc(); if (!d || d.layers.length < 2) return; const name = d.layer.name; layerEdit((x) => { x.layers.splice(x.active, 1); x.active = Math.max(0, x.active - 1); }); note(`deleted ${name} (Ctrl+Z brings it back)`); };
+    $('.pf-ly-list').addEventListener('click', (e) => {
+      const d = doc(), row = e.target.closest('.pf-ly'); if (!d || !row) return; const k = +row.dataset.k;
+      if (e.target.closest('.pf-ly-eye')) return layerEdit((x) => { x.layers[k].visible = !x.layers[k].visible; });
+      if (k !== d.active) { commitFloat(); S.sel = null; d.active = k; keepSoon(); renderLayers(); render(); }
+    });
+    $('.pf-ly-list').addEventListener('change', (e) => { const k = e.target.dataset.k, v = e.target.value.trim(); if (k == null || e.target.tagName !== 'INPUT') return; const d = doc(); if (!d || !v || d.layers[k].name === v) return renderLayers(); layerEdit((x) => { x.layers[k].name = v; }); });
+    { let session = false;
+      $('.pf-ly-op').oninput = (e) => { const d = doc(); if (!d) return; if (!session) { d.snapshot(); session = true; } d.layer.opacity = +e.target.value; $('.pf-ly-opv').textContent = d.layer.opacity + '%'; keepSoon(); status(); render(); drawPreview(); };
+      $('.pf-ly-op').onchange = () => { session = false; changedUi(); }; }
+    /* Fold the right column's sections by their titles. Notes and Reference start folded; the choice is remembered. */
+    const SHUT_KEY = 'pf:shut', panelKey = (p) => ([...p.classList].find((c) => c !== 'pf-panel' && c !== 'pf-shut') || p.querySelector(':scope>h4').textContent.trim().split(/\s/)[0]).replace(/^pf-/, '').toLowerCase();
+    let shut; try { shut = new Set(JSON.parse(localStorage.getItem(SHUT_KEY) || 'null') || ['notes', 'refpanel']); } catch { shut = new Set(['notes', 'refpanel']); }
+    const foldPanel = (p, on, keep = true) => {
+      p.classList.toggle('pf-shut', on); p.querySelector(':scope>h4').setAttribute('aria-expanded', String(!on));
+      if (!keep) return; const k = panelKey(p); if (on) shut.add(k); else shut.delete(k); try { localStorage.setItem(SHUT_KEY, JSON.stringify([...shut])); } catch { /* this visit */ }
+    };
+    $$('.pf-right > .pf-panel').forEach((p) => {
+      const h = p.querySelector(':scope>h4'); if (!h) return; h.tabIndex = 0; h.setAttribute('role', 'button'); foldPanel(p, shut.has(panelKey(p)), false);
+      h.onclick = () => foldPanel(p, !p.classList.contains('pf-shut'));
+      h.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); h.click(); } };
+    });
     $('.pf-note-add').onclick = () => { S.placingNote = !S.placingNote; renderNotes(); if (S.placingNote) note('Click the pixel the note is about.'); };
     $('.pf-note-list').addEventListener('input', (e) => { const i = e.target.dataset.i; if (i == null) return; const d = doc(), list = notesOf(d); if (!list[i]) return; list[i].text = e.target.value; setNotes(d.path, list); });
     $('.pf-note-list').addEventListener('click', (e) => { const b = e.target.closest('.pf-note-del'); if (!b) return; const d = doc(), list = notesOf(d); list.splice(+b.dataset.i, 1); setNotes(d.path, list); renderNotes(); render(); });
@@ -3360,13 +3541,13 @@
     $('.pf-chex').onchange = (e) => { const c = fromHex(e.target.value); if (c != null) setColor(c); else renderColors(); };
     $('.pf-recolor').onclick = () => { const i = $('.pf-recolor-in'); i.value = toHex(S.color); i.click(); };
     { let session = null;
-      $('.pf-recolor-in').oninput = (e) => { const d = doc(), to = fromHex(e.target.value); if (!d || to == null) return; if (!session) { if (!d.px.includes(S.color)) { note('That colour is not in this image.'); return; } d.snapshot(); session = { from: S.color }; } for (let i = 0; i < d.px.length; i++) if (d.px[i] === session.from) d.px[i] = to; session.from = to; S.color = to; changedUi(); };
+      $('.pf-recolor-in').oninput = (e) => { const d = doc(), to = fromHex(e.target.value); if (!d || to == null) return; if (!session) { if (!d.layers.some((l) => l.px.includes(S.color))) { note('That colour is not in this image.'); return; } d.snapshot(); session = { from: S.color }; } for (const l of d.layers) for (let i = 0; i < l.px.length; i++) if (l.px[i] === session.from) l.px[i] = to; session.from = to; S.color = to; changedUi(); };
       $('.pf-recolor-in').onchange = () => { session = null; }; }
-    $('.pf-fliph').onclick = () => transformSel((px, w, h) => ({ px: flipH(px, w, h), w, h })) || edit((d) => { d.px = flipH(d.px, d.w, d.h); });
-    $('.pf-flipv').onclick = () => transformSel((px, w, h) => ({ px: flipV(px, w, h), w, h })) || edit((d) => { d.px = flipV(d.px, d.w, d.h); });
+    $('.pf-fliph').onclick = () => transformSel((px, w, h) => ({ px: flipH(px, w, h), w, h })) || editAll((d) => { d.px = flipH(d.px, d.w, d.h); });
+    $('.pf-flipv').onclick = () => transformSel((px, w, h) => ({ px: flipV(px, w, h), w, h })) || editAll((d) => { d.px = flipV(d.px, d.w, d.h); });
     /* Rotate by any angle (RotSprite): the selection grows to fit what it becomes; the whole image turns round its centre
        inside the same canvas (corners that leave it are cut). Previewed live. */
-    function rotTarget() { const d = doc(); if (!d) return null; if (S.float) return { px: S.float.px, w: S.float.w, h: S.float.h, sel: true }; if (S.sel) return { px: copySelPx(d), w: S.sel.w, h: S.sel.h, sel: true }; return { px: d.px, w: d.w, h: d.h, sel: false }; } // a lasso or wand selection previews just its pixels
+    function rotTarget() { const d = doc(); if (!d) return null; if (S.float) return { px: S.float.px, w: S.float.w, h: S.float.h, sel: true }; if (S.sel) return { px: copySelPx(d), w: S.sel.w, h: S.sel.h, sel: true }; return { px: d.flat(), w: d.w, h: d.h, sel: false }; } // a lasso or wand selection previews just its pixels
     function rotPreview() {
       const t = rotTarget(); if (!t) return; const a = +$('.pf-rot-n').value || 0, r = t.sel ? rotSprite(t.px, t.w, t.h, a) : rotSprite(t.px, t.w, t.h, a, t.w, t.h);
       const c = $('.pf-rot-prev'), sc = Math.max(1, Math.min(8, Math.floor(240 / Math.max(r.w, r.h)))); drawPx(c, { w: r.w, h: r.h, imageData: () => new ImageData(new Uint8ClampedArray(r.px.buffer.slice(0)), r.w, r.h) }, sc);
@@ -3378,11 +3559,11 @@
     $('.pf-rot-quick').onclick = (e) => { const b = e.target.closest('[data-a]'); if (b) rotSet(b.dataset.a); };
     $('.pf-rot-go').onclick = () => {
       const a = +$('.pf-rot-n').value || 0; $('.pf-dlg-rot').close(); if (!a) return;
-      transformSel((px, w, h) => rotSprite(px, w, h, a)) || edit((d) => { d.px = rotSprite(d.px, d.w, d.h, a, d.w, d.h).px; });
+      transformSel((px, w, h) => rotSprite(px, w, h, a)) || editAll((d) => { d.px = rotSprite(d.px, d.w, d.h, a, d.w, d.h).px; });
       note(`rotated ${a}°`);
     };
-    $('.pf-x2').onclick = () => transformSel((px, w, h) => scale2x(px, w, h)) || edit((d) => { const r = scale2x(d.px, d.w, d.h); d.px = r.px; d.w = r.w; d.h = r.h; fit(); });
-    $('.pf-rot').onclick = () => transformSel((px, w, h) => ({ px: rotateCW(px, w, h), w: h, h: w })) || edit((d) => { d.px = rotateCW(d.px, d.w, d.h); [d.w, d.h] = [d.h, d.w]; fit(); });
+    $('.pf-x2').onclick = () => transformSel((px, w, h) => scale2x(px, w, h)) || editAll((d) => { const r = scale2x(d.px, d.w, d.h); d.px = r.px; d.w = r.w; d.h = r.h; fit(); });
+    $('.pf-rot').onclick = () => transformSel((px, w, h) => ({ px: rotateCW(px, w, h), w: h, h: w })) || editAll((d) => { d.px = rotateCW(d.px, d.w, d.h); [d.w, d.h] = [d.h, d.w]; fit(); });
     const outline = (corners) => { if (isClear(S.color)) return note('Pick an opaque primary colour for the outline.'); commitFloat(); edit((d) => { d.px = outlinePx(d.px, d.w, d.h, S.color, corners); }); };
     $('.pf-outline').onclick = () => outline(false); $('.pf-outline8').onclick = () => outline(true);
     { const tips = $('.pf-imgtools'), line = $('.pf-imgtip'), idle = line.textContent; // name the button under the pointer (or keyboard focus)
@@ -3406,13 +3587,13 @@
       $$('.pf-sz-anchor button').forEach((b) => b.classList.toggle('on', b.dataset.a === sz.anchor));
       $('.pf-sz-anchorrow').hidden = sz.mode !== 'canvas'; $('.pf-sz-lockrow').hidden = sz.mode !== 'scale';
       const cv = $('.pf-sz-cv'), k = Math.max(1, Math.floor(160 / Math.max(w, h, d.w, d.h)));
-      drawPx(cv, { w, h, imageData: () => new ImageData(new Uint8ClampedArray(sizeResult(d, w, h).buffer), w, h) }); cv.style.width = w * k + 'px'; cv.style.height = h * k + 'px';
-      const lost = sz.mode === 'canvas' && (w < d.w || h < d.h) && (() => { const o = anchorOffset(d.w, d.h, w, h, sz.anchor), b = opaqueBounds(d.px, d.w, d.h); return b && (b.x + o.x < 0 || b.y + o.y < 0 || b.x + b.w + o.x > w || b.y + b.h + o.y > h); })();
+      drawPx(cv, { w, h, imageData: () => new ImageData(new Uint8ClampedArray(sizeResult({ px: d.flat(), w: d.w, h: d.h }, w, h).buffer), w, h) }); cv.style.width = w * k + 'px'; cv.style.height = h * k + 'px';
+      const lost = sz.mode === 'canvas' && (w < d.w || h < d.h) && (() => { const o = anchorOffset(d.w, d.h, w, h, sz.anchor), b = opaqueBounds(d.flat(), d.w, d.h); return b && (b.x + o.x < 0 || b.y + o.y < 0 || b.x + b.w + o.x > w || b.y + b.h + o.y > h); })();
       $('.pf-sz-info').innerHTML = `${d.w}×${d.h} → <b>${w}×${h}</b>${lost ? '<br><span class="pf-bad">cuts off visible pixels</span>' : ''}`;
     }
     function applySize(fn, what) {
       const d = doc(); if (!d) return; commitFloat(); S.sel = null;
-      edit((x) => { const r = fn(x); x.px = r.px; x.w = r.w; x.h = r.h; }); fit(); render(); note(what);
+      editAll((x) => { const r = fn(x); x.px = r.px; x.w = r.w; x.h = r.h; }); fit(); render(); note(what);
     }
     $('.pf-resize').onclick = openSize;
     root.addEventListener('click', (e) => { if (e.target.closest('.pf-s-size')) openSize(); });
@@ -3429,12 +3610,12 @@
       const d = doc(); if (!d) return; const w = szVal('.pf-sz-w'), h = szVal('.pf-sz-h'), all = !$('.pf-sz-famrow').hidden && $('.pf-sz-fam').checked;
       $('.pf-dlg-size').close(); commitFloat(); S.sel = null;
       const paths = all ? famMembers(d) : [d.path]; let n = 0;
-      for (const p of paths) { const x = await loadDoc(p); if (!x || (x.w === w && x.h === h)) continue; x.snapshot(); x.px = sizeResult(x, w, h); x.w = w; x.h = h; n++; }
+      for (const p of paths) { const x = await loadDoc(p); if (!x || (x.w === w && x.h === h)) continue; x.snapshot(); x.allLayers((y) => { y.px = sizeResult(y, w, h); y.w = w; y.h = h; }); n++; }
       fit(); changedUi(); note(`${sz.mode === 'scale' ? 'scaled' : 'canvas'} ${w}×${h}${paths.length > 1 ? ` · ${n} of ${paths.length} images changed (undo works per image)` : ''}`);
     };
-    $('.pf-trim').onclick = () => { const d = doc(); if (!d) return; commitFloat(); const b = opaqueBounds(d.px, d.w, d.h); if (!b) return note('Nothing to trim: the image is empty.'); if (b.w === d.w && b.h === d.h) return note('Nothing to trim: no empty border.'); applySize((x) => ({ px: copyRect(x.px, x.w, x.h, b), w: b.w, h: b.h }), `trimmed to ${b.w}×${b.h}`); };
+    $('.pf-trim').onclick = () => { const d = doc(); if (!d) return; commitFloat(); const b = opaqueBounds(d.flat(), d.w, d.h); if (!b) return note('Nothing to trim: the image is empty.'); if (b.w === d.w && b.h === d.h) return note('Nothing to trim: no empty border.'); applySize((x) => ({ px: copyRect(x.px, x.w, x.h, b), w: b.w, h: b.h }), `trimmed to ${b.w}×${b.h}`); };
     $('.pf-sel-crop').onclick = () => { const d = doc(); if (!d) return; commitFloat(); const r = S.sel; if (!r) return note('Select an area first (S, then drag).'); applySize((x) => ({ px: copyRect(x.px, x.w, x.h, r), w: r.w, h: r.h }), `cropped to ${r.w}×${r.h}`); };
-    $('.pf-revert').onclick = () => { const d = doc(); if (!d || !d.changed) return; commitFloat(); S.sel = null; applySize((x) => ({ px: x.base.px.slice(), w: x.base.w, h: x.base.h }), 'back to the original (Ctrl+Z brings your changes back)'); };
+    $('.pf-revert').onclick = () => { const d = doc(); if (!d || !d.changed) return; commitFloat(); S.sel = null; edit((x) => { if (x.base.layers) { x.w = x.base.w; x.h = x.base.h; x.setLayers(copyLayers(x.base.layers), x.active); } else x.setFlat(x.base.w, x.base.h, x.base.px.slice()); }); fit(); render(); note('back to the original (Ctrl+Z brings your changes back)'); };
     const dlOutside = (e) => { const m = root.querySelector('.pf-dlmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-download')) closeDlMenu(); };
     document.addEventListener('pointerdown', dlOutside);
     /* New sprite: the four sizes this project uses most as one-click choices (standard squares when it has fewer), any size by hand */
@@ -3553,13 +3734,13 @@
     $('.pf-slot-in').onchange = (e) => {
       const nw = fromHex(e.target.value), old = slotOld; slotOld = null; if (nw == null || old == null || nw === old) return;
       S.palette = S.palette.map((c) => (c === old ? nw : c));
-      let n = 0; const d = doc(); if (d) edit((dd) => { for (let i = 0; i < dd.px.length; i++) if (dd.px[i] === old) { dd.px[i] = nw; n++; } });
+      let n = 0; const d = doc(); if (d) editAll((dd) => { for (let i = 0; i < dd.px.length; i++) if (dd.px[i] === old) { dd.px[i] = nw; n++; } });
       if (S.color === old) S.color = nw; if (S.color2 === old) S.color2 = nw;
       renderPalette(); renderColors(); note(`${toHex(old)} → ${toHex(nw)}: ${n} pixel${n === 1 ? '' : 's'} changed`);
     };
     $('.pf-palfile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const p = parsePalette(await f.text()); if (p.length) { S.palette = p; renderPalette(); renderColors(); note('palette: ' + p.length + ' colours'); } else note('No colours found in ' + f.name); e.target.value = ''; };
-    $('.pf-palsave').onclick = () => { const d = doc(); if (!d) return; const cols = S.palette.length ? S.palette : colorsOf(d.px).filter(([c]) => c !== 0).map(([c]) => c); download(new Blob([cols.map((c) => toHex(c).slice(1)).join('\n') + '\n'], { type: 'text/plain' }), 'palette.hex'); };
-    $('.pf-snap').onclick = () => edit((d) => { for (let i = 0; i < d.px.length; i++) if (!isClear(d.px[i])) d.px[i] = nearestColor(d.px[i], S.palette); });
+    $('.pf-palsave').onclick = () => { const d = doc(); if (!d) return; const cols = S.palette.length ? S.palette : colorsOf(d.flat()).filter(([c]) => c !== 0).map(([c]) => c); download(new Blob([cols.map((c) => toHex(c).slice(1)).join('\n') + '\n'], { type: 'text/plain' }), 'palette.hex'); };
+    $('.pf-snap').onclick = () => editAll((d) => { for (let i = 0; i < d.px.length; i++) if (!isClear(d.px[i])) d.px[i] = nearestColor(d.px[i], S.palette); });
     $('.pf-play').onclick = () => play(!S.anim.timer);
     ['.pf-fw', '.pf-fh', '.pf-fps'].forEach((s) => ($(s).oninput = frameInputs));
     function keydown(e) {
@@ -3610,5 +3791,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
 });

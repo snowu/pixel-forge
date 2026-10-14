@@ -103,6 +103,14 @@ Works with Vite and other bundlers (checked with a Vite build). Options: `source
 
 Also **Trim** (cut away the empty border) and, with the select tool (`S`), **crop** to the selection. Selections also **cut**, **delete**, **move** (drag or arrows) and flip/rotate on their own.
 
+## Layers
+
+The **Layers** panel (top of the right column) splits a sprite into layers: line art, colour, shading. **+ layer** adds an empty one above the current one; **Copy**, ▲ ▼, **Merge ↓**, ✕, the eye to hide one, an **opacity** slider, and click a name to rename it. Every tool draws on the highlighted layer; flip, rotate, resize, trim, recolour and palette changes apply to all of them, and undo covers every layer change.
+
+![The Layers panel with a four-layer knight: a hidden sketch, flat colours, shading and line art](docs/readme/layers.png)
+
+The game only ever sees one image: Save writes the sprite's PNG flattened, as before. The layers go next to it in `name.layers.png`: the layers stacked top to bottom (bottom layer first), with their names, visibility and opacity in the PNG's text. It is a plain PNG, so it travels through git, pull requests and the zip download with its sprite, and it is left out of the sprite list. Merge back to one layer and the next save (or pull request) removes it. If the sprite's PNG is changed somewhere else and no longer matches its layers, the PNG wins: the sprite opens without layers and the older layers file is left alone.
+
 ## Families and animations
 
 The sprite list is grouped by folder (click a folder to fold it; that is remembered per project) and folds related images into one tile, worked out from the file names alone:
@@ -110,7 +118,7 @@ The sprite list is grouped by folder (click a folder to fold it; that is remembe
 - **Animations**: numbered frames in separate files, such as `flame_0.png`, `flame_1.png` and `flame_2.png`, become one tile marked ▶ with the frame count.
 - **Poses and variants**: `archer_0`, `archer_atk` and `archer_block`, or `floor_crypt` with `floor_crypt_grave`, share a tile with a count. A family needs a base image or numbered frames, so a naming category like `ic_gem` next to `ic_ring` is not lumped together.
 
-When the open sprite belongs to a family, the Preview panel shows a strip of all its frames or poses: click one to open it, or press `,` and `.` to step back and forth. **Play** flips through them, and **onion skin** (`N`) shows the previous frame faintly under the one you are drawing. Sprite sheets with a frame size still animate and onion-skin within the one file.
+When the open sprite belongs to a family, the Animation panel shows a strip of all its frames or poses: click one to open it, or press `,` and `.` to step back and forth. **Play** flips through them, and **onion skin** (`N`) shows the previous frame faintly under the one you are drawing. Sprite sheets with a frame size still animate and onion-skin within the one file.
 
 Typing in the filter switches to a flat list of matching files. Without a `spritewright.config.json`, folders named `docs`, `screenshots`, `previews`, `tests` and similar are left out, because they are rarely game art; set `"keepDocs": true` to list them.
 
@@ -142,7 +150,7 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
 
 ## Animation tools
 
-For frames stored as numbered files (`walk_0.png`, `walk_1.png`…), the frame strip in the Preview panel has **+ frame** (a copy of the current frame, saved as the next number) and **◀ ▶** (move the current frame earlier or later). A lone sprite shows the same strip with just itself, so **+ frame** starts its numbering (`torch.png` → `torch_1.png`). For a **sprite sheet** (one image, frames in a grid), the Preview panel shows its frames in a strip: click one to select it on the canvas (so flip, rotate and the rest work on that frame), **◀ ▶** reorder, **+ frame** copies it right after, **✕** deletes it, and a one-row sheet grows or shrinks to match. Every frame, in a sheet or a numbered family, has a **×1–×4** badge for how long it holds; Play, GIF and the export follow it. **Sheet + JSON** downloads the animation as one sheet PNG with a JSON of its frames and timings in Aseprite's json-array format, which most engines and importers read (a numbered family is packed into a row). **GIF…** exports the animation (a frame family, a sprite sheet's frames, or a single image) as a looping GIF at the scale you choose and the fps set under Preview, to share in chat or a pull request.
+For frames stored as numbered files (`walk_0.png`, `walk_1.png`…), the frame strip in the Animation panel has **+ frame** (a copy of the current frame, saved as the next number) and **◀ ▶** (move the current frame earlier or later). A lone sprite shows the same strip with just itself, so **+ frame** starts its numbering (`torch.png` → `torch_1.png`). For a **sprite sheet** (one image, frames in a grid), the Animation panel shows its frames in a strip: click one to select it on the canvas (so flip, rotate and the rest work on that frame), **◀ ▶** reorder, **+ frame** copies it right after, **✕** deletes it, and a one-row sheet grows or shrinks to match. Every frame, in a sheet or a numbered family, has a **×1–×4** badge for how long it holds; Play, GIF and the export follow it. **Sheet + JSON** downloads the animation as one sheet PNG with a JSON of its frames and timings in Aseprite's json-array format, which most engines and importers read (a numbered family is packed into a row). **GIF…** exports the animation (a frame family, a sprite sheet's frames, or a single image) as a looping GIF at the scale you choose and the fps set under Preview, to share in chat or a pull request.
 
 ## Background
 
@@ -245,7 +253,7 @@ node test/e2e.mjs                  # real server + real browser: drawing, saving
 ## Known limitations
 
 - PNG only. Saving writes a plain 8-bit RGBA PNG: indexed or greyscale files become RGBA, 16-bit files are reduced to 8-bit, interlaced files are read through the browser (which may round semi-transparent pixels), and metadata chunks (colour profile, text, resolution) are not kept.
-- No layers. For layered work keep the `.aseprite` (or similar) source next to the PNG and use this for quick fixes, palette work and review.
+- Layers are plain "normal" blending with opacity (no blend modes, groups or `.aseprite` files).
 - Undo history is per session and held in memory (100 steps per image).
 - Folder mode needs the File System Access API (Chromium browsers). GitHub mode and the local server work in any modern browser; `CompressionStream` is needed for the lossless codec (all current browsers), with a canvas fallback otherwise.
 - The "Recolour all" colour dialog depends on the browser's `<input type=color>`.

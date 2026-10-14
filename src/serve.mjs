@@ -68,6 +68,12 @@ export function createServer({ root, port = 5173, host = '127.0.0.1', config } =
           if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return send(res, 404, 'Not found');
           return send(res, 200, fs.readFileSync(abs), MIME[ext]);
         }
+        if (req.method === 'DELETE') { // only a sprite's layers file, once the sprite is back to one layer
+          if (req.headers['x-spritewright'] !== token) return send(res, 403, 'Missing or wrong token');
+          if (!/\.layers\.png$/i.test(abs)) return send(res, 400, 'Only .layers.png files can be removed');
+          if (!fs.existsSync(abs)) return send(res, 404, 'Not found');
+          fs.unlinkSync(abs); return send(res, 200, JSON.stringify({ ok: true }), MIME['.json']);
+        }
         if (req.method === 'PUT') {
           if (req.headers['x-spritewright'] !== token) return send(res, 403, 'Missing or wrong token');
           if (ext !== '.png') return send(res, 400, 'Only .png files can be written');
