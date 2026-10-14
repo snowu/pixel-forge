@@ -616,7 +616,8 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   const pkg = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
   const stat = http.createServer((req, res) => { const u = req.url.split('?')[0]; const f = u === '/spritewright.js' ? 'spritewright.js' : u === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
   await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const hbase = `http://127.0.0.1:${stat.address().port}/`;
-  const actx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
+  const actx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' }); let installed = false;
+  await actx.grantPermissions(['clipboard-read', 'clipboard-write']);
   const seen = [], refreshes = [], logins = []; let mode = 'ok';
   await actx.route('https://auth.test/**', async (route) => {
     const u = new URL(route.request().url());
@@ -637,7 +638,7 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
     if (r.method() === 'POST' && p === '/repos/me/game/git/commits') return j({ sha: 'c2' });
     if (r.method() === 'POST' && p === '/repos/me/game/git/refs') return j({});
     if (r.method() === 'POST' && p === '/repos/me/game/pulls') return j({ html_url: 'https://github.com/me/game/pull/9', number: 9 });
-    if (p === '/user/installations') return j({ installations: [{ id: 1 }] });
+    if (p === '/user/installations') return j({ installations: installed ? [{ id: 1 }] : [] });
     if (p === '/user/installations/1/repositories') return j({ repositories: [{ full_name: 'me/game', private: true, default_branch: 'main', permissions: { push: true } }, { full_name: 'them/art-only', default_branch: 'master', permissions: { push: false, pull: true } }] });
     if (p === '/repos/me/game') return j({ default_branch: 'main', permissions: { push: true } });
     if (p === '/repos/them/art-only') return j({ default_branch: 'master', permissions: { push: false } });
@@ -667,12 +668,22 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   await ap.waitForFunction(() => /Signed in as artist/.test(document.querySelector('.pf-dlg-connect .pf-who').textContent));
   ok(await ap.locator('.pf-dlg-connect .pf-signout').isVisible() && await ap.locator('.pf-dlg-connect .pf-signin').isHidden(), 'the popup login completes and the dialog shows who is signed in');
   ok(await ap.locator('.pf-dlg-connect .pf-tokenbox').isHidden(), 'once signed in there is no token field at all');
+  // first visit: the app is on none of their repositories yet
+  await ap.waitForSelector('.pf-c-start');
+  ok(/select_target/.test(await ap.locator('.pf-c-install').getAttribute('href')) && /Choose which repositories/.test(await ap.locator('.pf-c-start').innerText()), 'with nothing installed the dialog says what to do next and links to picking repositories');
+  ok(/github\.com\/new\?/.test(await ap.locator('.pf-c-start a', { hasText: 'Create one' }).getAttribute('href')), 'and to creating a repository for someone without one');
+  ok(await ap.locator('.pf-c-addrepo').isHidden(), 'without the "missing a repository?" line underneath');
+  if (process.env.PF_SHOTS) await ap.locator('.pf-dlg-connect').screenshot({ path: process.env.PF_SHOTS + '/first-visit.png' });
+  installed = true; await ap.evaluate(() => window.dispatchEvent(new Event('focus'))); // back from github.com
   await ap.waitForSelector('.pf-c-pick');
+  ok(await ap.locator('.pf-c-start').count() === 0, 'coming back to the tab fills in the list by itself');
   const picks = await ap.locator('.pf-c-pick').allInnerTexts();
   ok(picks.length === 2 && /me\/game/.test(picks[0]) && /private · pull requests/.test(picks[0]) && /them\/art-only/.test(picks[1]) && /read only/.test(picks[1]), 'your repositories are listed with what you can do on each: ' + picks.join(' | ').replace(/\n/g, ' '));
   if (process.env.PF_SHOTS) { await ap.locator('.pf-dlg-connect').screenshot({ path: process.env.PF_SHOTS + '/signed-in.png' }); await ap.setViewportSize({ width: 390, height: 844 }); await ap.screenshot({ path: process.env.PF_SHOTS + '/signed-in-phone.png' }); await ap.setViewportSize({ width: 1280, height: 900 }); }
   ok(/github\.com\/apps\/spritewright\/installations\/select_target/.test(await ap.locator('.pf-c-addrepo a').getAttribute('href')), 'a link to install the app on more repositories sits under the list');
   await ap.locator('.pf-c-pick', { hasText: 'me/game' }).click(); await ap.waitForSelector('.pf-item');
+  await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-brmenu .pf-br-share'); await ap.locator('.pf-br-share').click();
+  ok((await ap.evaluate(() => navigator.clipboard.readText())) === 'https://snowu.github.io/spritewright/?repo=me%2Fgame', 'Copy link to this project: a link that opens the repository (the hosted editor, from a local page)');
   ok(seen.filter((x) => x.p.startsWith('/repos/me/game')).every((x) => x.auth === 'Bearer gho_fromsignin'), 'one click opens it, with the signed-in token');
   const stored = await ap.evaluate(() => JSON.parse(localStorage.getItem('pf:gh')));
   ok(stored.token === 'gho_fromsignin' && stored.refresh === 'ghr_1' && stored.login === 'artist' && stored.exp > Date.now() && await ap.evaluate(() => sessionStorage.getItem('pf:token') === null && localStorage.getItem('pf:token') === null), 'the sign-in is remembered on this device (and no token is stored the old way)');

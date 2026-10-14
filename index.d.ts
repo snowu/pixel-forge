@@ -53,6 +53,8 @@ export interface MountOptions {
   authBase?: string;
   /** Slug of the GitHub App used for sign-in; when set, the repository list links to installing it on more repositories. */
   githubApp?: string;
+  /** Page that "Copy link to this project" points at (…?repo=owner/name). Default: this page, or the hosted editor when this page is local. */
+  shareBase?: string;
   /** The game's background colour (#rrggbb): offered as "Project background" behind transparent pixels. Overrides the project config's "background". */
   background?: string;
   /** Where to show "Signed in as … / Sign out" (an element or a selector in the host page, e.g. its header). Default: the sidebar. */
