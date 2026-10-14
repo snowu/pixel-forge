@@ -1006,7 +1006,8 @@
 .pf-side-head h4{margin:0}
 /* No spritewright.config.json in the open repository: say so where the sprites are, with the one button that sets it up. */
 .pf-setup{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px dashed var(--pf-line2);color:var(--pf-muted);font-size:12px;line-height:1.4}.pf-setup b{color:var(--pf-ink);font-weight:400}
-.pf .pf-setup button{align-self:flex-start;min-height:26px;padding:2px 9px;font-size:12px}
+.pf .pf-setup button{align-self:flex-start;min-height:26px;padding:2px 9px;font-size:12px}.pf-setup{position:relative;padding-right:28px}
+.pf .pf-setup .pf-setup-x{position:absolute;top:3px;right:3px;min-height:22px;width:22px;padding:0;border-color:transparent;background:none;color:var(--pf-muted)}.pf .pf-setup .pf-setup-x:hover:not(:disabled){color:var(--pf-ink);border-color:var(--pf-line2);box-shadow:none}
 .pf-foldmini{display:flex;gap:2px;flex:none}
 .pf-foldmini button{min-height:0;padding:1px 6px;font-size:11px;color:var(--pf-muted);background:none;border-color:transparent}
 .pf .pf-openrow{display:flex;width:100%;align-items:center;gap:8px;background:none;border:1px solid var(--pf-line2);border-top:0;padding:4px 6px;min-height:0;color:var(--pf-ink);font-size:11.5px}
@@ -2046,13 +2047,18 @@
     /** The setup callout: a GitHub repository without spritewright.config.json, until the pick has gone out in a pull request. */
     function renderSetup() {
       const box = $('.pf-setup'), src = S.src, f = src && src.kind === 'github' && src.all && !src.hasConfig ? readFolders(src) : null;
-      const show = !!(src && src.kind === 'github' && src.all && !src.hasConfig && !(f && f.sent)) && !S.loading;
+      // closed with ✕: stays closed for this repository and branch until the note would say something new (a pick after "no setup")
+      const state = f && f.picked ? 'picked' : 'unset', hideKey = src && src.repo ? 'pf:setup-hide:' + src.repo.slug + '@' + src.branch : '';
+      let closed = false; try { closed = !!hideKey && localStorage.getItem(hideKey) === state; } catch { /* show it */ }
+      const show = !!(src && src.kind === 'github' && src.all && !src.hasConfig && !(f && f.sent)) && !S.loading && !closed;
       box.hidden = !show; if (!show) return;
       box.innerHTML = f && f.picked
         ? `<span><b>Art folders picked.</b> ${CONFIG_PATH} goes with your next pull request, so everyone gets this list.</span><button type="button" class="pf-setup-go">Change folders…</button>`
         : src.all.length ? `<span><b>No project setup yet.</b> Choose the folders that hold your art; it is saved as ${CONFIG_PATH} in your next pull request.</span><button type="button" class="primary pf-setup-go">Choose art folders…</button>`
         : `<span><b>No sprites here yet.</b> Choose the folder your art goes in, then draw the first one with New.</span><button type="button" class="primary pf-setup-go">Choose art folder…</button>`;
+      box.insertAdjacentHTML('afterbegin', '<button type="button" class="pf-setup-x" aria-label="Close" title="Close (Art folders… in the project menu changes them later)">✕</button>');
       box.querySelector('.pf-setup-go').onclick = openFolders;
+      box.querySelector('.pf-setup-x').onclick = () => { try { localStorage.setItem(hideKey, state); } catch { /* this visit */ } box.hidden = true; };
     }
     function renderList() {
       renderSetup();
