@@ -782,3 +782,21 @@ test('ditherGradient: pure a at the start, pure b at the end, an even ordered di
   const some = C.ditherGradient(new Uint32Array(w * h).fill(9), w, [0, 1, 2], 0, 0, 2, 0, A, B);
   assert.equal([...some].filter((v) => v === 9).length, w * h - 3, 'pixels outside the region are untouched');
 });
+
+/* ---------- selection masks ---------- */
+test('selection masks: rect ↔ mask, lasso polygons, add and subtract', () => {
+  const W = 8, H = 6;
+  const r = C.selMask({ x: 1, y: 1, w: 3, h: 2 }, W, H); assert.equal(r.reduce((a, b) => a + b, 0), 6);
+  assert.deepEqual(C.maskSel(r, W, H), { x: 1, y: 1, w: 3, h: 2 }, 'a full box comes back as a plain rectangle');
+  const l = r.slice(); l[2 * W + 2] = 0; l[2 * W + 3] = 0; // an L
+  const sel = C.maskSel(l, W, H); assert.deepEqual([sel.x, sel.y, sel.w, sel.h], [1, 1, 3, 2]); assert.deepEqual([...sel.mask], [1, 1, 1, 1, 0, 0]);
+  assert.deepEqual([...C.selMask(sel, W, H)], [...l], 'and round-trips');
+  assert.equal(C.maskSel(new Uint8Array(W * H), W, H), null, 'empty is no selection');
+  const tri = C.lassoMask([[0, 0], [6, 0], [0, 5]], W, H), on = (x, y) => tri[y * W + x];
+  assert.ok(on(0, 0) && on(6, 0) && on(0, 5) && on(1, 1) && on(2, 2), 'corners, edges and the inside');
+  assert.ok(!on(6, 5) && !on(5, 4) && !on(7, 0), 'not outside the slope');
+  const b = C.selMask({ x: 3, y: 1, w: 2, h: 1 }, W, H);
+  assert.equal(C.combineMasks(r, b, 'add').reduce((a, v) => a + v, 0), 7, 'add');
+  assert.equal(C.combineMasks(r, b, 'sub').reduce((a, v) => a + v, 0), 5, 'subtract');
+  assert.equal(C.combineMasks(r, b, null), b, 'replace');
+});
