@@ -757,3 +757,13 @@ test('feedback.url: a prefilled issue form in the repository, with the details w
   assert.ok(F.title('x'.repeat(500)).length <= 100, 'one long word is capped too');
 });
 
+
+/* ---------- art folders ---------- */
+test('artFolders / folderConfig: folders two deep with counts, docs unticked, and the config a pick becomes', () => {
+  const paths = ['icon.png', 'assets/sprites/a.png', 'assets/sprites/deep/b.png', 'assets/tiles/c.png', 'assets/sprites/screenshots/x.png', 'docs/d.png', 'node_modules/p/e.png'];
+  assert.deepEqual(C.artFolders(paths), [{ dir: '', count: 1, art: true }, { dir: 'assets/sprites', count: 3, art: true }, { dir: 'assets/tiles', count: 1, art: true }, { dir: 'docs', count: 1, art: false }]);
+  assert.deepEqual(C.folderConfig(paths, ['assets/sprites', 'assets/tiles']), { dirs: ['assets/sprites', 'assets/tiles'], exclude: ['assets/sprites/screenshots/**'] }, 'screenshots nested in a picked folder stay out');
+  assert.deepEqual(C.folderConfig(paths, ['', 'assets/sprites', 'assets/tiles']), { exclude: ['assets/sprites/screenshots/**', 'docs/**'] }, 'with the top level picked, what was left out is excluded instead');
+  assert.deepEqual(C.folderConfig(paths, ['assets/tiles', '']), { exclude: ['assets/sprites/**', 'docs/**'] });
+  assert.deepEqual(C.folderConfig(['a/x.png', 'b.png'], ['a']), { dirs: ['a'], exclude: [] });
+});

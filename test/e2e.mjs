@@ -531,6 +531,60 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gctx.close(); stat.close();
 }
 
+section('art folders: a repository without spritewright.config.json asks once, and the pick goes into the pull request');
+{
+  const http = await import('node:http');
+  const pkg = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const stat = http.createServer((req, res) => { const f = req.url.split('?')[0] === '/spritewright.js' ? 'spritewright.js' : req.url.split('?')[0] === '/' ? 'index.html' : null; if (!f) { res.writeHead(404); return res.end('nope'); } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); res.end(fs.readFileSync(path.join(pkg, f))); });
+  await new Promise((r) => stat.listen(0, '127.0.0.1', r)); const abase = `http://127.0.0.1:${stat.address().port}/`;
+  const REPO = { 'icon.png': slime.png, 'assets/sprites/hero.png': slime.png, 'assets/tiles/floor.png': slime.png, 'docs/shot.png': slime.png, 'public/screenshots/s.png': slime.png };
+  const tree = Object.entries(REPO).map(([p, b], i) => ({ path: p, type: 'blob', sha: 'sha' + i, size: b.length }));
+  const blobs = [], posts = [];
+  const actx2 = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
+  await actx2.route('https://api.github.com/**', async (route) => {
+    const r = route.request(), p = new URL(r.url()).pathname, m = r.method(), body = r.postData() ? JSON.parse(r.postData()) : null;
+    const j = (st, o) => route.fulfill({ status: st, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(o) });
+    if (m === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,accept,x-github-api-version', 'access-control-allow-methods': '*' } });
+    if (m === 'POST') posts.push({ p, body });
+    if (p === '/user') return j(200, { login: 'artist' });
+    if (p === '/repos/me/art' && m === 'GET') return j(200, { name: 'art', default_branch: 'main', permissions: { push: true } });
+    if (p === '/repos/me/art/git/ref/heads/main') return j(200, { object: { sha: 'c1' } });
+    if (p === '/repos/me/art/git/commits/c1') return j(200, { tree: { sha: 't1' } });
+    if (p === '/repos/me/art/git/trees/t1') return j(200, { tree, truncated: false });
+    const bm = /\/git\/blobs\/sha(\d+)$/.exec(p); if (bm && m === 'GET') return j(200, { encoding: 'base64', content: Buffer.from(Object.values(REPO)[+bm[1]]).toString('base64') });
+    if (p.endsWith('/git/blobs')) { blobs.push(Buffer.from(body.content, 'base64')); return j(201, { sha: 'nb' + blobs.length }); }
+    if (p.endsWith('/git/trees')) return j(201, { sha: 't2' }); if (p.endsWith('/git/commits')) return j(201, { sha: 'c2' }); if (p.endsWith('/git/refs')) return j(201, {});
+    if (p === '/repos/me/art/pulls') return j(201, { html_url: 'https://github.com/me/art/pull/1', number: 1 });
+    return j(404, { message: 'unexpected ' + m + ' ' + p });
+  });
+  const fp2 = await actx2.newPage(); const aerr2 = []; fp2.on('pageerror', (e) => aerr2.push(e.message)); fp2.on('dialog', (d) => d.dismiss());
+  await fp2.goto(abase + '?auth=off&repo=me/art'); await fp2.waitForSelector('.pf-dlg-folders[open]');
+  const rows = await fp2.locator('.pf-af-list label').evaluateAll((ls) => ls.map((l) => (l.querySelector('input').checked ? '+' : '-') + l.querySelector('code').textContent));
+  ok(rows.join(' ') === '+(top level) +assets/sprites/ +assets/tiles/ -docs/ -public/screenshots/', 'opening it asks which folders hold the art, docs and screenshots unticked: ' + rows.join(' '));
+  if (process.env.PF_SHOTS) await fp2.locator('.pf-dlg-folders').screenshot({ path: process.env.PF_SHOTS + '/art-folders.png' });
+  await fp2.locator('.pf-af-list input[value=""]').uncheck(); await fp2.click('.pf-af-go');
+  await fp2.waitForFunction(() => document.querySelectorAll('.pf-item').length === 2);
+  ok((await fp2.locator('.pf-item').evaluateAll((b) => b.map((x) => x.dataset.path).sort())).join() === 'assets/sprites/hero.png,assets/tiles/floor.png', 'the list narrows to the picked folders at once');
+  await fp2.reload(); await fp2.waitForSelector('.pf-item'); await fp2.waitForTimeout(300);
+  ok(!(await fp2.locator('.pf-dlg-folders').evaluate((d) => d.open)) && await fp2.locator('.pf-item').count() === 2, 'reopening it in this browser does not ask again, and keeps the pick');
+  await fp2.locator('.pf-source').click(); await fp2.locator('.pf-br-folders').click(); await fp2.waitForSelector('.pf-dlg-folders[open]');
+  ok((await fp2.locator('.pf-af-list input:checked').evaluateAll((i) => i.map((x) => x.value))).join() === 'assets/sprites,assets/tiles', 'Art folders… in the project menu reopens it with the current pick');
+  await fp2.keyboard.press('Escape');
+  await fp2.locator('.pf-item', { hasText: 'hero' }).click(); await fp2.waitForTimeout(200); await fp2.keyboard.press('b');
+  const vb2 = await fp2.locator('.pf-view').boundingBox(); await fp2.mouse.click(vb2.x + vb2.width / 2, vb2.y + vb2.height / 2); await fp2.waitForTimeout(200);
+  await fp2.locator('.pf-prbtn').click(); await fp2.waitForSelector('.pf-dlg-pr[open]');
+  await fp2.locator('.pf-pr-token').fill('ghp_test'); await fp2.locator('.pf-pr-go').click();
+  await fp2.waitForFunction(() => /Done/.test(document.querySelector('.pf-log').textContent), null, { timeout: 15000 });
+  const tr = posts.find((x) => x.p.endsWith('/git/trees') && x.body.tree.some((t) => t.path === 'spritewright.config.json'));
+  const cfgBlob = tr && blobs[+tr.body.tree.find((t) => t.path === 'spritewright.config.json').sha.slice(2) - 1];
+  ok(!!tr && tr.body.tree.some((t) => t.path === 'assets/sprites/hero.png'), 'the pull request carries spritewright.config.json next to the sprite');
+  ok(cfgBlob && JSON.stringify(JSON.parse(cfgBlob.toString()).dirs) === '["assets/sprites","assets/tiles"]', 'with the picked folders: ' + (cfgBlob && cfgBlob.toString().replace(/\s+/g, ' ')));
+  ok(/Also adds `spritewright\.config\.json`/.test(posts.find((x) => x.p.endsWith('/pulls')).body.body), 'and the description says so');
+  ok(await fp2.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('pf:folders:')).every((k) => JSON.parse(localStorage.getItem(k)).sent)), 'it is sent once: the next pull request does not carry it again');
+  ok(aerr2.length === 0, 'no page errors ' + aerr2.join('|'));
+  await actx2.close(); stat.close();
+}
+
 section('hosted page, fully in the session: upload, edit, download');
 {
   const http = await import('node:http');

@@ -682,6 +682,29 @@
       return { name: String(name), sprites: list.filter((x) => typeof x === 'string'), background };
     }).filter((g) => g.sprites.length);
   }
+  /** The folders a repository's PNGs live in, for "which folders hold your art?": grouped two levels deep (public/art, assets),
+      files at the root as '', with a count, and art: false for docs, screenshots, previews and test folders. */
+  function artFolders(paths) {
+    const by = new Map();
+    for (const p of paths) {
+      const segs = p.split('/').slice(0, -1); if (segs.some((x) => IGNORE.includes(x))) continue;
+      const dir = segs.slice(0, 2).join('/'); by.set(dir, (by.get(dir) || 0) + 1);
+    }
+    return [...by.entries()].map(([dir, count]) => ({ dir, count, art: !dir.split('/').some((x) => NON_ART.test(x)) })).sort((a, b) => a.dir.localeCompare(b.dir));
+  }
+  /** A config for the folders picked out of artFolders: `dirs` when the root is left out, otherwise `exclude` for what was not
+      picked. Docs or screenshot folders nested deeper inside a picked folder stay out too, as they do with no config. */
+  function folderConfig(paths, picked) {
+    const pick = new Set(picked), all = artFolders(paths), cfg = {}, exclude = new Set();
+    if (pick.has('')) { for (const f of all) if (!pick.has(f.dir)) exclude.add(f.dir ? f.dir + '/**' : '*.png'); }
+    else cfg.dirs = all.filter((f) => pick.has(f.dir)).map((f) => f.dir);
+    for (const p of paths) {
+      const segs = p.split('/').slice(0, -1), top = segs.slice(0, 2).join('/'); if (!pick.has(top)) continue;
+      const i = segs.findIndex((x, k) => k >= 2 && NON_ART.test(x)); if (i >= 0) exclude.add(segs.slice(0, i + 1).join('/') + '/**');
+    }
+    cfg.exclude = [...exclude].sort(); // set even when empty: a config with dirs or exclude turns the docs/screenshots guess off
+    return cfg;
+  }
   /** What applyConfig left out only because of that default, so the editor can offer "show N hidden images". */
   const hiddenBy = (items, cfg, kept) => { const k = new Set(kept.map((x) => x.path)); return applyConfig(items, { ...cfg, keepDocs: true }).filter((x) => !k.has(x.path)); };
 
@@ -745,7 +768,7 @@
       if (rawUrl) { try { const r = await doFetch(`${rawBase.replace(/\/$/, '')}/${o.repo}/${sha}/${path.split('/').map(encodeURIComponent).join('/')}`); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* use the API */ } }
       const f = await call(`/repos/${o.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`); return b64ToBytes(f.content.replace(/\n/g, ''));
     };
-    return { kind: 'github', public: info.private === false, thumbs: true, history, readAt, sprites, hidden, palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
+    return { kind: 'github', public: info.private === false, thumbs: true, history, readAt, sprites, hidden, all: png, config: cfg, hasConfig: entries.has('spritewright.config.json'), palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Edits are kept in this browser; Propose PR sends them back.',
       repo: { slug: o.repo, base: branch, defaultBranch: info.default_branch || null, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
@@ -1016,6 +1039,7 @@
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
 .pf-c-start{display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:10px;border:1px dashed var(--pf-line2)}.pf-c-start b{color:var(--pf-ink)}
 .pf a.pf-c-install{display:inline-flex;align-items:center;min-height:30px;padding:4px 10px;border:1px solid var(--pf-accent);background:var(--pf-accent);color:var(--pf-on);font-weight:700;text-decoration:none}.pf a.pf-c-install:hover{background:#cba8ff}.pf a.pf-c-install:focus-visible{outline:1px solid var(--pf-accent);outline-offset:1px}
+.pf-af-list{display:flex;flex-direction:column;gap:2px;max-height:46vh;overflow:auto;border:1px solid var(--pf-line);padding:6px}.pf-af-list label{display:flex;gap:8px;align-items:center;padding:3px 2px;cursor:pointer}.pf-af-list label .pf-note{margin-left:auto}.pf-af-list code{font:inherit;color:var(--pf-ink)}
 .pf .pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-tokenbox summary{cursor:pointer;color:var(--pf-muted);font-size:12.5px}.pf-tokenbox>label,.pf-tokenbox>.pf-note{display:block;margin-top:8px}.pf-tokenbox[hidden]{display:none}
 .pf dialog{background:var(--pf-panel);color:var(--pf-ink);border:1px solid var(--pf-line2);box-shadow:0 0 0 1px rgba(185,140,255,.15),0 20px 60px rgba(0,0,0,.6),0 0 40px rgba(185,140,255,.10);padding:18px;width:min(560px,94vw);max-height:92vh;overflow:auto}
@@ -1430,6 +1454,12 @@
         <div class="pf-row"><button type="button" class="primary pf-fb-send" disabled>Send feedback</button></div>
         <div class="pf-row pf-fb-link"><a class="pf-btn primary pf-fb-go" target="_blank" rel="noopener">Open on GitHub</a><button type="button" class="pf-fb-copy" disabled>Copy screenshot</button><button type="button" class="pf-fb-save" disabled>Save screenshot</button></div>
         <div class="pf-note pf-fb-note" aria-live="polite"></div></form></dialog>
+      <dialog class="pf-dlg-folders"><form method="dialog" class="pf-form">
+        <div class="pf-dlg-head"><h4>Which folders hold your art?</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <div class="pf-note">Only these show up in the list. Docs, screenshots and test folders start unticked.</div>
+        <div class="pf-af-list"></div>
+        <div class="pf-note pf-af-save"></div>
+        <div class="pf-row"><button type="button" class="primary pf-af-go">Use these folders</button><button type="button" class="pf-af-all">Show everything</button></div></form></dialog>
       <dialog class="pf-dlg-keys"><form method="dialog" class="pf-form"><h4>Keyboard shortcuts</h4><div class="pf-keys"></div><div class="pf-row"><button value="cancel" class="primary">Close</button></div></form></dialog>
       <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><div class="pf-dlg-head"><h4>New sprite</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
         <div class="pf-n-line"><span class="pf-seg pf-n-quick" role="group" aria-label="Common sizes"></span><span class="pf-n-or">or</span><input type="number" class="pf-nw" min="1" max="1024" value="16" aria-label="Width" title="Width"><span class="pf-n-or">×</span><input type="number" class="pf-nh" min="1" max="1024" value="16" aria-label="Height" title="Height"></div>
@@ -1526,9 +1556,56 @@
     const storedToken = () => { try { return sessionStorage.getItem('pf:token') || localStorage.getItem('pf:token') || ''; } catch { return ''; } };
     async function fetchJson(u) { const r = await fetch(u); if (!r.ok) throw new Error(u + ': ' + r.status); return r.json(); }
     /** Make `src` the project being edited. Returns false if the user chose to keep their unsaved session. */
+    /* ---------- art folders: for a GitHub repository without spritewright.config.json ----------
+       Asked once when it opens with PNGs in more than one place. The choice applies at once, is remembered in this browser, and
+       goes into the next pull request (or commit) as spritewright.config.json, so everyone opening the repository gets it. */
+    const CONFIG_PATH = 'spritewright.config.json';
+    const foldersKey = (src) => 'pf:folders:' + src.repo.slug + '@' + src.branch;
+    const readFolders = (src) => { try { return JSON.parse(localStorage.getItem(foldersKey(src)) || 'null'); } catch { return null; } };
+    const writeFolders = (src, v) => { try { if (v) localStorage.setItem(foldersKey(src), JSON.stringify(v)); else localStorage.removeItem(foldersKey(src)); } catch { /* applies for this visit only */ } };
+    /** Narrow the open repository to the picked folders, in place. */
+    function applyFolders(src, picked) {
+      const cfg = { ...(src.config || {}) }; delete cfg.dirs; delete cfg.exclude; // the pick replaces the folders, keeps everything else
+      Object.assign(cfg, folderConfig(src.all.map((x) => x.path), picked));
+      if (!cfg.exclude.length && cfg.dirs) delete cfg.exclude;
+      if (!cfg.dirs) delete cfg.dirs;
+      src.sprites = applyConfig(src.all, cfg); src.hidden = [];
+      return cfg;
+    }
+    /** The config file still to send, if the folders were picked here and have not gone out in a pull request or commit yet. */
+    function pendingConfig() {
+      const src = S.src; if (!src || src.kind !== 'github') return null;
+      const f = readFolders(src); return f && !f.sent && f.cfg ? f : null;
+    }
+    const configFile = (f) => ({ path: CONFIG_PATH, blob: new TextEncoder().encode(JSON.stringify(f.cfg, null, 2) + '\n') });
+    const configNote = (f) => `Also adds \`${CONFIG_PATH}\`, so the editor lists ${f.cfg.dirs ? 'only ' + f.cfg.dirs.map((d) => '`' + d + '/`').join(', ') : 'the whole repository'}${f.cfg.exclude && f.cfg.exclude.length ? ' (leaving out ' + f.cfg.exclude.map((d) => '`' + d + '`').join(', ') + ')' : ''} for everyone who opens it.`;
+    function openFolders() {
+      const src = S.src; if (!src || src.kind !== 'github' || !src.all) return;
+      const folders = artFolders(src.all.map((x) => x.path)), now = new Set(S.sprites.map((x) => x.path.split('/').slice(0, -1).slice(0, 2).join('/')));
+      const first = !src.hasConfig && !readFolders(src);
+      $('.pf-af-list').innerHTML = folders.map((f) => `<label><input type="checkbox" value="${esc(f.dir)}"${(first ? f.art : now.has(f.dir)) ? ' checked' : ''}><code>${f.dir ? esc(f.dir) + '/' : '(top level)'}</code><span class="pf-note">${f.count} PNG${f.count === 1 ? '' : 's'}</span></label>`).join('');
+      $('.pf-af-save').textContent = src.hasConfig ? `This repository has a ${CONFIG_PATH}: your pick updates its folders in your next pull request.` : `Your pick is saved as ${CONFIG_PATH} in your next pull request, so everyone who opens this repository gets the same list.`;
+      $('.pf-dlg-folders').showModal();
+    }
+    async function pickFolders(picked) {
+      const src = S.src; $('.pf-dlg-folders').close(); if (!src || src.kind !== 'github') return;
+      const cfg = applyFolders(src, picked); writeFolders(src, { picked, cfg, sent: false });
+      S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
+      renderList(); if (!S.sprites.some((x) => x.path === S.cur) && S.sprites.length) await openSprite(S.sprites[0].path);
+      note(`${S.sprites.length} sprite${S.sprites.length === 1 ? '' : 's'} in the folders you picked. ${CONFIG_PATH} goes with your next pull request.`);
+    }
+    $('.pf-af-go').onclick = () => pickFolders($$('.pf-af-list input:checked').map((i) => i.value));
+    $('.pf-af-all').onclick = () => pickFolders(artFolders(S.src.all.map((x) => x.path)).map((f) => f.dir));
+    /** On opening a GitHub repository: reapply a pick made earlier in this browser, or say whether to ask. */
+    function foldersOnOpen(src) {
+      if (src.kind !== 'github' || !src.all) return false;
+      const f = readFolders(src); if (f && f.picked) { applyFolders(src, f.picked); return false; }
+      return !src.hasConfig && artFolders(src.all.map((x) => x.path)).length > 1;
+    }
     async function useSource(src, how = {}) {
       commitFloat(); await flushDrafts(); // this project's edits stay in the browser: they come back when it is opened again
       if (!keeping() && [...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
+      const askFolders = foldersOnOpen(src);
       play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; folded = null; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
       S.anim.t = 0; drawPreview(); renderFamily(); renderColors(); resetHistory(); // the side panels drop the old project's sprite right away
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
@@ -1540,6 +1617,7 @@
       renderList(); renderPalette(); applyBg();
       if (restored.length) { await openSprite(restored[0].path); note(`${restored.length} sprite${restored.length > 1 ? 's' : ''} with changes restored from this browser`); }
       else if (S.sprites.length) await openSprite(S.sprites[0].path); else { status(); render(); }
+      if (askFolders) openFolders();
       return true;
     }
     async function init() {
@@ -1641,6 +1719,7 @@
         const other = e.target.closest('.pf-br-other');
         if (other) { closeBrMenu(); return openConnect(); }
         if (e.target.closest('.pf-br-share')) { closeBrMenu(); return copyProjectLink(); }
+        if (e.target.closest('.pf-br-folders')) { closeBrMenu(); return openFolders(); }
         const t = e.target.closest('[data-branch]');
         if (!t || t.disabled) return;
         closeBrMenu(); switchBranch(t.dataset.branch);
@@ -1650,10 +1729,10 @@
         const names = token ? await listBranches({ token, repo: gh.slug, apiBase: O.apiBase }) : [];
         const all = names.includes(cur) ? names : [cur, ...names];
         menu.innerHTML = all.map((n) => `<button role="menuitemradio" data-branch="${esc(n)}"${n === cur ? ' class="on" disabled aria-checked="true"' : ''}>⎇ ${esc(n)}</button>`).join('') +
-          `<button type="button" class="pf-br-share" title="A link that opens this repository in spritewright, to send to someone">Copy link to this project</button><button type="button" class="pf-br-other">Open another project…</button>` +
+          `<button type="button" class="pf-br-folders" title="Choose which folders of this repository hold your art">Art folders…</button><button type="button" class="pf-br-share" title="A link that opens this repository in spritewright, to send to someone">Copy link to this project</button><button type="button" class="pf-br-other">Open another project…</button>` +
           (token ? '' : '<div class="pf-note" style="padding:4px 9px">Sign in to list every branch.</div>');
       } catch {
-        menu.innerHTML = `<button role="menuitemradio" data-branch="${esc(cur)}" class="on" disabled>⎇ ${esc(cur)}</button><button type="button" class="pf-br-share" title="A link that opens this repository in spritewright, to send to someone">Copy link to this project</button><button type="button" class="pf-br-other">Open another project…</button>`;
+        menu.innerHTML = `<button role="menuitemradio" data-branch="${esc(cur)}" class="on" disabled>⎇ ${esc(cur)}</button><button type="button" class="pf-br-folders" title="Choose which folders of this repository hold your art">Art folders…</button><button type="button" class="pf-br-share" title="A link that opens this repository in spritewright, to send to someone">Copy link to this project</button><button type="button" class="pf-br-other">Open another project…</button>`;
       }
     }
     const brOutside = (e) => { const m = root.querySelector('.pf-brmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-source')) closeBrMenu(); };
@@ -2363,12 +2442,13 @@
       try {
         const token = (S.auth.token && !typed ? await authToken() : typed) || '';
         if (!token) throw new Error(authBase ? 'Sign in with GitHub first.' : 'Paste a GitHub token first.');
-        const { files, previews } = await filesAndPreviews(changed);
-        const prefix = (S.meta.repo && S.meta.repo.prefix) || '';
-        const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
-          body: (ctx) => prBody({ files, repo, prefix, description: $('.pf-pr-desc').value.trim(), baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha, previewDir: ctx.previewDir }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
+        const { files, previews } = await filesAndPreviews(changed), cfgOut = pendingConfig();
+        const prefix = (S.meta.repo && S.meta.repo.prefix) || '', desc = [$('.pf-pr-desc').value.trim(), cfgOut && configNote(cfgOut)].filter(Boolean).join('\n\n');
+        const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })).concat(cfgOut ? [configFile(cfgOut)] : []), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
+          body: (ctx) => prBody({ files, repo, prefix, description: desc, baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha, previewDir: ctx.previewDir }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
         log.innerHTML = `${esc(log.textContent)}Done${res.forked ? ' (from your fork)' : ''}: <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">${esc(res.url)}</a>`;
         markPushed(changed); // the work now lives in the pull request
+        if (cfgOut) writeFolders(S.src, { ...cfgOut, sent: true });
         keepSoon(); status(); renderList();
       } catch (e) { log.textContent += '\n' + e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { go.disabled = false; }
     }
@@ -2443,9 +2523,9 @@
       const branch = commitBranch() || (S.work && S.work.branch) || ('art/' + slug(message) + '-' + Date.now().toString(36));
       go.disabled = true; note.textContent = '';
       try {
-        const { files } = await filesAndPreviews(sel);
-        const res = await pushSprites({ token, repo: gh.slug, base: gh.base || undefined, branch, prefix: gh.prefix || '', files: files.map((f) => ({ path: f.path, blob: f.blob })), message, apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
-        markPushed(sel);
+        const { files } = await filesAndPreviews(sel), cfgOut = pendingConfig();
+        const res = await pushSprites({ token, repo: gh.slug, base: gh.base || undefined, branch, prefix: gh.prefix || '', files: files.map((f) => ({ path: f.path, blob: f.blob })).concat(cfgOut ? [configFile(cfgOut)] : []), message, apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
+        markPushed(sel); if (cfgOut) writeFolders(S.src, { ...cfgOut, sent: true });
         S.commitSel = null; commitSig = null; $('.pf-commit-msg').value = '';
         if (![...$('.pf-commit-branches').options].some((o) => o.value === res.branch)) $('.pf-commit-branches').insertAdjacentHTML('afterbegin', `<option value="${esc(res.branch)}">⎇ ${esc(res.branch)}</option>`);
         setCommitBranch(res.branch);
@@ -3047,5 +3127,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });
