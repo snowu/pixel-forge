@@ -89,6 +89,8 @@ Works with Vite and other bundlers (checked with a Vite build). Options: `source
 
 <img src="docs/readme/phone.png" width="260" alt="spritewright fullscreen on a phone: the canvas and the tool rail, with the sprite list and colour panel behind the › ‹ handles">
 
+**Drawing with a pencil (Apple Pencil, Wacom, S Pen…):** once a stylus touches the canvas, fingers only pan (one finger) and zoom (two), and a palm resting on the screen while the pen draws is ignored. Before that, a finger draws as usual.
+
 ## Canvas size
 
 **Canvas size…** (Image panel, the `16×16` in the status bar, or `Ctrl+Alt+C`) changes a sprite's size after it was made, with a live preview:
@@ -156,6 +158,7 @@ No config yet? Opening a GitHub repository that has none, with PNGs in more than
   "maxSize": 512,
   "palette": "art/palette.hex",
   "background": "#1a1426",
+  "tileGrid": 16,
   "frames": { "public/art/player_walk.png": { "w": 32, "h": 32, "fps": 10 }, "public/art/enemies/*.png": { "w": 32, "h": 32 } },
   "groups": "art/groups.json",
   "alpha": { "clear": 15, "solid": 245, "keep": [250] },
@@ -164,6 +167,7 @@ No config yet? Opening a GitHub repository that has none, with PNGs in more than
 ```
 
 - `palette` is a `.hex` file (one `rrggbb` per line, the [Lospec](https://lospec.com/palette-list) format): the editor shows it, warns about off-palette colours and can snap an image to it.
+- `tileGrid` draws a stronger line every N pixels (tiles, or a size budget inside a bigger image). The **▾** next to **Grid** changes it (off, 8, 16, 32, 64), remembered per project.
 - `background` is the colour the game draws behind this art. The editor offers it as **Project background** (and uses it by default) so you judge readability against what players see.
 - `frames` gives the frame size of sprite sheets for the animation preview (a wide image whose width is a multiple of its height is otherwise treated as a strip of square frames).
 - `groups` names the sets of sprites seen together in the game, for **Context**: a JSON file (or the object inline) of `{ "Crypt enemies": { "background": "#040308", "sprites": ["public/art/enemies/rat_0.png", …] }, "Blades": ["…", …] }`. A sprite can be in several groups; Context opens on the first. Generate it from the game's data so it stays current (looting-simulator's `npm run art:sync` does).

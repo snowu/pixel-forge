@@ -711,7 +711,7 @@
   /** Sprites listed in a manifest and fetched over HTTP relative to baseUrl. Read-only (Save downloads). */
   function staticSource(mf, baseUrl) {
     const base = baseUrl == null ? '' : baseUrl && !baseUrl.endsWith('/') ? baseUrl + '/' : baseUrl;
-    return { kind: 'static', thumbs: true, note: 'Static mode: edits are kept in this browser; Download takes them out. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'static', thumbs: true, note: 'Static mode: edits are kept in this browser; Download takes them out. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(base + path.split('/').map(encodeURIComponent).join('/')); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); } };
   }
   /** The local `spritewright serve` server: reads and writes the project folder. */
@@ -719,7 +719,7 @@
     const url = (path) => 'project/' + path.split('/').map(encodeURIComponent).join('/');
     const history = async (path) => { const r = await fetch('api/history?path=' + encodeURIComponent(path)); return r.ok ? r.json() : []; };
     const readAt = async (path, sha) => { const r = await fetch(`api/file-at?path=${encodeURIComponent(path)}&sha=${sha}`); if (!r.ok) throw new Error('not in that commit'); return new Uint8Array(await r.arrayBuffer()); };
-    return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
       async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
   }
@@ -768,7 +768,7 @@
       if (rawUrl) { try { const r = await doFetch(`${rawBase.replace(/\/$/, '')}/${o.repo}/${sha}/${path.split('/').map(encodeURIComponent).join('/')}`); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* use the API */ } }
       const f = await call(`/repos/${o.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`); return b64ToBytes(f.content.replace(/\n/g, ''));
     };
-    return { kind: 'github', public: info.private === false, thumbs: true, history, readAt, sprites, hidden, all: png, dirs: [...new Set((tree.tree || []).filter((e) => e.type === 'tree' && !e.path.split('/').some((x) => IGNORE.includes(x) || x.startsWith('.')) && e.path.split('/').length <= 2).map((e) => e.path))].sort(), config: cfg, hasConfig: entries.has('spritewright.config.json'), palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
+    return { kind: 'github', tileGrid: cfg.tileGrid || null, public: info.private === false, thumbs: true, history, readAt, sprites, hidden, all: png, dirs: [...new Set((tree.tree || []).filter((e) => e.type === 'tree' && !e.path.split('/').some((x) => IGNORE.includes(x) || x.startsWith('.')) && e.path.split('/').length <= 2).map((e) => e.path))].sort(), config: cfg, hasConfig: entries.has('spritewright.config.json'), palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Edits are kept in this browser; Propose PR sends them back.',
       repo: { slug: o.repo, base: branch, defaultBranch: info.default_branch || null, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
@@ -794,7 +794,7 @@
     if (typeof cfg.groups === 'string') { const t = await readText(root, ...cfg.groups.split('/')); if (t) try { groups = JSON.parse(t); } catch { /* none */ } }
     const gitCfg = await readText(root, '.git', 'config'), m = gitCfg && /\[remote "origin"\][^[]*?url\s*=\s*(.+)/.exec(gitCfg), slug = (m && slugFromRemote(m[1])) || (cfg.repo && cfg.repo.slug) || null;
     const sprites = applyConfig(found, cfg);
-    return { kind: 'folder', thumbs: true, sprites, hidden: hiddenBy(found, cfg, sprites), palette, groups, alpha: cfg.alpha || null, background: cfg.background || null, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
+    return { kind: 'folder', thumbs: true, sprites, hidden: hiddenBy(found, cfg, sprites), palette, groups, alpha: cfg.alpha || null, tileGrid: cfg.tileGrid || null, background: cfg.background || null, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
       async read(path) { const h = files.get(path); if (!h) throw new Error('not found: ' + path); return new Uint8Array(await (await h.getFile()).arrayBuffer()); },
       async write(path, bytes) {
         const parts = path.split('/'); let dir = root; for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
@@ -978,6 +978,7 @@
 .pf .pf-bar button.primary{background:var(--pf-accent);border-color:var(--pf-accent);color:var(--pf-on);padding:3px 12px}
 .pf .pf-bar button.primary:hover:not(:disabled){background:#cba8ff;color:var(--pf-on)}
 .pf .pf-bar .pf-prbtn:not(:disabled){border-color:var(--pf-line2);color:var(--pf-ink)}
+.pf .pf-bar .pf-grid-more{padding:3px 3px;margin-left:-2px;font-size:10px}
 .pf-bar button>span:not(.pf-bg-sw),.pf-opt-end button>span{display:none}
 .pf .pf-bar .pf-ic{width:17px;height:17px}
 .pf-grp-end,.pf-opt-end{margin-left:auto}
@@ -1373,7 +1374,7 @@
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
           <span class="pf-grp pf-grp-fs"><button class="pf-fs-go" title="Fullscreen: canvas and tools only, menus slide in from the sides">${icon('fullscreen')}<span>Fullscreen</span></button></span>
-          <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
+          <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-grid-more" title="Tile grid: a line every 8, 16 or 32 pixels" aria-haspopup="menu" aria-label="Tile grid">▾</button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
           <span class="pf-grp pf-grp-end"><button class="pf-feedback" title="Send feedback or report a bug, with a screenshot of the editor, as a GitHub issue">${icon('feedback')}<span>Feedback</span></button><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
         <div class="pf-opts">
@@ -1653,7 +1654,7 @@
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       loadWork(); // the branch this repository was being committed to, if any
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
-      S.groups = normGroups(src.groups); S.alpha = normAlpha(O.alpha || src.alpha);
+      S.groups = normGroups(src.groups); S.alpha = normAlpha(O.alpha || src.alpha); loadTileGrid();
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
       const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src); sourceButton();
       renderList(); renderPalette(); applyBg();
@@ -2101,6 +2102,13 @@
         for (let y = 0; y <= d.h; y++) { g.moveTo(S.ox, S.oy + y * z + .5); g.lineTo(S.ox + W, S.oy + y * z + .5); }
         g.stroke();
       }
+      const tg = tileGridSize();
+      if (tg && (d.w > tg || d.h > tg) && z * tg >= 6) { // every tg pixels: tiles, or a size budget inside a bigger image
+        g.strokeStyle = lightBg ? 'rgba(20,10,40,.4)' : 'rgba(185,140,255,.38)'; g.lineWidth = 1; g.beginPath();
+        for (let x = tg; x < d.w; x += tg) { g.moveTo(S.ox + x * z + .5, S.oy); g.lineTo(S.ox + x * z + .5, S.oy + H); }
+        for (let y = tg; y < d.h; y += tg) { g.moveTo(S.ox, S.oy + y * z + .5); g.lineTo(S.ox + W, S.oy + y * z + .5); }
+        g.stroke();
+      }
       if (multi) { g.strokeStyle = 'rgba(255,176,0,.6)'; g.beginPath(); for (let x = f.w; x < d.w; x += f.w) { g.moveTo(S.ox + x * z + .5, S.oy); g.lineTo(S.ox + x * z + .5, S.oy + H); } for (let y = f.h; y < d.h; y += f.h) { g.moveTo(S.ox, S.oy + y * z + .5); g.lineTo(S.ox + W, S.oy + y * z + .5); } g.stroke(); }
       g.strokeStyle = 'rgba(185,140,255,.55)'; g.lineWidth = 1; g.strokeRect(S.ox - .5, S.oy - .5, W + 1, H + 1);
       g.strokeStyle = 'rgba(224,140,255,.75)';
@@ -2266,6 +2274,7 @@
     /* On a touch screen the first finger of a pinch lands a moment before the second, and would draw (or fill, or pick a colour).
        touchEdit remembers what it changed, so a second finger arriving soon after puts it all back: pinching never draws. */
     let touchEdit = null; const TOUCH_GRACE = 400;
+    const capture = (id) => { try { view.setPointerCapture(id); } catch { /* not an active pointer (synthetic events): carry on without */ } };
     function undoTouch() {
       const t = touchEdit; touchEdit = null; if (!t || performance.now() - t.at > TOUCH_GRACE) return;
       const d = t.d, i = t.snap ? d.undo.lastIndexOf(t.snap) : -1;
@@ -2275,9 +2284,16 @@
     }
     view.addEventListener('contextmenu', (e) => e.preventDefault());
     view.addEventListener('pointerdown', (e) => {
-      const d = doc(); if (!d) return; view.setPointerCapture(e.pointerId); pointers.set(e.pointerId, e);
+      const d = doc(); if (!d) return;
+      /* A stylus on the screen: from then on fingers only pan and zoom, and a palm resting while the pen draws is ignored. */
+      if (e.pointerType === 'pen') S.penSeen = true;
+      if (e.pointerType === 'touch' && S.penSeen) {
+        if ([...pointers.values()].some((p) => p.pointerType === 'pen')) return; // the palm, while the pen is down
+        capture(e.pointerId); pointers.set(e.pointerId, e);
+        if (pointers.size === 1) { pan = { x: e.clientX, y: e.clientY, ox: S.ox, oy: S.oy }; return; }
+      } else { capture(e.pointerId); pointers.set(e.pointerId, e); }
       touchEdit = e.pointerType === 'touch' && pointers.size === 1 ? { d, at: performance.now(), snap: null, color: S.color, color2: S.color2, sel: S.sel } : touchEdit;
-      if (pointers.size === 2) { drag = null; undoTouch(); overlay = null; const [a, b] = [...pointers.values()]; pinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: S.zoom, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; return; }
+      if (pointers.size === 2) { pan = null; drag = null; undoTouch(); overlay = null; const [a, b] = [...pointers.values()]; pinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: S.zoom, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; return; }
       if (e.button === 1 || space || (e.button === 0 && e.shiftKey && e.altKey)) { pan = { x: e.clientX, y: e.clientY, ox: S.ox, oy: S.oy }; return; }
       const c = toCell(e), right = e.button === 2, inb = !!cell(d, c.x, c.y);
       let tool = S.tool;
@@ -2981,6 +2997,22 @@
     document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fsReal && fsOn()) { fsReal = false; fsSet(false); } }); // left with the back gesture or Esc
     window.addEventListener('resize', () => { if (fsOn()) fsRail(); });
     $('.pf-grid').onclick = (e) => { S.grid = !S.grid; e.currentTarget.classList.toggle('on', S.grid); render(); };
+    /* Tile grid: 0 (off) or a size in pixels (sprite sheets already show their frames). The project's config sets the default
+       ("tileGrid": 16); a choice made here is remembered per project. */
+    const tgKey = () => 'pf:tgrid:' + ((S.meta && S.meta.repo && S.meta.repo.slug) || (S.src && (S.src.name || S.src.kind)) || '');
+    function loadTileGrid() { let v = null; try { v = JSON.parse(localStorage.getItem(tgKey()) || 'null'); } catch { /* none */ } S.tgrid = v != null ? v : (S.src && S.src.tileGrid) || 0; $('.pf-grid-more').classList.toggle('on', !!S.tgrid); }
+    const tileGridSize = () => +S.tgrid | 0;
+    function setTileGrid(v) { S.tgrid = v; try { localStorage.setItem(tgKey(), JSON.stringify(v)); } catch { /* this visit only */ } $('.pf-grid-more').classList.toggle('on', !!v); render(); }
+    $('.pf-grid-more').onclick = (e) => {
+      e.stopPropagation(); const open = root.querySelector('.pf-tgmenu'); if (open) return open.remove();
+      const opts = [[0, 'Tile grid off'], [8, '8 × 8'], [16, '16 × 16'], [32, '32 × 32'], [64, '64 × 64']];
+      const menu = el(`<div class="pf-bgmenu pf-tgmenu" role="menu">${opts.map(([v, n]) => `<button role="menuitemradio" data-v="${v}"${String(S.tgrid || 0) === String(v) ? ' class="on" aria-checked="true"' : ''}>${n}</button>`).join('')}</div>`);
+      root.appendChild(menu); const b = e.currentTarget.getBoundingClientRect(), r = root.getBoundingClientRect();
+      menu.style.left = Math.max(4, Math.min(b.left - r.left, r.width - menu.offsetWidth - 4)) + 'px'; menu.style.top = (b.bottom - r.top + 4) + 'px';
+      menu.onclick = (ev) => { const t = ev.target.closest('[data-v]'); if (!t) return; menu.remove(); setTileGrid(+t.dataset.v); };
+    };
+    const tgOutside = (e) => { const m = root.querySelector('.pf-tgmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-grid-more')) m.remove(); };
+    document.addEventListener('pointerdown', tgOutside);
     $('.pf-mx').onclick = (e) => { S.mx = !S.mx; e.currentTarget.classList.toggle('on', S.mx); render(); };
     $('.pf-my').onclick = (e) => { S.my = !S.my; e.currentTarget.classList.toggle('on', S.my); render(); };
     try { S.pp = localStorage.getItem('pf:cleanlines') === '1'; } catch { /* default off */ } $('.pf-pp').classList.toggle('on', S.pp);
@@ -3183,7 +3215,7 @@
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setColor2, setTool, undo, redo, selectAll, state: S,
-      dispose() { window.removeEventListener('focus', reposOnReturn); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); document.removeEventListener('pointerdown', brOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); document.removeEventListener('visibilitychange', hideFlush); document.removeEventListener('pointerdown', dlOutside); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
+      dispose() { document.removeEventListener('pointerdown', tgOutside); window.removeEventListener('focus', reposOnReturn); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); document.removeEventListener('pointerdown', brOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); document.removeEventListener('visibilitychange', hideFlush); document.removeEventListener('pointerdown', dlOutside); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
     };
     host.__pf = ctrl;
     return ctrl;

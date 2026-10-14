@@ -90,6 +90,31 @@ await page.locator('.pf-mx').click(); await click(1, 8);
 s = await pf(); ok(s.px[8 * 16 + 1] === RED && s.px[8 * 16 + 14] === RED, 'mirror X paints the opposite pixel too');
 await page.locator('.pf-mx').click(); await page.keyboard.press('Control+z');
 
+section('stylus and tile grid');
+{
+  const sp2 = await ctx.newPage(); const serr = []; sp2.on('pageerror', (e) => serr.push(e.message));
+  await sp2.goto(base + '?auth=off'); await sp2.waitForSelector('.pf-item'); await sp2.locator('.pf-item', { hasText: 'slime.png' }).click(); await sp2.waitForTimeout(250);
+  const st = () => sp2.evaluate(() => { const a = document.getElementById('app').__pf, S = a.state, v = document.querySelector('.pf-view'), r = v.getBoundingClientRect(); return { ox: S.ox, oy: S.oy, zoom: S.zoom, k: v.width / r.width, left: r.left, top: r.top, px: [...a.current.px] }; });
+  const s0 = await st(), at = (x, y) => ({ x: s0.left + (s0.ox + (x + .5) * s0.zoom) / s0.k, y: s0.top + (s0.oy + (y + .5) * s0.zoom) / s0.k });
+  const ptr = (type, kind, id, p) => sp2.evaluate(([type, kind, id, p]) => document.querySelector('.pf-view').dispatchEvent(new PointerEvent(type, { pointerType: kind, pointerId: id, clientX: p.x, clientY: p.y, button: 0, buttons: type === 'pointerup' ? 0 : 1, bubbles: true, isPrimary: true })), [type, kind, id, p]);
+  await sp2.keyboard.press('b');
+  await ptr('pointerdown', 'pen', 7, at(2, 2)); await ptr('pointerup', 'pen', 7, at(2, 2));
+  const s1 = await st(); ok(s1.px[2 * 16 + 2] !== s0.px[2 * 16 + 2], 'a pencil draws');
+  await ptr('pointerdown', 'pen', 7, at(5, 5)); await ptr('pointerdown', 'touch', 8, at(9, 9)); await ptr('pointermove', 'touch', 8, { x: at(9, 9).x + 40, y: at(9, 9).y }); await ptr('pointerup', 'touch', 8, at(9, 9)); await ptr('pointerup', 'pen', 7, at(5, 5));
+  const s2 = await st(); ok(s2.px[9 * 16 + 9] === s1.px[9 * 16 + 9] && s2.ox === s1.ox, 'a palm touching while the pen draws is ignored: no pixel, no pan');
+  await ptr('pointerdown', 'touch', 9, at(12, 12)); await ptr('pointermove', 'touch', 9, { x: at(12, 12).x + 60, y: at(12, 12).y + 30 }); await ptr('pointerup', 'touch', 9, at(12, 12));
+  const s3 = await st(); ok(JSON.stringify(s3.px) === JSON.stringify(s2.px) && s3.ox !== s2.ox, 'after the pen, a finger pans instead of drawing: ' + s2.ox + ' → ' + s3.ox);
+  await sp2.locator('.pf-grid-more').click(); await sp2.waitForSelector('.pf-tgmenu');
+  ok((await sp2.locator('.pf-tgmenu button').allInnerTexts()).join('|') === 'Tile grid off|8 × 8|16 × 16|32 × 32|64 × 64', 'the ▾ next to Grid offers tile grid sizes');
+  await sp2.locator('.pf-tgmenu [data-v="8"]').click();
+  ok(await sp2.evaluate(() => document.getElementById('app').__pf.state.tgrid === 8) && await sp2.locator('.pf-grid-more.on').count() === 1 && await sp2.locator('.pf-tgmenu').count() === 0, 'picking 8 × 8 turns it on and closes the menu');
+  await sp2.reload(); await sp2.waitForSelector('.pf-item'); await sp2.waitForTimeout(200);
+  ok(await sp2.evaluate(() => document.getElementById('app').__pf.state.tgrid === 8), 'and it is remembered for the project');
+  await sp2.locator('.pf-grid-more').click(); await sp2.locator('.pf-tgmenu [data-v="0"]').click();
+  ok(serr.length === 0, 'no page errors ' + serr.join('|'));
+  await sp2.close();
+}
+
 section('more tools: brush size, dither, ellipse, shading, selection, tile, outline, ramps');
 {
   const C = (await import('../spritewright.js'), globalThis.Spritewright.core);
