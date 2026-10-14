@@ -735,6 +735,9 @@ section('art folders: a repository without spritewright.config.json asks once, a
   if (process.env.PF_SHOTS) await fp2.locator('.pf-dlg-folders').screenshot({ path: process.env.PF_SHOTS + '/art-folders.png' });
   await fp2.locator('.pf-af-list input[value=""]').uncheck(); await fp2.click('.pf-af-go');
   ok(/Art folders picked/.test(await fp2.locator('.pf-setup').innerText()), 'the sprite list says the pick goes with the next pull request, with a way to change it');
+  await fp2.locator('.pf-setup-x').click(); ok(await fp2.locator('.pf-setup').isHidden(), 'the note closes with ✕');
+  await fp2.reload(); await fp2.waitForSelector('.pf-item'); await fp2.waitForTimeout(300);
+  ok(await fp2.locator('.pf-setup').isHidden(), 'and stays closed for this repository');
   await fp2.waitForFunction(() => document.querySelectorAll('.pf-item').length === 2);
   ok((await fp2.locator('.pf-item').evaluateAll((b) => b.map((x) => x.dataset.path).sort())).join() === 'assets/sprites/hero.png,assets/tiles/floor.png', 'the list narrows to the picked folders at once');
   await fp2.reload(); await fp2.waitForSelector('.pf-item'); await fp2.waitForTimeout(300);
