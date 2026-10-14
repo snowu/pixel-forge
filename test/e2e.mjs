@@ -45,7 +45,9 @@ const cellPos = async (x, y) => { const b = await page.locator('.pf-view').bound
 const click = async (x, y, o = {}) => { const p = await cellPos(x, y); await page.mouse.click(p.x, p.y, o); };
 const drag = async (x0, y0, x1, y1) => { const a = await cellPos(x0, y0), b = await cellPos(x1, y1); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 8 }); await page.mouse.up(); };
 const until = async (fn, ms = 4000) => { const t = Date.now(); while (Date.now() - t < ms) { try { if (await fn()) return true; } catch { /* retry */ } await new Promise((r) => setTimeout(r, 50)); } return false; };
-const setHex = async (h) => { await page.locator('.pf-chex').fill(h); await page.locator('.pf-chex').press('Tab'); };
+/** Type a colour into the colour popover (opened from the swatch under the tools), then close it. */
+const hexIn = async (p, h) => { if (await p.locator('.pf-cpop').isHidden()) await p.locator('.pf-prim').click(); await p.locator('.pf-chex').fill(h); await p.locator('.pf-chex').press('Enter'); await p.locator('.pf-prim').click(); };
+const setHex = async (h) => { await hexIn(page, h); };
 
 section('opening a project');
 await page.goto(base + '?auth=off'); await page.waitForSelector('.pf-item'); // token mode; sign-in is covered by the hosted-page tests below
@@ -124,7 +126,7 @@ section('dither gradient and Lospec palettes');
   await gp2.route('https://lospec.com/palette-list/**', (r) => /\/endesga-4\.json$/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ name: 'Endesga 4', author: 'Endesga', colors: ['be4a2f', 'd77643', 'ead4aa', 'e4a672'] }) }) : r.fulfill({ status: 404, body: '' }));
   await gp2.goto(base + '?auth=off'); await gp2.waitForSelector('.pf-item');
   await gp2.locator('.pf-new').click(); await gp2.locator('.pf-nw').fill('16'); await gp2.locator('.pf-nh').fill('8'); await gp2.locator('.pf-nn').fill('grad.png'); await gp2.locator('.pf-new-ok').click(); await gp2.waitForTimeout(300);
-  await gp2.locator('.pf-chex').fill('#ff0000'); await gp2.locator('.pf-chex').press('Tab');
+  await hexIn(gp2, '#ff0000');
   await gp2.evaluate(() => { const S = document.getElementById('app').__pf.state; S.color2 = 0xffff0000 >>> 0; }); // secondary: opaque blue (ABGR)
   ok(await gp2.locator('.pf-tools [data-t="gradient"]').count() === 1, 'the rail has a dither gradient tool');
   await gp2.keyboard.press('j');
@@ -237,7 +239,7 @@ section('indexed palette mode');
   const ip = await ictx.newPage(); const ierr = []; ip.on('pageerror', (e) => ierr.push(e.message));
   await ip.goto(base + '?auth=off'); await ip.waitForSelector('.pf-item');
   await ip.locator('.pf-new').click(); await ip.locator('.pf-nw').fill('8'); await ip.locator('.pf-nh').fill('8'); await ip.locator('.pf-nn').fill('idx.png'); await ip.locator('.pf-new-ok').click(); await ip.waitForTimeout(300);
-  const hex = async (h) => { await ip.locator('.pf-chex').fill(h); await ip.locator('.pf-chex').press('Tab'); };
+  const hex = async (h) => { await hexIn(ip, h); };
   const prim = () => ip.locator('.pf-chex').inputValue();
   await hex('#ff0000'); await ip.locator('.pf-pal-add').click(); await hex('#0000ff'); await ip.locator('.pf-pal-add').click();
   ok(await ip.locator('.pf-pal-colors button[title="#ff0000"]').count() === 1 && await ip.locator('.pf-pal-colors button[title="#0000ff"]').count() === 1, 'red and blue join the project palette');
@@ -383,9 +385,11 @@ section('more tools: brush size, dither, ellipse, shading, selection, tile, outl
   await page.keyboard.press('Control+z'); await setHex('#ff0000');
   // hue-shift ramp into the palette
   const palBefore = await page.locator('.pf-pal-colors button').count();
+  await page.locator('.pf-prim').click(); ok(await page.locator('.pf-cpop').isVisible() && await page.locator('.pf-prim').getAttribute('aria-expanded') === 'true', 'the swatch under the tools opens the colour popover');
   await page.locator('.pf-ramp-btn').click(); ok((await page.locator('.pf-ramp-colors button').count()) === 5, 'Hue-shift ramp shows 5 colours around the current one');
   const fresh = await page.evaluate(() => { const S = document.getElementById('app').__pf.state; return S.ramp.filter((c) => !S.palette.includes(c)).length; });
   await page.locator('.pf-ramp-add').click(); ok(fresh >= 4 && (await page.locator('.pf-pal-colors button').count()) === palBefore + fresh, `and adds the ${fresh} new ones to the palette`);
+  await page.keyboard.press('Escape'); ok(await page.locator('.pf-cpop').isHidden(), 'Escape closes the colour popover');
   // shortcuts
   await page.keyboard.press('?'); ok(await page.locator('.pf-dlg-keys').isVisible() && /Ctrl\+C/.test(await page.locator('.pf-dlg-keys').innerText()), '? lists the keyboard shortcuts');
   await page.keyboard.press('Escape');
@@ -708,7 +712,7 @@ section('standalone: hosted page + GitHub repository (no server, no manifest)');
   await gp.locator('.pf-item', { hasText: 'hero.png' }).click(); await gp.waitForTimeout(250);
   const gview = await gp.locator('.pf-view').boundingBox();
   const gS = await gp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
-  await gp.locator('.pf-chex').fill('#ff0000'); await gp.locator('.pf-chex').press('Tab');
+  await hexIn(gp, '#ff0000');
   await gp.mouse.click(gview.x + (gS.ox + 0.5 * gS.z) / gS.k, gview.y + (gS.oy + 0.5 * gS.z) / gS.k);
   ok(await gp.evaluate(() => document.getElementById('app').__pf.current.px[0]) === RED, 'drawing works on a repository sprite');
   { let dls = 0; const h = () => dls++; gp.on('download', h); await gp.keyboard.press('Control+s'); await gp.waitForTimeout(400); gp.off('download', h);
@@ -837,7 +841,7 @@ section('hosted page, fully in the session: upload, edit, download');
   await sp.waitForFunction(() => document.getElementById('app').__pf && document.getElementById('app').__pf.current && document.getElementById('app').__pf.current.path === 'my-heart.png');
   ok(!(await sp.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'the uploaded PNG opens and the dialog is gone');
   const v = await sp.locator('.pf-view').boundingBox(); const S0 = await sp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; });
-  await sp.locator('.pf-chex').fill('#00ff00'); await sp.locator('.pf-chex').press('Tab');
+  await hexIn(sp, '#00ff00');
   await sp.mouse.click(v.x + (S0.ox + 0.5 * S0.z) / S0.k, v.y + (S0.oy + 0.5 * S0.z) / S0.k);
   const app = (pg, fn) => pg.evaluate(fn);
   await sp.waitForFunction(() => /kept in this browser/.test(document.querySelector('.pf-s-name').textContent));
@@ -988,7 +992,7 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   ok(stored.token === 'gho_fromsignin' && stored.refresh === 'ghr_1' && stored.login === 'artist' && stored.exp > Date.now() && await ap.evaluate(() => sessionStorage.getItem('pf:token') === null && localStorage.getItem('pf:token') === null), 'the sign-in is remembered on this device (and no token is stored the old way)');
   // 3. the PR dialog is signed in too
   await ap.waitForFunction(() => document.getElementById('app').__pf.current); await ap.waitForTimeout(300);
-  await ap.locator('.pf-chex').fill('#ff0000'); await ap.locator('.pf-chex').press('Tab'); await ap.keyboard.press('b'); await ap.locator('.pf-view').click();
+  await hexIn(ap, '#ff0000'); await ap.keyboard.press('b'); await ap.locator('.pf-view').click();
   ok(!(await ap.locator('.pf-prbtn').isDisabled()), 'after an edit, Propose PR is available');
   { await ap.locator('.pf-prbtn').click(); await ap.waitForSelector('.pf-dlg-pr[open]'); ok(/Signed in as artist/.test(await ap.locator('.pf-dlg-pr .pf-who').innerText()) && await ap.locator('.pf-dlg-pr .pf-tokenbox').isHidden(), 'the pull request dialog is signed in too, no token to paste');
     await ap.locator('.pf-pr-go').click(); await ap.waitForFunction(() => /pull\/9/.test(document.querySelector('.pf-log').textContent), null, { timeout: 15000 });
@@ -1066,7 +1070,7 @@ section('standalone: folder on this computer (File System Access, mocked picker)
   ok(await fp.locator('.pf-pal-colors button').count() === 2, 'its palette file is loaded');
   await fp.locator('.pf-item', { hasText: 'slime.png' }).click(); await fp.waitForTimeout(250);
   const fv = await fp.locator('.pf-view').boundingBox(); const fS = await fp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; });
-  await fp.locator('.pf-chex').fill('#ff0000'); await fp.locator('.pf-chex').press('Tab');
+  await hexIn(fp, '#ff0000');
   await fp.mouse.click(fv.x + (fS.ox + 0.5 * fS.z) / fS.k, fv.y + (fS.oy + 0.5 * fS.z) / fS.k);
   await fp.keyboard.press('Control+s'); await fp.waitForFunction(() => !/unsaved/.test(document.querySelector('.pf-s-name').textContent));
   const saved = decodePng(Buffer.from(await fp.evaluate(() => window.__read('art/slime.png')), 'base64'));
@@ -1188,7 +1192,7 @@ section('families and animations: grouped list, frame strip, flipbook, onion ski
   const has = (rgb) => fp.evaluate((rgb) => { const c = document.querySelector('.pf-ctx-cv'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 0; i < d.length; i += 4) if (d[i] === rgb[0] && d[i + 1] === rgb[1] && d[i + 2] === rgb[2]) return true; return false; }, rgb);
   ok(await fp.locator('.pf-ctx').isVisible() && /2× · 1 neighbour from chars/.test(await fp.locator('.pf-ctx-note').innerText()), 'V shows the sprite in context with its neighbour from the same folder: ' + await fp.locator('.pf-ctx-note').innerText());
   ok(await has([0, 0, 255]) && await has([255, 0, 0]), 'the strip draws the sprite (blue bat) and its neighbour (red hero frame)');
-  await fp.locator('.pf-chex').fill('#12ab34'); await fp.locator('.pf-chex').press('Tab'); await fp.keyboard.press('b');
+  await hexIn(fp, '#12ab34'); await fp.keyboard.press('b');
   { const b = await fp.locator('.pf-view').boundingBox(), st = await fp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); await fp.mouse.click(b.x + (st.ox + 2.5 * st.z) / st.k, b.y + (st.oy + 2.5 * st.z) / st.k); }
   ok(await has([0x12, 0xab, 0x34]), 'an edit shows up in the context strip straight away');
   await fp.locator('.pf-ctx-scale button[data-scale="4"]').click(); ok(/^4×/.test(await fp.locator('.pf-ctx-note').innerText()), 'the scale buttons change the game scale');
@@ -1287,7 +1291,7 @@ section('project folder: unsaved edits survive a reload; canvas size for a whole
   const kp = await ctx.newPage(); const kerr = []; kp.on('pageerror', (e) => kerr.push(e.message));
   await kp.goto(b3 + '?auth=off'); await kp.waitForSelector('.pf-item'); await kp.evaluate(() => document.getElementById('app').__pf.open('chars/hero_0.png')); await kp.waitForTimeout(200);
   const kpos = async (x, y) => { const b = await kp.locator('.pf-view').boundingBox(), st = await kp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); return { x: b.x + (st.ox + (x + 0.5) * st.z) / st.k, y: b.y + (st.oy + (y + 0.5) * st.z) / st.k }; };
-  await kp.locator('.pf-chex').fill('#0000ff'); await kp.locator('.pf-chex').press('Tab'); await kp.keyboard.press('b');
+  await hexIn(kp, '#0000ff'); await kp.keyboard.press('b');
   { const p = await kpos(3, 3); await kp.mouse.click(p.x, p.y); }
   await kp.waitForFunction(() => /unsaved \(kept in this browser meanwhile\)/.test(document.querySelector('.pf-s-name').textContent));
   ok((await kp.locator('.pf-save').innerText()) === 'Save', 'with a project folder Save still means "write the file"; until then the edit is kept in this browser');
@@ -1349,7 +1353,7 @@ section('changes view: what you changed since opening, and the original on deman
   await cp.goto(base + '?auth=off'); await cp.waitForSelector('.pf-item'); await cp.locator('.pf-item', { hasText: 'slime.png' }).click(); await cp.waitForTimeout(250);
   const at = (x, y, dx = 0.5) => cp.evaluate(([x, y, dx]) => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'), d = c.getContext('2d').getImageData(Math.round(S.ox + (x + dx) * S.zoom), Math.round(S.oy + (y + 0.5) * S.zoom), 1, 1).data; return [...d.slice(0, 3)]; }, [x, y, dx]);
   const pos = async (x, y) => { const b = await cp.locator('.pf-view').boundingBox(); const s = await cp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { zoom: S.zoom, ox: S.ox, oy: S.oy, k: v.width / v.getBoundingClientRect().width }; }); return { x: b.x + (s.ox + (x + 0.5) * s.zoom) / s.k, y: b.y + (s.oy + (y + 0.5) * s.zoom) / s.k }; };
-  await cp.locator('.pf-chex').fill('#00ff00'); await cp.locator('.pf-chex').press('Tab'); await cp.keyboard.press('b');
+  await hexIn(cp, '#00ff00'); await cp.keyboard.press('b');
   const p0 = await pos(5, 5); await cp.mouse.click(p0.x, p0.y); await cp.waitForFunction(() => /kept in this browser/.test(document.querySelector('.pf-s-name').textContent)); // settled: the status line is rewritten once the edit is kept
   ok(/1 px changed · hold \\ for before/.test(await cp.locator('.pf-s-name').innerText()), 'the status bar counts the changed pixels and says how to see the original');
   const plainBody = await at(4, 4), plainNew = await at(5, 5);
@@ -1553,7 +1557,7 @@ section('layers: draw on a layer, save writes the flat PNG and name.layers.png, 
   ok(await lp.locator('.pf-ly').count() === 2 && await lp.locator('.pf-ly.on input').inputValue() === 'Layer 2', 'two layers, the new one on top and current');
   await lp.locator('.pf-ly.on input').fill('line art'); await lp.locator('.pf-ly.on input').press('Enter'); await lp.waitForTimeout(150);
   const lpos = async (x, y) => { const b = await lp.locator('.pf-view').boundingBox(), st = await A(() => { const S = document.getElementById('app').__pf.state; return { z: S.zoom, ox: S.ox, oy: S.oy }; }); const v = await lp.locator('.pf-view').evaluate((c) => c.width / c.getBoundingClientRect().width); return { x: b.x + (st.ox + (x + 0.5) * st.z) / v, y: b.y + (st.oy + (y + 0.5) * st.z) / v }; };
-  await lp.locator('.pf-chex').fill('#0000ff'); await lp.locator('.pf-chex').press('Tab'); await lp.keyboard.press('b');
+  await hexIn(lp, '#0000ff'); await lp.keyboard.press('b');
   { const p = await lpos(1, 1); await lp.mouse.click(p.x, p.y); }
   const st = () => A(() => { const d = document.getElementById('app').__pf.current; return { n: d.layers.length, names: d.layers.map((l) => l.name), l0: d.layers[0].px[5], l1: d.layers[1] && d.layers[1].px[5], flat: d.flat()[5] }; });
   { const s = await st(); ok(s.l0 === 0xff0000ff >>> 0 && s.l1 === 0xffff0000 >>> 0 && s.flat === s.l1 && s.names[1] === 'line art', 'the pen draws on the current layer only, and shows on top: ' + JSON.stringify(s)); }

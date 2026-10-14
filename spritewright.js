@@ -1232,6 +1232,11 @@
 .pf .pf-tools button .pf-ic{width:21px;height:21px}
 .pf .pf-tools button.on{background:var(--pf-accent);border-color:var(--pf-accent);color:var(--pf-on);box-shadow:0 0 16px rgba(185,140,255,.35)}
 .pf-swatch{position:relative;width:40px;height:44px;margin-top:10px;flex:none}
+.pf-cpop{position:fixed;z-index:40;width:250px;max-width:calc(100vw - 16px);display:flex;flex-direction:column;gap:8px;padding:12px;background:var(--pf-panel);border:1px solid var(--pf-line2);box-shadow:0 12px 32px rgba(0,0,0,.45)}
+.pf .pf-cpop button:not(.primary){background:transparent;min-height:28px;padding:2px 9px;font-size:12px}.pf .pf-cpop button:not(.primary):hover:not(:disabled){background:var(--pf-panel2)}
+.pf .pf-cpop .pf-cur input[type=color]{width:56px;height:40px}.pf .pf-cpop .pf-cur input[type=text]{flex:1;min-width:0}
+.pf .pf-prim.open{outline:2px solid var(--pf-accent);outline-offset:2px}
+@media (pointer:coarse){.pf-cpop-tip{display:none}}
 .pf .pf-prim,.pf .pf-sec{position:absolute;width:26px;height:26px;min-height:0;padding:0;border:2px solid var(--pf-ink);background:var(--pf-c,#000)}
 .pf .pf-prim{left:0;top:0;z-index:1}.pf .pf-sec{right:0;bottom:0;border-color:var(--pf-faint)}
 .pf .pf-prim.clear,.pf .pf-sec.clear{background:repeating-conic-gradient(#3a2d55 0 25%,#1c1530 0 50%) 0 0/8px 8px}
@@ -1655,9 +1660,6 @@
           <div class="pf-row"><button class="pf-ly-add" title="A new empty layer above this one">+ layer</button><button class="pf-ly-dup" title="A copy of this layer, above it">Copy</button><button class="pf-ly-up" title="Move this layer up">▲</button><button class="pf-ly-down" title="Move this layer down">▼</button><button class="pf-ly-merge" title="Merge this layer into the one below">Merge ↓</button><button class="pf-ly-del" title="Delete this layer">✕</button></div>
           <div class="pf-row pf-ly-oprow" hidden><label>opacity <input type="range" class="pf-ly-op" min="0" max="100" value="100" aria-label="Layer opacity"></label><span class="pf-note pf-ly-opv"></span></div>
           <div class="pf-note pf-ly-tip">Saved flat, with the layers in <code class="pf-ly-file"></code>.</div></div>
-        <div class="pf-panel"><h4>Colour</h4><div class="pf-cur"><input type="color" class="pf-cpick" aria-label="Current colour"><input type="text" class="pf-chex" maxlength="9" aria-label="Hex colour"></div>
-          <div class="pf-row"><button class="pf-ramp-btn" title="A 5-colour ramp around this colour: cool, darker shadows and warm highlights">Hue ramp</button><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div>
-          <div class="pf-ramp" hidden><div class="pf-sw pf-ramp-colors"></div><button class="pf-ramp-add" title="Add these colours to the palette">+ add to palette</button></div></div>
         <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load one, or add colours.</div></div>
           <div class="pf-sub">In this image<span class="pf-ccount"></span></div><div class="pf-sw pf-img-colors"></div><div class="pf-note pf-off"></div>
           <div class="pf-row"><button class="pf-pal-lock" title="Indexed: every colour you pick snaps to the palette, and double-clicking a palette colour changes it everywhere it is used in this image">Indexed</button><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><input type="color" class="pf-slot-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button></div>
@@ -1683,6 +1685,10 @@
             <div class="pf-row"><button class="pf-ref-toggle" title="Show or hide the reference (H)">hide</button><button class="pf-ref-clear">remove</button></div></div></div>
         <details class="pf-panel pf-hist" hidden><summary><h4>History</h4></summary><div class="pf-hist-list"></div><div class="pf-row pf-hist-act" hidden><button class="primary pf-hist-restore">Restore this version</button><span class="pf-note pf-hist-sel"></span></div></details>
       </aside>
+      <div class="pf-cpop" role="dialog" aria-label="Colour" hidden><div class="pf-cur"><input type="color" class="pf-cpick" aria-label="Current colour"><input type="text" class="pf-chex" maxlength="9" aria-label="Hex colour"></div>
+          <div class="pf-row"><button class="pf-ramp-btn" title="A 5-colour ramp around this colour: cool, darker shadows and warm highlights">Hue ramp</button><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div>
+          <div class="pf-ramp" hidden><div class="pf-sw pf-ramp-colors"></div><button class="pf-ramp-add" title="Add these colours to the palette">+ add to palette</button></div>
+        <div class="pf-note pf-cpop-tip">Right click paints the secondary colour · X swaps · Alt+click picks from the canvas</div></div>
       <div class="pf-fs-scrim"></div><button class="pf-fs-h pf-fs-hl" aria-label="Sprites" aria-expanded="false">›</button><button class="pf-fs-h pf-fs-hr" aria-label="Colours, options and actions" aria-expanded="false">‹</button>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
         <label>Repository <input type="text" class="pf-pr-repo" list="pf-repos" placeholder="owner/name"></label>
@@ -3381,7 +3387,21 @@
     $('.pf-status').addEventListener('pointerdown', (e) => { if (e.target.closest('.pf-s-peek')) { e.preventDefault(); peek(true); } });
     const peekOff = () => peek(false); window.addEventListener('pointerup', peekOff);
     $('.pf-swap').onclick = () => { [S.color, S.color2] = [S.color2, S.color]; if (isClear(S.color) && S.tool === 'pen') setTool('erase'); else if (!isClear(S.color) && S.tool === 'erase') setTool('pen'); renderColors(); swatches(); };
-    $('.pf-prim').onclick = () => $('.pf-cpick').click();
+    /* The colour popover opens from the swatch under the tools, next to where you draw. */
+    function placeCpop() {
+      const pop = $('.pf-cpop'), r = $('.pf-swatch').getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight, vw = innerWidth, vh = innerHeight;
+      let x = r.right + 10, y = r.bottom - ph; // beside the rail, bottoms aligned
+      if (x + pw > vw - 8) { x = Math.max(8, Math.min(r.left, vw - pw - 8)); y = r.top - ph - 10; if (y < 8) y = r.bottom + 10; } // a phone: above (or below) the swatch
+      pop.style.left = Math.round(x) + 'px'; pop.style.top = Math.round(Math.max(8, Math.min(y, vh - ph - 8))) + 'px';
+    }
+    function colourPop(open = $('.pf-cpop').hidden) {
+      const pop = $('.pf-cpop'); pop.hidden = !open; $('.pf-prim').setAttribute('aria-expanded', String(open)); $('.pf-prim').classList.toggle('open', open);
+      if (open) { renderColors(); placeCpop(); }
+    }
+    $('.pf-prim').setAttribute('aria-haspopup', 'dialog'); $('.pf-prim').setAttribute('aria-expanded', 'false');
+    $('.pf-prim').onclick = () => colourPop();
+    document.addEventListener('pointerdown', (e) => { if (!$('.pf-cpop').hidden && !e.target.closest('.pf-cpop') && !e.target.closest('.pf-prim')) colourPop(false); });
+    addEventListener('resize', () => { if (!$('.pf-cpop').hidden) placeCpop(); });
     $('.pf-sec').onclick = () => $('.pf-swap').click();
     $('.pf-ramp-btn').onclick = () => { if (isClear(S.color)) return note('Pick a colour first.'); const r = hueRamp(S.color, 5); $('.pf-ramp').hidden = false; $('.pf-ramp-colors').innerHTML = r.map((c) => `<button data-c="${c}" title="${toHex(c)}" style="background:${toHex(c)}"></button>`).join(''); S.ramp = r; renderColors(); };
     $('.pf-ramp-add').onclick = () => { const add = (S.ramp || []).filter((c) => !S.palette.includes(c)); S.palette = S.palette.concat(add); renderPalette(); renderColors(); note('added ' + add.length + ' colours to the palette'); };
@@ -3538,7 +3558,7 @@
     $('.pf-pp').onclick = (e) => { S.pp = !S.pp; e.currentTarget.classList.toggle('on', S.pp); try { localStorage.setItem('pf:cleanlines', S.pp ? '1' : '0'); } catch { /* ignore */ } };
     $('.pf-save').onclick = save; $('.pf-download').onclick = (e) => { e.stopPropagation(); root.querySelector('.pf-dlmenu') ? closeDlMenu() : openDlMenu(); }; $('.pf-prbtn').onclick = openPr; $('.pf-pr-go').onclick = submitPr;
     $('.pf-cpick').oninput = (e) => setColor(fromHex(e.target.value));
-    $('.pf-chex').onchange = (e) => { const c = fromHex(e.target.value); if (c != null) setColor(c); else renderColors(); };
+    $('.pf-chex').onchange = (e) => { const c = fromHex(e.target.value); if (c != null) setColor(c); else renderColors(); e.target.value = toHex(S.color); }; // shows what it became (Indexed snaps it), even while the field keeps focus
     $('.pf-recolor').onclick = () => { const i = $('.pf-recolor-in'); i.value = toHex(S.color); i.click(); };
     { let session = null;
       $('.pf-recolor-in').oninput = (e) => { const d = doc(), to = fromHex(e.target.value); if (!d || to == null) return; if (!session) { if (!d.layers.some((l) => l.px.includes(S.color))) { note('That colour is not in this image.'); return; } d.snapshot(); session = { from: S.color }; } for (const l of d.layers) for (let i = 0; i < l.px.length; i++) if (l.px[i] === session.from) l.px[i] = to; session.from = to; S.color = to; changedUi(); };
@@ -3753,6 +3773,7 @@
       else if (mod && k === 'c') { if (copySel(false)) e.preventDefault(); } else if (mod && k === 'x') { if (copySel(true)) e.preventDefault(); }
       else if (mod && k === 'a') { e.preventDefault(); selectAll(); }
       else if (mod && k === 'v') { pasteSoon = setTimeout(() => { if (S.clip) pastePx(S.clip.px, S.clip.w, S.clip.h); }, 60); } // the paste event below wins when the clipboard holds an image from another app
+      else if (k === 'escape' && !$('.pf-cpop').hidden) { e.preventDefault(); colourPop(false); $('.pf-prim').focus(); }
       else if (k === 'escape' && root.querySelector('.pf-bgmenu')) { e.preventDefault(); closeBgMenu(); closeDlMenu(); }
       else if (k === 'escape' && (S.sel || S.float)) { e.preventDefault(); dropSelection(); }
       else if (k === 'enter' && S.float) { e.preventDefault(); commitFloat(); render(); status(); }
