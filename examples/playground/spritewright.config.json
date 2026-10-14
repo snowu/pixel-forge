@@ -1,0 +1,13 @@
+{
+  "palette": "palette.hex",
+  "tileGrid": 16,
+  "maxColors": 8,
+  "background": "#2a2238",
+  "frames": {
+    "animation/counter-sheet.png": {
+      "w": 16,
+      "h": 16,
+      "fps": 4
+    }
+  }
+}
