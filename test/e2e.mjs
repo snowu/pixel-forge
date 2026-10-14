@@ -115,6 +115,35 @@ section('stylus and tile grid');
   await sp2.close();
 }
 
+section('dither gradient and Lospec palettes');
+{
+  const gctx2 = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' }); // its own storage: the new sprite stays out of later sections
+  const gp2 = await gctx2.newPage(); const gerr2 = []; gp2.on('pageerror', (e) => gerr2.push(e.message));
+  await gp2.route('https://lospec.com/palette-list/**', (r) => /\/endesga-4\.json$/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ name: 'Endesga 4', author: 'Endesga', colors: ['be4a2f', 'd77643', 'ead4aa', 'e4a672'] }) }) : r.fulfill({ status: 404, body: '' }));
+  await gp2.goto(base + '?auth=off'); await gp2.waitForSelector('.pf-item');
+  await gp2.locator('.pf-new').click(); await gp2.locator('.pf-nw').fill('16'); await gp2.locator('.pf-nh').fill('8'); await gp2.locator('.pf-nn').fill('grad.png'); await gp2.locator('.pf-new-ok').click(); await gp2.waitForTimeout(300);
+  await gp2.locator('.pf-chex').fill('#ff0000'); await gp2.locator('.pf-chex').press('Tab');
+  await gp2.evaluate(() => { const S = document.getElementById('app').__pf.state; S.color2 = 0xffff0000 >>> 0; }); // secondary: opaque blue (ABGR)
+  ok(await gp2.locator('.pf-tools [data-t="gradient"]').count() === 1, 'the rail has a dither gradient tool');
+  await gp2.keyboard.press('j');
+  const g0 = await gp2.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'), r = v.getBoundingClientRect(); return { ox: S.ox, oy: S.oy, z: S.zoom, k: v.width / r.width, l: r.left, t: r.top }; });
+  const gat = (x, y) => ({ x: g0.l + (g0.ox + (x + .5) * g0.z) / g0.k, y: g0.t + (g0.oy + (y + .5) * g0.z) / g0.k });
+  await gp2.mouse.move(gat(0, 4).x, gat(0, 4).y); await gp2.mouse.down(); for (let x = 2; x <= 15; x += 3) await gp2.mouse.move(gat(x, 4).x, gat(x, 4).y); await gp2.mouse.move(gat(15, 4).x, gat(15, 4).y); await gp2.mouse.up();
+  const gpx = await gp2.evaluate(() => { const d = document.getElementById('app').__pf.current; return { px: [...d.px], w: d.w, undo: d.undo.length }; });
+  const colv = (x) => [...Array(8).keys()].map((y) => gpx.px[y * gpx.w + x]), red = colv(0)[0];
+  ok(colv(0).every((v) => v === red) && colv(15).every((v) => v === (0xffff0000 >>> 0)) && red !== colv(15)[0], 'dragging across the empty sprite fills it from the primary colour to the secondary');
+  ok(new Set(colv(7)).size === 2 && gpx.px.every((v) => v === red || v === (0xffff0000 >>> 0)), 'with a dither of only those two colours in between');
+  ok(gpx.undo === 1, 'as one undo step');
+  await gp2.locator('.pf-lospec-btn').click(); await gp2.locator('.pf-lospec-name').fill('https://lospec.com/palette-list/endesga-4'); await gp2.locator('.pf-lospec button[type=submit]').click();
+  await gp2.waitForFunction(() => document.querySelectorAll('.pf-pal-colors button').length === 4);
+  ok(/Endesga 4: 4 colours by Endesga/.test(await gp2.locator('.pf-s-note').innerText()) && await gp2.locator('.pf-lospec').isHidden(), 'a Lospec link (or name) loads that palette: ' + await gp2.locator('.pf-s-note').innerText());
+  await gp2.locator('.pf-lospec-btn').click(); await gp2.locator('.pf-lospec-name').fill('no-such-palette'); await gp2.locator('.pf-lospec button[type=submit]').click();
+  await gp2.waitForFunction(() => /no palette called no-such-palette/.test(document.querySelector('.pf-s-note').textContent));
+  ok(await gp2.locator('.pf-pal-colors button').count() === 4, 'an unknown name says so and keeps the palette');
+  ok(gerr2.length === 0, 'no page errors ' + gerr2.join('|'));
+  await gctx2.close();
+}
+
 section('more tools: brush size, dither, ellipse, shading, selection, tile, outline, ramps');
 {
   const C = (await import('../spritewright.js'), globalThis.Spritewright.core);
