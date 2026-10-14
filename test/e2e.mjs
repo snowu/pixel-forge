@@ -333,6 +333,10 @@ section('more tools: brush size, dither, ellipse, shading, selection, tile, outl
   await click(0, 15, { button: 'right' }); ok(await px(0, 15) === sec && sec !== 0, 'Shift+click a swatch sets the secondary colour, and right click paints with it');
   await page.keyboard.press('x'); ok(await page.evaluate(() => document.getElementById('app').__pf.state.color) === sec, 'X swaps primary and secondary');
   await page.keyboard.press('x'); await page.keyboard.press('Control+z');
+  { const tool = () => page.evaluate(() => document.getElementById('app').__pf.state.tool);
+    await page.keyboard.press('b'); await page.evaluate(() => document.getElementById('app').__pf.setColor2(0)); await page.keyboard.press('x');
+    ok(await tool() === 'pen', 'X swaps the colours only: a clear primary does not switch to the eraser'); await page.keyboard.press('x');
+    await page.keyboard.press('z'); ok(await tool() === 'erase', 'Z switches the pencil to the eraser'); await page.keyboard.press('z'); ok(await tool() === 'pen', 'and back'); }
   await page.evaluate(() => document.getElementById('app').__pf.setColor2(0));
   // shading
   const lum = (c) => { const [r, g, b] = C.unpack(c); return 0.299 * r + 0.587 * g + 0.114 * b; };
