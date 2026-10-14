@@ -854,7 +854,7 @@
   /** Sprites listed in a manifest and fetched over HTTP relative to baseUrl. Read-only (Save downloads). */
   function staticSource(mf, baseUrl) {
     const base = baseUrl == null ? '' : baseUrl && !baseUrl.endsWith('/') ? baseUrl + '/' : baseUrl;
-    return { kind: 'static', thumbs: true, note: 'Static mode: edits are kept in this browser; Download takes them out. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'static', thumbs: true, note: 'Static mode: edits are kept in this browser; Download takes them out. Connect a folder to save in place.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, indexed: !!mf.indexed, maxColors: mf.maxColors || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(base + path.split('/').map(encodeURIComponent).join('/')); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); } };
   }
   /** The local `spritewright serve` server: reads and writes the project folder. */
@@ -862,7 +862,7 @@
     const url = (path) => 'project/' + path.split('/').map(encodeURIComponent).join('/');
     const history = async (path) => { const r = await fetch('api/history?path=' + encodeURIComponent(path)); return r.ok ? r.json() : []; };
     const readAt = async (path, sha) => { const r = await fetch(`api/file-at?path=${encodeURIComponent(path)}&sha=${sha}`); if (!r.ok) throw new Error('not in that commit'); return new Uint8Array(await r.arrayBuffer()); };
-    return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, repo: mf.repo || null, palette: mf.palette || null,
+    return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, indexed: !!mf.indexed, maxColors: mf.maxColors || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
       async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
   }
@@ -911,7 +911,7 @@
       if (rawUrl) { try { const r = await doFetch(`${rawBase.replace(/\/$/, '')}/${o.repo}/${sha}/${path.split('/').map(encodeURIComponent).join('/')}`); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* use the API */ } }
       const f = await call(`/repos/${o.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`); return b64ToBytes(f.content.replace(/\n/g, ''));
     };
-    return { kind: 'github', tileGrid: cfg.tileGrid || null, public: info.private === false, thumbs: true, history, readAt, sprites, hidden, all: png, dirs: [...new Set((tree.tree || []).filter((e) => e.type === 'tree' && !e.path.split('/').some((x) => IGNORE.includes(x) || x.startsWith('.')) && e.path.split('/').length <= 2).map((e) => e.path))].sort(), config: cfg, hasConfig: entries.has('spritewright.config.json'), palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
+    return { kind: 'github', tileGrid: cfg.tileGrid || null, indexed: !!cfg.indexed, maxColors: cfg.maxColors || null, public: info.private === false, thumbs: true, history, readAt, sprites, hidden, all: png, dirs: [...new Set((tree.tree || []).filter((e) => e.type === 'tree' && !e.path.split('/').some((x) => IGNORE.includes(x) || x.startsWith('.')) && e.path.split('/').length <= 2).map((e) => e.path))].sort(), config: cfg, hasConfig: entries.has('spritewright.config.json'), palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Edits are kept in this browser; Propose PR sends them back.',
       repo: { slug: o.repo, base: branch, defaultBranch: info.default_branch || null, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
@@ -937,7 +937,7 @@
     if (typeof cfg.groups === 'string') { const t = await readText(root, ...cfg.groups.split('/')); if (t) try { groups = JSON.parse(t); } catch { /* none */ } }
     const gitCfg = await readText(root, '.git', 'config'), m = gitCfg && /\[remote "origin"\][^[]*?url\s*=\s*(.+)/.exec(gitCfg), slug = (m && slugFromRemote(m[1])) || (cfg.repo && cfg.repo.slug) || null;
     const sprites = applyConfig(found, cfg);
-    return { kind: 'folder', thumbs: true, sprites, hidden: hiddenBy(found, cfg, sprites), palette, groups, alpha: cfg.alpha || null, tileGrid: cfg.tileGrid || null, background: cfg.background || null, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
+    return { kind: 'folder', thumbs: true, sprites, hidden: hiddenBy(found, cfg, sprites), palette, groups, alpha: cfg.alpha || null, tileGrid: cfg.tileGrid || null, indexed: !!cfg.indexed, maxColors: cfg.maxColors || null, background: cfg.background || null, name: root.name, note: 'Folder "' + root.name + '": Save writes the PNG in place.', repo: { slug, base: (cfg.repo && cfg.repo.base) || null, prefix: (cfg.repo && cfg.repo.prefix) || '' },
       async read(path) { const h = files.get(path); if (!h) throw new Error('not found: ' + path); return new Uint8Array(await (await h.getFile()).arrayBuffer()); },
       async write(path, bytes) {
         const parts = path.split('/'); let dir = root; for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
@@ -1164,6 +1164,7 @@
 .pf-cur{display:flex;gap:8px;align-items:center}.pf-cur input[type=color]{width:44px;height:32px;padding:0;border:1px solid var(--pf-line2);background:none;flex:none;cursor:pointer}
 .pf-ramp{display:flex;flex-direction:column;gap:6px}.pf-ramp[hidden]{display:none}.pf .pf-ramp .pf-sw button{width:34px;height:24px}
 .pf-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.pf-ccount{font-weight:400;letter-spacing:0;text-transform:none;color:var(--pf-muted);margin-left:4px}.pf-ccount.over{color:var(--pf-bad)}
 /* Loading a project: a pixel spinner in the sprite list, eight squares round a ring lighting up in turn (steps, no smoothing). */
 .pf-loading{display:flex;flex-direction:column;align-items:center;gap:14px;padding:36px 12px;text-align:center;color:var(--pf-muted)}.pf-loading b{color:var(--pf-ink);font-weight:400;word-break:break-all}
 .pf-spin{display:grid;grid-template-columns:repeat(3,9px);grid-template-rows:repeat(3,9px);gap:2px}
@@ -1556,9 +1557,9 @@
         <div class="pf-panel"><h4>Colour</h4><div class="pf-cur"><input type="color" class="pf-cpick" aria-label="Current colour"><input type="text" class="pf-chex" maxlength="9" aria-label="Hex colour"></div>
           <div class="pf-row"><button class="pf-ramp-btn" title="A 5-colour ramp around this colour: cool, darker shadows and warm highlights">Hue-shift ramp</button><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour all…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div>
           <div class="pf-ramp" hidden><div class="pf-sw pf-ramp-colors"></div><button class="pf-ramp-add" title="Add these colours to the palette">+ add to palette</button></div></div>
-        <div class="pf-panel"><h4>In this image</h4><div class="pf-sw pf-img-colors"></div></div>
+        <div class="pf-panel"><h4>In this image <span class="pf-ccount"></span></h4><div class="pf-sw pf-img-colors"></div></div>
         <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load a .hex (Lospec), or add colours with +.</div><div class="pf-note pf-off"></div></div>
-          <div class="pf-row"><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><button class="pf-palload">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
+          <div class="pf-row"><button class="pf-pal-lock" title="Indexed: every colour you pick snaps to the palette, and double-clicking a palette colour changes it everywhere it is used in this image">Indexed</button><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><input type="color" class="pf-slot-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"><button class="pf-palload">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
           <form class="pf-row pf-lospec" hidden><input type="text" class="pf-lospec-name" placeholder="endesga-32, or a lospec.com link" aria-label="Lospec palette name" autocomplete="off" style="flex:1;min-width:0"><button type="submit" class="primary">Load</button></form></div>
         <div class="pf-panel pf-prev"><h4>Preview</h4>
           <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note"><kbd>,</kbd> <kbd>.</kbd> previous / next · Play flips through them</div></div>
@@ -1817,7 +1818,7 @@
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       loadWork(); // the branch this repository was being committed to, if any
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
-      S.groups = normGroups(src.groups); S.alpha = normAlpha(O.alpha || src.alpha); loadTileGrid();
+      S.groups = normGroups(src.groups); S.alpha = normAlpha(O.alpha || src.alpha); loadTileGrid(); loadIndexed();
       $('.pf-pr-repo').value = ''; $('.pf-pr-base').value = ''; $('.pf-pr-title').value = ''; // the next pull request goes to the new project
       const restored = await restoreDrafts(); if (how.remember !== false) rememberProject(src); sourceButton();
       renderList(); renderPalette(); applyBg();
@@ -2191,7 +2192,9 @@
     /* ---------- palette / colours ---------- */
     function renderColors() {
       const d = doc(); if (!d) { $('.pf-img-colors').innerHTML = '<span class="pf-note">no image open</span>'; return; }
-      swatches(); const cols = colorsOf(d.px).filter(([c]) => c !== 0).slice(0, 64);
+      const all = colorsOf(d.px).filter(([c]) => !isClear(c)), cols = all.slice(0, 64), max = S.maxColors; swatches();
+      const cc = $('.pf-ccount'); cc.textContent = `· ${all.length} colour${all.length === 1 ? '' : 's'}${max ? ' of ' + max : ''}`; cc.classList.toggle('over', !!max && all.length > max);
+      cc.title = max ? (all.length > max ? `Over the project's limit of ${max} colours` : `The project allows ${max} colours ("maxColors" in spritewright.config.json)`) : '';
       $('.pf-img-colors').innerHTML = cols.map(([c, n]) => `<button data-c="${c}" title="${toHex(c)} · ${n}px" class="${c === S.color ? 'on' : ''}" style="background:${toHex(c)}"></button>`).join('') || '<span class="pf-note">transparent</span>';
       $('.pf-cpick').value = toHex(S.color); if (document.activeElement !== $('.pf-chex')) $('.pf-chex').value = toHex(S.color);
       $$('.pf-sw button').forEach((b) => { b.classList.toggle('on', +b.dataset.c === S.color); b.classList.toggle('sec', !isClear(S.color2) && +b.dataset.c === S.color2); });
@@ -2205,10 +2208,13 @@
     }
     function renderPalette() {
       $('.pf-pal-empty').hidden = !!S.palette.length; if (!S.palette.length) $('.pf-off').textContent = '';
+      $('.pf-pal-lock').classList.toggle('on', !!S.indexed); $('.pf-pal-lock').disabled = !S.palette.length && !S.indexed;
       $('.pf-pal-colors').innerHTML = S.palette.map((c) => `<button data-c="${c}" title="${toHex(c)}" style="background:${toHex(c)}"></button>`).join('');
     }
-    function setColor(c) { S.color = c; if (S.tool === 'erase' || S.tool === 'pick') setTool('pen'); renderColors(); swatches(); }
-    function setColor2(c) { S.color2 = c; renderColors(); swatches(); }
+    /** Indexed: a colour from anywhere (picker, hex, the image) becomes its nearest palette colour. */
+    const inPal = (c) => (S.indexed && S.palette.length && c != null && !isClear(c) ? nearestColor(c, S.palette) : c);
+    function setColor(c) { S.color = inPal(c); if (S.tool === 'erase' || S.tool === 'pick') setTool('pen'); renderColors(); swatches(); }
+    function setColor2(c) { S.color2 = inPal(c); renderColors(); swatches(); }
 
     /* ---------- viewport ---------- */
     function resizeView() {
@@ -3498,6 +3504,25 @@
         S.palette = cols; renderPalette(); renderColors(); $('.pf-lospec').hidden = true;
         note(`${j.name || slug}: ${cols.length} colours${j.author ? ' by ' + j.author : ''} (Save .hex keeps it with the project)`);
       } catch (err) { note('Could not load it from Lospec: ' + err.message); }
+    };
+    /* Indexed mode: remembered per project; "indexed": true in the config turns it on by default, "maxColors" sets the limit shown. */
+    const idxKey = () => 'pf:indexed:' + ((S.meta && S.meta.repo && S.meta.repo.slug) || (S.src && (S.src.name || S.src.kind)) || '');
+    function loadIndexed() { let v = null; try { v = JSON.parse(localStorage.getItem(idxKey()) || 'null'); } catch { /* none */ } S.indexed = v != null ? v : !!(S.src && S.src.indexed); S.maxColors = O.maxColors || (S.src && S.src.maxColors) || null; renderPalette(); }
+    $('.pf-pal-lock').onclick = () => {
+      if (!S.palette.length && !S.indexed) return note('Load or build a palette first: indexed mode keeps every colour to it.');
+      S.indexed = !S.indexed; try { localStorage.setItem(idxKey(), JSON.stringify(S.indexed)); } catch { /* this visit */ }
+      if (S.indexed) { S.color = inPal(S.color); S.color2 = inPal(S.color2); }
+      renderPalette(); renderColors(); note(S.indexed ? 'Indexed: picks snap to the palette; double-click a palette colour to change it everywhere in the image' : 'Indexed off: any colour');
+    };
+    /* Edit a palette slot (indexed mode): double-click a palette colour, pick the new one, and every pixel of the old colour follows. */
+    let slotOld = null;
+    $('.pf-pal-colors').addEventListener('dblclick', (e) => { const b = e.target.closest('button[data-c]'); if (!b || !S.indexed) return; slotOld = +b.dataset.c; const inp = $('.pf-slot-in'); inp.value = toHex(slotOld); inp.click(); });
+    $('.pf-slot-in').onchange = (e) => {
+      const nw = fromHex(e.target.value), old = slotOld; slotOld = null; if (nw == null || old == null || nw === old) return;
+      S.palette = S.palette.map((c) => (c === old ? nw : c));
+      let n = 0; const d = doc(); if (d) edit((dd) => { for (let i = 0; i < dd.px.length; i++) if (dd.px[i] === old) { dd.px[i] = nw; n++; } });
+      if (S.color === old) S.color = nw; if (S.color2 === old) S.color2 = nw;
+      renderPalette(); renderColors(); note(`${toHex(old)} → ${toHex(nw)}: ${n} pixel${n === 1 ? '' : 's'} changed`);
     };
     $('.pf-palfile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const p = parsePalette(await f.text()); if (p.length) { S.palette = p; renderPalette(); renderColors(); note('palette: ' + p.length + ' colours'); } else note('No colours found in ' + f.name); e.target.value = ''; };
     $('.pf-palsave').onclick = () => { const d = doc(); if (!d) return; const cols = S.palette.length ? S.palette : colorsOf(d.px).filter(([c]) => c !== 0).map(([c]) => c); download(new Blob([cols.map((c) => toHex(c).slice(1)).join('\n') + '\n'], { type: 'text/plain' }), 'palette.hex'); };

@@ -231,6 +231,30 @@ section('rotate by any angle, smooth x2');
   await rctx.close();
 }
 
+section('indexed palette mode');
+{
+  const ictx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
+  const ip = await ictx.newPage(); const ierr = []; ip.on('pageerror', (e) => ierr.push(e.message));
+  await ip.goto(base + '?auth=off'); await ip.waitForSelector('.pf-item');
+  await ip.locator('.pf-new').click(); await ip.locator('.pf-nw').fill('8'); await ip.locator('.pf-nh').fill('8'); await ip.locator('.pf-nn').fill('idx.png'); await ip.locator('.pf-new-ok').click(); await ip.waitForTimeout(300);
+  const hex = async (h) => { await ip.locator('.pf-chex').fill(h); await ip.locator('.pf-chex').press('Tab'); };
+  const prim = () => ip.locator('.pf-chex').inputValue();
+  await hex('#ff0000'); await ip.locator('.pf-pal-add').click(); await hex('#0000ff'); await ip.locator('.pf-pal-add').click();
+  ok(await ip.locator('.pf-pal-colors button[title="#ff0000"]').count() === 1 && await ip.locator('.pf-pal-colors button[title="#0000ff"]').count() === 1, 'red and blue join the project palette');
+  await ip.locator('.pf-pal-lock').click();
+  ok(await ip.locator('.pf-pal-lock.on').count() === 1, 'Indexed turns on');
+  await hex('#ee2211'); ok((await prim()) === '#ff0000', 'a colour typed in snaps to the nearest palette colour: ' + await prim());
+  await ip.keyboard.press('b'); const v0 = await ip.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'), r = v.getBoundingClientRect(); return { ox: S.ox, oy: S.oy, z: S.zoom, k: v.width / r.width, l: r.left, t: r.top }; });
+  for (const [x, y] of [[1, 1], [2, 2], [3, 3]]) await ip.mouse.click(v0.l + (v0.ox + (x + .5) * v0.z) / v0.k, v0.t + (v0.oy + (y + .5) * v0.z) / v0.k);
+  ok(/· 1 colour/.test(await ip.locator('.pf-ccount').innerText()), 'the panel counts the image\'s colours: ' + await ip.locator('.pf-ccount').innerText());
+  await ip.locator('.pf-pal-colors button[title="#ff0000"]').dblclick();
+  await ip.evaluate(() => { const i = document.querySelector('.pf-slot-in'); i.value = '#00ff00'; i.dispatchEvent(new Event('change')); });
+  const px = await ip.evaluate(() => [...document.getElementById('app').__pf.current.px]), green = px[1 * 8 + 1];
+  ok(green === (0xff00ff00 >>> 0) && px[2 * 8 + 2] === green && px[3 * 8 + 3] === green && (await prim()) === '#00ff00', 'editing a palette colour (double-click) changes every pixel of it, and the primary colour');
+  ok(ierr.length === 0, 'no page errors ' + ierr.join('|'));
+  await ictx.close();
+}
+
 section('more tools: brush size, dither, ellipse, shading, selection, tile, outline, ramps');
 {
   const C = (await import('../spritewright.js'), globalThis.Spritewright.core);
