@@ -144,6 +144,17 @@
   }
   /** The checkerboard used by the dither pattern: true on the pixels it paints. */
   const ditherOn = (x, y, phase = 0) => ((x + y + phase) & 1) === 0;
+  /* Ordered (Bayer 4×4) dither gradient: colour a at (x0,y0) to colour b at (x1,y1), over the given pixel indices of a w-wide
+     image. Each pixel is a or b, never a blend: 17 even steps, the pattern pixel artists draw by hand. Rewrites px in place. */
+  const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+  function ditherGradient(px, w, indices, x0, y0, x1, y1, a, b) {
+    const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
+    for (const i of indices) {
+      const x = i % w, y = (i / w) | 0, t = len2 ? Math.max(0, Math.min(1, ((x - x0) * dx + (y - y0) * dy) / len2)) : 0;
+      px[i] = t * 16 > BAYER4[(y & 3) * 4 + (x & 3)] + 0.5 ? b : a;
+    }
+    return px;
+  }
   /** Replace every pixel of one colour (fully clear pixels count as one colour). Returns the indices changed. */
   function fillSame(px, x, y, w, value) {
     const t = px[y * w + x], clear = isClear(t), changed = [];
@@ -1147,6 +1158,7 @@
     ellipse: '<ellipse cx="12" cy="12" rx="8.2" ry="6.6"/>',
     select: '<path d="M4.5 8V4.5H8M11 4.5h2M16 4.5h3.5V8M19.5 11v2M19.5 16v3.5H16M13 19.5h-2M8 19.5H4.5V16M4.5 13v-2"/>',
     shade: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
+    gradient: '<rect x="4" y="4" width="16" height="16"/><path d="M12 4h4v4h-4zM16 8h4v4h-4zM12 12h4v4h-4zM16 16h4v4h-4zM8 8h4v4H8zM8 16h4v4H8z" fill="currentColor" stroke="none"/>',
     fullscreen: '<path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/>',
     exitfull: '<path d="M9 4.5V9H4.5M19.5 9H15V4.5M15 19.5V15h4.5M4.5 15H9v4.5"/>',
     undo: '<path d="M9 13.5L4.5 9 9 4.5"/><path d="M4.5 9H15a5 5 0 0 1 0 10h-3.5"/>',
@@ -1186,9 +1198,9 @@
   ];
   const icon = (name) => `<svg class="pf-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   // [id, name, key, rail icon or the rail tool it belongs to]
-  const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D']];
+  const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D'], ['gradient', 'Dither gradient: drag from the primary to the secondary colour', 'J']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
-  const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D', 'select & move · shade'], ['[ ]', 'brush size (pencil, eraser, shade, and the line / outline shapes)'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
+  const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D J', 'select & move · shade · dither gradient'], ['[ ]', 'brush size (pencil, eraser, shade, and the line / outline shapes)'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
     ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save (to the project folder when it can be written; edits are kept in this browser either way)'], ['Ctrl+Shift+S', 'download this sprite as a PNG'], ['Ctrl+Alt+C', 'canvas size'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
   /* What shows behind transparent pixels. No single background suits all art (dark details vanish on the dark checker, pale
      ones on the light one), so like Aseprite, Pixelorama and Piskel the editor offers a few and remembers the choice.
@@ -1381,7 +1393,8 @@
           <span class="pf-opt" data-for="pen erase shade line rect ellipse"><span class="pf-ol">size</span><input type="range" class="pf-size" min="1" max="16" value="1" aria-label="Brush size"><b class="pf-sizev">1</b>
             <span class="pf-seg pf-shape"><button data-shape="square" class="on" title="Square tip">${icon('sq')}</button><button data-shape="round" title="Round tip">${icon('circ')}</button></span></span>
           <span class="pf-opt" data-for="pen fill rect rectf ellipse ellipsef line"><span class="pf-ol">pattern</span><span class="pf-seg pf-pattern"><button data-pattern="solid" class="on" title="Solid">solid</button><button data-pattern="dither" title="Checkerboard dither: the primary colour on every other pixel (fills put the secondary colour in between)">dither</button></span></span>
-          <span class="pf-opt" data-for="fill"><span class="pf-ol">fill</span><span class="pf-seg pf-fillmode"><button data-fill="area" class="on" title="Only the connected area">area</button><button data-fill="same" title="Every pixel of that colour in the image">same colour</button></span></span>
+          <span class="pf-opt" data-for="gradient"><span class="pf-note">drag from the primary colour to the secondary · fills the selection, or the area you start in</span></span>
+          <span class="pf-opt" data-for="fill gradient"><span class="pf-ol">fill</span><span class="pf-seg pf-fillmode"><button data-fill="area" class="on" title="Only the connected area">area</button><button data-fill="same" title="Every pixel of that colour in the image">same colour</button></span></span>
           <span class="pf-opt" data-for="rect rectf ellipse ellipsef"><span class="pf-seg pf-filled"><button data-filled="0" class="on" title="Outline (R / O)">outline</button><button data-filled="1" title="Filled (F / U)">filled</button></span><span class="pf-note">Shift: square / circle</span></span>
           <span class="pf-opt" data-for="line"><span class="pf-note">Shift snaps to 45°</span></span>
           <span class="pf-opt" data-for="pen"><button class="pf-pp" title="Pixel-perfect pencil: removes the corner doubles that make 1-pixel lines lumpy. Best for single lines; leave it off to fill areas by dragging.">clean lines</button><span class="pf-note">Shift+click: line from the last point</span></span>
@@ -1404,7 +1417,8 @@
           <div class="pf-ramp" hidden><div class="pf-sw pf-ramp-colors"></div><button class="pf-ramp-add" title="Add these colours to the palette">+ add to palette</button></div></div>
         <div class="pf-panel"><h4>In this image</h4><div class="pf-sw pf-img-colors"></div></div>
         <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load a .hex (Lospec), or add colours with +.</div><div class="pf-note pf-off"></div></div>
-          <div class="pf-row"><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><button class="pf-palload">Load…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div></div>
+          <div class="pf-row"><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><button class="pf-palload">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
+          <form class="pf-row pf-lospec" hidden><input type="text" class="pf-lospec-name" placeholder="endesga-32, or a lospec.com link" aria-label="Lospec palette name" autocomplete="off" style="flex:1;min-width:0"><button type="submit" class="primary">Load</button></form></div>
         <div class="pf-panel pf-prev"><h4>Preview</h4>
           <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note"><kbd>,</kbd> <kbd>.</kbd> previous / next · Play flips through them</div></div>
           <canvas class="pf-p1"></canvas>
@@ -2304,6 +2318,15 @@
         else { commitFloat(); drag = { tool, start: c }; S.sel = rectBetween(c, c, d.w, d.h); render(); }
         status(); return;
       }
+      if (tool === 'gradient') { // the area: the selection, else what a fill would cover from here
+        if (!inb) return;
+        let region;
+        if (S.sel) { region = []; for (let y = S.sel.y; y < S.sel.y + S.sel.h; y++) for (let x = S.sel.x; x < S.sel.x + S.sel.w; x++) region.push(y * d.w + x); }
+        else { const probe = d.px.slice(), mark = (probe[c.y * d.w + c.x] ^ 0x5a5a5a5a) >>> 0; region = S.fillMode === 'same' ? fillSame(probe, c.x, c.y, d.w, mark) : floodFill(probe, d.w, d.h, c.x, c.y, mark); }
+        d.snapshot(); if (touchEdit && touchEdit.d === d) touchEdit.snap = d.undo[d.undo.length - 1];
+        drag = { tool, start: c, last: c, region, base: d.px.slice(), a: right ? S.color2 : S.color, b: right ? S.color : S.color2 };
+        d.px = ditherGradient(drag.base.slice(), d.w, region, c.x, c.y, c.x, c.y, drag.a, drag.b); changedUi(); return;
+      }
       let value = right ? S.color2 : S.color; if (tool === 'erase') value = 0;
       if (!inb && !isShape(tool)) return;
       d.snapshot(); if (touchEdit && touchEdit.d === d) touchEdit.snap = d.undo[d.undo.length - 1];
@@ -2326,6 +2349,10 @@
         if (drag.move) { S.float.x = drag.fx + c.x - drag.start.x; S.float.y = drag.fy + c.y - drag.start.y; S.sel = { x: S.float.x, y: S.float.y, w: S.float.w, h: S.float.h }; }
         else S.sel = rectBetween(drag.start, c, d.w, d.h);
         render(); status(); return;
+      }
+      if (drag.tool === 'gradient') {
+        if (c.x === drag.last.x && c.y === drag.last.y) return; drag.last = c;
+        d.px = ditherGradient(drag.base.slice(), d.w, drag.region, drag.start.x, drag.start.y, c.x, c.y, drag.a, drag.b); changedUi(); return;
       }
       if (drag.tool === 'pen' || drag.tool === 'erase' || drag.tool === 'shade') {
         for (const [x, y] of linePoints(drag.last.x, drag.last.y, c.x, c.y).slice(1)) {
@@ -3168,6 +3195,20 @@
       } catch (e) { msg.textContent = e && e.name === 'AbortError' ? '' : 'Could not open the folder: ' + (e && e.message); }
     };
     $('.pf-palload').onclick = () => $('.pf-palfile').click();
+    /* Lospec: the palette's name (the end of its lospec.com/palette-list/… address) or the address itself. Its .json answers CORS. */
+    $('.pf-lospec-btn').onclick = () => { const f = $('.pf-lospec'); f.hidden = !f.hidden; if (!f.hidden) $('.pf-lospec-name').focus(); };
+    $('.pf-lospec').onsubmit = async (e) => {
+      e.preventDefault(); const raw = $('.pf-lospec-name').value.trim(), m = /palette-list\/([\w-]+)/.exec(raw), slug = (m ? m[1] : raw).toLowerCase().replace(/\s+/g, '-').replace(/\.(hex|json)$/, '');
+      if (!/^[a-z0-9-]+$/.test(slug)) { note('Type a Lospec palette name, like endesga-32'); return; }
+      note('Loading ' + slug + ' from Lospec…');
+      try {
+        const r = await fetch((O.lospecBase || 'https://lospec.com/palette-list/') + slug + '.json'); if (!r.ok) throw new Error(r.status === 404 ? 'no palette called ' + slug : 'Lospec answered ' + r.status);
+        const j = await r.json(), cols = (j.colors || []).map((h) => fromHex('#' + String(h).replace('#', ''))).filter((c) => c != null);
+        if (!cols.length) throw new Error('that palette has no colours');
+        S.palette = cols; renderPalette(); renderColors(); $('.pf-lospec').hidden = true;
+        note(`${j.name || slug}: ${cols.length} colours${j.author ? ' by ' + j.author : ''} (Save .hex keeps it with the project)`);
+      } catch (err) { note('Could not load it from Lospec: ' + err.message); }
+    };
     $('.pf-palfile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const p = parsePalette(await f.text()); if (p.length) { S.palette = p; renderPalette(); renderColors(); note('palette: ' + p.length + ' colours'); } else note('No colours found in ' + f.name); e.target.value = ''; };
     $('.pf-palsave').onclick = () => { const d = doc(); if (!d) return; const cols = S.palette.length ? S.palette : colorsOf(d.px).filter(([c]) => c !== 0).map(([c]) => c); download(new Blob([cols.map((c) => toHex(c).slice(1)).join('\n') + '\n'], { type: 'text/plain' }), 'palette.hex'); };
     $('.pf-snap').onclick = () => edit((d) => { for (let i = 0; i < d.px.length; i++) if (!isClear(d.px[i])) d.px[i] = nearestColor(d.px[i], S.palette); });
@@ -3221,5 +3262,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });

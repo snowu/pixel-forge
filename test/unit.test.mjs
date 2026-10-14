@@ -767,3 +767,18 @@ test('artFolders / folderConfig: folders two deep with counts, docs unticked, an
   assert.deepEqual(C.folderConfig(paths, ['assets/tiles', '']), { exclude: ['assets/sprites/**', 'docs/**'] });
   assert.deepEqual(C.folderConfig(['a/x.png', 'b.png'], ['a']), { dirs: ['a'], exclude: [] });
 });
+
+/* ---------- dither gradient ---------- */
+test('ditherGradient: pure a at the start, pure b at the end, an even ordered dither between, and only inside the region', () => {
+  const w = 17, h = 4, A = 1, B = 2, all = [...Array(w * h).keys()];
+  const px = C.ditherGradient(new Uint32Array(w * h), w, all, 0, 0, 16, 0, A, B);
+  const col = (x) => [0, 1, 2, 3].map((y) => px[y * w + x]);
+  assert.deepEqual(col(0), [A, A, A, A], 'the start column is all a');
+  assert.deepEqual(col(16), [B, B, B, B], 'the end column is all b');
+  const share = (x0, x1) => { let n = 0, t = 0; for (let x = x0; x < x1; x++) for (const v of col(x)) { t++; if (v === B) n++; } return n / t; };
+  assert.ok(share(0, 4) < share(6, 10) && share(6, 10) < share(13, 17), 'b grows along the drag');
+  assert.ok(Math.abs(share(4, 12) - 0.5) < 0.15, 'about half and half in the middle: ' + share(4, 12));
+  assert.ok([...px].every((v) => v === A || v === B), 'every pixel is one of the two colours, never a blend');
+  const some = C.ditherGradient(new Uint32Array(w * h).fill(9), w, [0, 1, 2], 0, 0, 2, 0, A, B);
+  assert.equal([...some].filter((v) => v === 9).length, w * h - 3, 'pixels outside the region are untouched');
+});
