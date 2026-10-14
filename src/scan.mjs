@@ -97,7 +97,7 @@ export function scan(root, userConfig) {
   let groups = cfg.groups && typeof cfg.groups === 'object' ? cfg.groups : null;
   if (typeof cfg.groups === 'string') { try { groups = JSON.parse(fs.readFileSync(path.resolve(root, cfg.groups), 'utf8')); } catch { /* missing or broken groups file: ignore */ } }
   const git = gitInfo(root);
-  return { version: 1, generated: new Date().toISOString(), repo: { slug: cfg.repo?.slug || git.slug, base: cfg.repo?.base || null, prefix: cfg.repo?.prefix ?? git.prefix }, palette, background: typeof cfg.background === 'string' ? cfg.background : null, groups, alpha: cfg.alpha && typeof cfg.alpha === 'object' ? cfg.alpha : null, tileGrid: Number.isInteger(cfg.tileGrid) && cfg.tileGrid > 0 ? cfg.tileGrid : null, sprites, hidden };
+  return { version: 1, generated: new Date().toISOString(), repo: { slug: cfg.repo?.slug || git.slug, base: cfg.repo?.base || null, prefix: cfg.repo?.prefix ?? git.prefix }, palette, background: typeof cfg.background === 'string' ? cfg.background : null, groups, alpha: cfg.alpha && typeof cfg.alpha === 'object' ? cfg.alpha : null, tileGrid: Number.isInteger(cfg.tileGrid) && cfg.tileGrid > 0 ? cfg.tileGrid : null, indexed: cfg.indexed === true, maxColors: Number.isInteger(cfg.maxColors) && cfg.maxColors > 0 ? cfg.maxColors : null, sprites, hidden };
 }
 
 const NON_ART = /^(docs?|documentation|screenshots?|previews?|tests?|e2e|coverage|examples?|samples?|marketing|promo|store)$/i;
