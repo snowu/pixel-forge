@@ -639,6 +639,7 @@ section('hosted page, fully in the session: upload, edit, download');
   ok((await bp.locator('.pf-c-lp').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()).join('|').startsWith('Sketches 1 sprite · open'), 'the dialog lists the projects in this browser: ' + (await bp.locator('.pf-c-lp').allInnerTexts()).join('|').replace(/\s+/g, ' '));
   await bp.locator('.pf-c-blank').click(); await bp.waitForSelector('.pf-dlg-new[open]');
   ok((await bp.locator('.pf-source').innerText()) === 'Untitled 1' && await bp.locator('.pf-item').count() === 0, 'New blank project starts an empty project in this browser, nothing linked, and asks for the first sprite');
+  ok(await bp.evaluate(() => document.querySelector('.pf-p2').width === 0 && document.querySelector('.pf-p1').width === 0 && /no image open/.test(document.querySelector('.pf-img-colors').textContent) && document.querySelector('.pf-fam').hidden), 'and the right-hand panels drop the last project\'s sprite (preview, frames, colours)');
   await bp.locator('.pf-nw').fill('8'); await bp.locator('.pf-nh').fill('8'); await bp.locator('.pf-nn').fill('gem.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
   ok((await bp.evaluate(() => { const d = document.getElementById('app').__pf.current; return d.path + ' ' + d.w + 'x' + d.h; })) === 'gem.png 8x8', 'a blank sprite starts a new document of the chosen size');
   await bp.locator('.pf-new').click(); await bp.locator('.pf-nn').fill('scrap.png'); await bp.locator('.pf-new-ok').click(); await bp.waitForTimeout(400);
@@ -706,6 +707,7 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
     if (p === '/repos/them/art-only/git/blobs/sha0') return j({ encoding: 'base64', content: encodePng(4, 4, Buffer.alloc(64)).toString('base64') });
     if (p === '/repos/me/game/git/ref/heads/main') return j({ object: { sha: 'c1' } });
     if (p === '/repos/me/game/git/commits/c1') return j({ tree: { sha: 't1' } });
+    if (p === '/repos/me/game/git/trees/t1') await new Promise((r) => setTimeout(r, 400)); // slow enough to see it loading
     if (p === '/repos/me/game/git/trees/t1') return j({ tree: [{ path: 'art/a.png', type: 'blob', sha: 'sha0', size: 99 }], truncated: false });
     if (p === '/repos/me/game/git/blobs/sha0') return j({ encoding: 'base64', content: encodePng(4, 4, Buffer.alloc(64)).toString('base64') });
     return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ message: 'Not Found' }) });
@@ -739,7 +741,9 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   ok(picks.length === 2 && /me\/game/.test(picks[0]) && /private · pull requests/.test(picks[0]) && /them\/art-only/.test(picks[1]) && /read only/.test(picks[1]), 'your repositories are listed with what you can do on each: ' + picks.join(' | ').replace(/\n/g, ' '));
   if (process.env.PF_SHOTS) { await ap.locator('.pf-dlg-connect').screenshot({ path: process.env.PF_SHOTS + '/signed-in.png' }); await ap.setViewportSize({ width: 390, height: 844 }); await ap.screenshot({ path: process.env.PF_SHOTS + '/signed-in-phone.png' }); await ap.setViewportSize({ width: 1280, height: 900 }); }
   ok(/github\.com\/apps\/spritewright\/installations\/select_target/.test(await ap.locator('.pf-c-addrepo a').getAttribute('href')), 'a link to install the app on more repositories sits under the list');
-  await ap.locator('.pf-c-pick', { hasText: 'me/game' }).click(); await ap.waitForSelector('.pf-item');
+  await ap.locator('.pf-c-pick', { hasText: 'me/game' }).click();
+  ok(await ap.waitForSelector('.pf-c-pick.busy[aria-busy=true]', { timeout: 2000 }).then(() => true, () => false) && /Reading|Listing/.test(await ap.locator('.pf-c-pick.busy .pf-note').innerText()), 'the repository being opened shows it is loading, step by step: ' + await ap.locator('.pf-c-pick.busy .pf-note').innerText().catch(() => '-'));
+  await ap.waitForSelector('.pf-item');
   await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-brmenu .pf-br-share'); await ap.locator('.pf-br-share').click();
   ok((await ap.evaluate(() => navigator.clipboard.readText())) === 'https://snowu.github.io/spritewright/?repo=me%2Fgame', 'Copy link to this project: a link that opens the repository (the hosted editor, from a local page)');
   ok(seen.filter((x) => x.p.startsWith('/repos/me/game')).every((x) => x.auth === 'Bearer gho_fromsignin'), 'one click opens it, with the signed-in token');
@@ -1261,6 +1265,20 @@ const mS = await mp.evaluate(() => { const S = document.getElementById('app').__
 await mp.touchscreen.tap(vb.x + (mS.ox + 10.5 * mS.zoom) / mS.k, vb.y + (mS.oy + 12.5 * mS.zoom) / mS.k);
 const mpx = await mp.evaluate(() => document.getElementById('app').__pf.current.px[12 * 16 + 10]);
 ok(mpx !== 0, 'a tap draws a pixel');
+{ // pinch to zoom: the first finger lands a moment before the second; nothing may be drawn
+  const cdp = await phone.newCDPSession(mp), at = (x, y) => ({ x: vb.x + (mS.ox + (x + 0.5) * mS.zoom) / mS.k, y: vb.y + (mS.oy + (y + 0.5) * mS.zoom) / mS.k });
+  const before = await mp.evaluate(() => [...document.getElementById('app').__pf.current.px]), undos = await mp.evaluate(() => document.getElementById('app').__pf.current.undo.length), z0 = mS.zoom;
+  const a = at(4, 4), b = at(9, 9);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...a, id: 1 }] }); await mp.waitForTimeout(60);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: a.x + 6, y: a.y + 6, id: 1 }] }); await mp.waitForTimeout(30);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: a.x + 6, y: a.y + 6, id: 1 }, { ...b, id: 2 }] });
+  for (let i = 1; i <= 5; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: a.x + 6 - i * 12, y: a.y + 6 - i * 12, id: 1 }, { x: b.x + i * 12, y: b.y + i * 12, id: 2 }] }); await mp.waitForTimeout(20); }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await mp.waitForTimeout(100);
+  const after = await mp.evaluate(() => ({ px: [...document.getElementById('app').__pf.current.px], undo: document.getElementById('app').__pf.current.undo.length, zoom: document.getElementById('app').__pf.state.zoom }));
+  ok(after.zoom > z0, 'pinching zooms in: ' + z0 + '× → ' + after.zoom + '×');
+  ok(JSON.stringify(after.px) === JSON.stringify(before) && after.undo === undos, 'and draws nothing, not even where the first finger landed (no undo step left behind either)');
+  await cdp.detach();
+}
 ok((await mp.locator('.pf-save').boundingBox()).height >= 36, 'buttons are touch sized');
 await mp.locator('.pf-feedback').tap(); await mp.waitForSelector('.pf-fb-shot img', { timeout: 10000 }).catch(() => {});
 const fbBox = await mp.locator('.pf-dlg-feedback').boundingBox(); ok(fbBox && fbBox.x >= 0 && fbBox.x + fbBox.width <= 391, 'the feedback dialog fits a phone');

@@ -737,9 +737,12 @@
       }
       return json;
     };
+    const log = o.onProgress || (() => {});
+    log('Reading ' + o.repo + '…');
     const info = await call('/repos/' + o.repo), branch = o.branch || info.default_branch;
     const ref = await call('/repos/' + o.repo + '/git/ref/heads/' + refPath(branch));
     const commit = await call('/repos/' + o.repo + '/git/commits/' + ref.object.sha);
+    log('Listing its files…');
     const tree = await call('/repos/' + o.repo + '/git/trees/' + commit.tree.sha + '?recursive=1');
     const entries = new Map((tree.tree || []).filter((e) => e.type === 'blob').map((e) => [e.path, e]));
     const apiBlob = async (path) => { const e = entries.get(path); if (!e) throw new Error('not in the repository: ' + path); const b = await call('/repos/' + o.repo + '/git/blobs/' + e.sha); return b.encoding === 'base64' ? b64ToBytes(b.content) : new TextEncoder().encode(b.content); };
@@ -753,6 +756,7 @@
       return apiBlob(path);
     };
     let cfg = {}, palette = null;
+    log('Reading the project setup…');
     if (entries.has('spritewright.config.json')) { try { cfg = JSON.parse(new TextDecoder().decode(await blob('spritewright.config.json'))); } catch { /* ignore a broken config */ } }
     if (cfg.palette && entries.has(cfg.palette)) { try { palette = palFromText(new TextDecoder().decode(await blob(cfg.palette))); } catch { /* none */ } }
     let groups = typeof cfg.groups === 'object' ? cfg.groups : null;
@@ -1006,6 +1010,9 @@
 .pf-pal-empty[hidden]{display:none}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
 .pf .pf-c-pick.on{border-color:var(--pf-accent)}
+.pf .pf-c-pick.busy{border-color:var(--pf-accent);background:linear-gradient(90deg,transparent,rgba(185,140,255,.16),transparent) 0 0/200% 100%;animation:pf-busy 1.2s linear infinite}.pf .pf-c-pick.busy .pf-note{color:var(--pf-accent)}.pf-c-repolist.busy .pf-c-pick:not(.busy){opacity:.5}
+@keyframes pf-busy{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.pf .pf-c-pick.busy{animation:none}}
 .pf dialog.pf-dlg-connect{width:min(640px,94vw)}
 .pf-dlg-head{display:flex;justify-content:space-between;align-items:center}.pf-dlg-head h4{margin:0}
 .pf .pf-x{min-height:0;width:30px;height:30px;padding:0;background:none;border-color:transparent;color:var(--pf-muted);font-size:14px}
@@ -1600,6 +1607,7 @@
       if (!keeping() && [...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
       const askFolders = foldersOnOpen(src);
       play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; folded = null; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
+      S.anim.t = 0; drawPreview(); renderFamily(); renderColors(); resetHistory(); // the side panels drop the old project's sprite right away
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
       loadWork(); // the branch this repository was being committed to, if any
       if (!O.palette) S.palette = (src.palette || []).map((h) => (typeof h === 'string' ? fromHex(h) : h)).filter((c) => c != null);
@@ -1618,7 +1626,7 @@
         if (O.sprites) return void (await useSource(staticSource({ sprites: O.sprites, palette: O.paletteList || null, repo: O.github || null }, O.baseUrl)));
         if (O.manifestUrl) { const mf = await fetchJson(O.manifestUrl); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); }
         if (O.connect === 'github' && O.github && O.github.slug) {
-          try { return void (await useSource(await githubSource({ repo: O.github.slug, branch: O.github.base, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase }))); } catch (e) { return openConnect(e.message); }
+          try { return void (await useSource(await githubSource({ repo: O.github.slug, branch: O.github.base, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase, onProgress: note }))); } catch (e) { return openConnect(e.message); }
         }
         try { const mf = await fetchJson('api/manifest'), m = document.querySelector('meta[name="pf-token"]'); return void (await useSource(serverSource(mf, m ? m.content : ''))); } catch { /* no local server here */ }
         try { const mf = await fetchJson('pixel-art.json'); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); } catch { /* no manifest here */ }
@@ -1626,7 +1634,7 @@
         /* no project given: reopen the last GitHub repository, or carry on with what was drawn in this browser */
         const last = O.blank ? null : lastProject(); let why = '';
         if (last && last.kind === 'github' && O.connect !== false) {
-          try { return void (await useSource(await githubSource({ repo: last.slug, branch: last.branch, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase }))); } catch (e) { why = 'Could not reopen ' + last.slug + ': ' + e.message; }
+          try { return void (await useSource(await githubSource({ repo: last.slug, branch: last.branch, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase, onProgress: note }))); } catch (e) { why = 'Could not reopen ' + last.slug + ': ' + e.message; }
         }
         await useSource(last && last.kind === 'browser' ? browserSource(last.id, localName(last.id)) : browserSource(), { remember: !last || last.kind === 'browser' });
         if (O.blank && !S.docs.size) await addLocal(O.blank.name || 'sprite.png', O.blank.w || 16, O.blank.h || 16, new Uint32Array((O.blank.w || 16) * (O.blank.h || 16)), false);
@@ -1956,7 +1964,7 @@
 
     /* ---------- palette / colours ---------- */
     function renderColors() {
-      const d = doc(); if (!d) return;
+      const d = doc(); if (!d) { $('.pf-img-colors').innerHTML = '<span class="pf-note">no image open</span>'; return; }
       swatches(); const cols = colorsOf(d.px).filter(([c]) => c !== 0).slice(0, 64);
       $('.pf-img-colors').innerHTML = cols.map(([c, n]) => `<button data-c="${c}" title="${toHex(c)} · ${n}px" class="${c === S.color ? 'on' : ''}" style="background:${toHex(c)}"></button>`).join('') || '<span class="pf-note">transparent</span>';
       $('.pf-cpick').value = toHex(S.color); if (document.activeElement !== $('.pf-chex')) $('.pf-chex').value = toHex(S.color);
@@ -2198,10 +2206,21 @@
     const inSel = (c) => S.sel && c.x >= S.sel.x && c.y >= S.sel.y && c.x < S.sel.x + S.sel.w && c.y < S.sel.y + S.sel.h;
 
     let drag = null, pan = null, space = false; const pointers = new Map(); let pinch = null;
+    /* On a touch screen the first finger of a pinch lands a moment before the second, and would draw (or fill, or pick a colour).
+       touchEdit remembers what it changed, so a second finger arriving soon after puts it all back: pinching never draws. */
+    let touchEdit = null; const TOUCH_GRACE = 400;
+    function undoTouch() {
+      const t = touchEdit; touchEdit = null; if (!t || performance.now() - t.at > TOUCH_GRACE) return;
+      const d = t.d, i = t.snap ? d.undo.lastIndexOf(t.snap) : -1;
+      if (i >= 0) { d.w = t.snap.w; d.h = t.snap.h; d.px = t.snap.px; d.undo.length = i; }
+      S.color = t.color; S.color2 = t.color2; if (!S.float) S.sel = t.sel; overlay = null;
+      changedUi(); renderColors();
+    }
     view.addEventListener('contextmenu', (e) => e.preventDefault());
     view.addEventListener('pointerdown', (e) => {
       const d = doc(); if (!d) return; view.setPointerCapture(e.pointerId); pointers.set(e.pointerId, e);
-      if (pointers.size === 2) { drag = null; overlay = null; const [a, b] = [...pointers.values()]; pinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: S.zoom, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; return; }
+      touchEdit = e.pointerType === 'touch' && pointers.size === 1 ? { d, at: performance.now(), snap: null, color: S.color, color2: S.color2, sel: S.sel } : touchEdit;
+      if (pointers.size === 2) { drag = null; undoTouch(); overlay = null; const [a, b] = [...pointers.values()]; pinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: S.zoom, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; return; }
       if (e.button === 1 || space || (e.button === 0 && e.shiftKey && e.altKey)) { pan = { x: e.clientX, y: e.clientY, ox: S.ox, oy: S.oy }; return; }
       const c = toCell(e), right = e.button === 2, inb = !!cell(d, c.x, c.y);
       let tool = S.tool;
@@ -2214,7 +2233,8 @@
       }
       let value = right ? S.color2 : S.color; if (tool === 'erase') value = 0;
       if (!inb && !isShape(tool)) return;
-      d.snapshot(); drag = { tool, value, dir: right ? -1 : 1, start: c, last: c, rec: new Map(), trail: [c], visits: new Map([[c.y * d.w + c.x, 1]]), moved: false };
+      d.snapshot(); if (touchEdit && touchEdit.d === d) touchEdit.snap = d.undo[d.undo.length - 1];
+      drag = { tool, value, dir: right ? -1 : 1, start: c, last: c, rec: new Map(), trail: [c], visits: new Map([[c.y * d.w + c.x, 1]]), moved: false };
       if (tool === 'fill') { if (!fillAt(d, c.x, c.y, value, right ? S.color : S.color2)) d.undo.pop(); drag = null; changedUi(); return; }
       if (tool === 'pen' && e.shiftKey && S.lastPt) { for (const [x, y] of linePoints(S.lastPt.x, S.lastPt.y, c.x, c.y)) dab(d, x, y, drag); }
       else if (!isShape(tool)) dab(d, c.x, c.y, drag);
@@ -2252,7 +2272,7 @@
       }
     });
     const end = (e) => {
-      pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null; pan = null;
+      pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null; pan = null; if (!pointers.size) touchEdit = null;
       const d = doc(); if (!drag || !d) return;
       if (drag.tool === 'select') { if (!drag.move && S.sel && S.sel.w * S.sel.h <= 1 && drag.start.x === (S.hover || drag.start).x && drag.start.y === (S.hover || drag.start).y) S.sel = null; drag = null; render(); status(); return; }
       if (overlay) { for (const [x, y] of overlay.pts) d.px[y * d.w + x] = overlay.value; overlay = null; }
@@ -2361,7 +2381,8 @@
     }
     function stepMember(dir) { const d = doc(), fam = famFor(d); if (!fam) return; const i = fam.members.indexOf(d.path); openSprite(fam.members[(i + dir + fam.members.length) % fam.members.length]); }
     function drawPreview() {
-      const d = doc(); if (!d) return; const p1 = $('.pf-p1'), p2 = $('.pf-p2');
+      const d = doc(), p1 = $('.pf-p1'), p2 = $('.pf-p2');
+      if (!d) { p1.width = p1.height = p2.width = p2.height = 0; return; } // nothing open: no picture left over from the last project
       drawPx(p1, d, d.w <= 32 ? 2 : 1);
       const sheet = frameSize(d), fam = famFor(d);
       const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h); p1.hidden = flip; $('.pf-sheet-row').hidden = flip;
@@ -3029,14 +3050,20 @@
     $('.pf-c-blank').onclick = () => newLocalProject();
     $('.pf-delete').onclick = deleteSprite;
     $('.pf-c-gh').onclick = async () => {
-      const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), typed = S.auth.token ? '' : $('.pf-c-token').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
+      const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), typed = S.auth.token ? '' : $('.pf-c-token').value.trim(), repo = $('.pf-c-repo').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
+      // The repository being opened says so in the list (or on the Open button), with each step, until it is open or fails.
+      const pick = $$('.pf-c-pick').find((b) => b.dataset.repo === repo), list = $('.pf-c-repolist'), label = btn.textContent;
+      const say = (t) => { msg.textContent = t; if (pick) pick.querySelector('.pf-note').textContent = t; };
+      if (pick) { pick.classList.add('busy'); pick.setAttribute('aria-busy', 'true'); list.classList.add('busy'); $$('.pf-c-pick').forEach((b) => (b.disabled = true)); } else btn.textContent = 'Opening…';
+      const idle = () => { btn.textContent = label; list.classList.remove('busy'); if (pick && pick.isConnected) renderRepos(); };
       try {
         const token = typed || await authToken();
-        const src = await githubSource({ repo: $('.pf-c-repo').value.trim(), branch: $('.pf-c-branch').value.trim() || undefined, token, apiBase: O.apiBase });
+        const src = await githubSource({ repo, branch: $('.pf-c-branch').value.trim() || undefined, token, apiBase: O.apiBase, onProgress: say });
         try { if (typed) { if ($('.pf-c-remember').checked) localStorage.setItem('pf:token', token); else sessionStorage.setItem('pf:token', token); } } catch { /* storage blocked */ }
-        msg.textContent = src.sprites.length + ' PNG file' + (src.sprites.length === 1 ? '' : 's') + ' found.';
+        say(src.sprites.length + ' PNG file' + (src.sprites.length === 1 ? '' : 's') + ' found, opening…');
         if (await useSource(src)) $('.pf-dlg-connect').close();
-      } catch (e) { msg.textContent = e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { btn.disabled = false; }
+        idle();
+      } catch (e) { idle(); msg.textContent = e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { btn.disabled = false; }
     };
     $('.pf-c-folder').onclick = async () => {
       const msg = $('.pf-c-msg'); msg.textContent = '';
