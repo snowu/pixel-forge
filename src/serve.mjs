@@ -86,6 +86,6 @@ export function createServer({ root, port = 5173, host = '127.0.0.1', config } =
   return {
     server, token, root,
     listen: () => new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { actualPort = server.address().port; resolve(`http://${host === '::1' ? '[::1]' : host}:${actualPort}/`); }); }),
-    close: () => new Promise((r) => server.close(r)),
+    close: () => new Promise((r) => { server.close(r); server.closeAllConnections?.(); }), // a browser keeps idle keep-alive connections open, and close() waits for them
   };
 }
