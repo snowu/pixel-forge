@@ -246,7 +246,7 @@ section('indexed palette mode');
   await hex('#ee2211'); ok((await prim()) === '#ff0000', 'a colour typed in snaps to the nearest palette colour: ' + await prim());
   await ip.keyboard.press('b'); const v0 = await ip.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'), r = v.getBoundingClientRect(); return { ox: S.ox, oy: S.oy, z: S.zoom, k: v.width / r.width, l: r.left, t: r.top }; });
   for (const [x, y] of [[1, 1], [2, 2], [3, 3]]) await ip.mouse.click(v0.l + (v0.ox + (x + .5) * v0.z) / v0.k, v0.t + (v0.oy + (y + .5) * v0.z) / v0.k);
-  ok(/· 1 colour/.test(await ip.locator('.pf-ccount').innerText()), 'the panel counts the image\'s colours: ' + await ip.locator('.pf-ccount').innerText());
+  ok(/· 1$/.test(await ip.locator('.pf-ccount').innerText()), 'the panel counts the image\'s colours: ' + await ip.locator('.pf-ccount').innerText());
   await ip.locator('.pf-pal-colors button[title="#ff0000"]').dblclick();
   await ip.evaluate(() => { const i = document.querySelector('.pf-slot-in'); i.value = '#00ff00'; i.dispatchEvent(new Event('change')); });
   const px = await ip.evaluate(() => [...document.getElementById('app').__pf.current.px]), green = px[1 * 8 + 1];
@@ -261,6 +261,8 @@ section('review notes');
   const np = await nctx.newPage(); const nerr = []; np.on('pageerror', (e) => nerr.push(e.message));
   await np.goto(base + '?auth=off'); await np.waitForSelector('.pf-item'); await np.locator('.pf-item', { hasText: 'slime.png' }).click(); await np.waitForTimeout(250);
   const before = await np.evaluate(() => [...document.getElementById('app').__pf.current.px]);
+  ok(await np.locator('.pf-notes.pf-shut').count() === 1 && await np.locator('.pf-notes > h4').getAttribute('aria-expanded') === 'false', 'Notes starts folded'); await np.locator('.pf-notes > h4').click();
+  ok(await np.locator('.pf-note-add').isVisible(), 'and its title unfolds it');
   await np.keyboard.press('b'); await np.locator('.pf-note-add').click();
   ok(await np.locator('.pf-note-add.on').count() === 1, '+ note waits for a click on the canvas');
   const b = await np.locator('.pf-view').boundingBox(), st = await np.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { ox: S.ox, oy: S.oy, z: S.zoom, k: v.width / v.getBoundingClientRect().width }; });
@@ -572,6 +574,7 @@ await ctx.route('https://api.github.com/**', async (route) => {
 });
 await page.locator('.pf-item', { hasText: 'slime.png' }).click(); await page.waitForTimeout(200);
 ok(!(await page.locator('.pf-prbtn').isDisabled()), 'Propose PR is enabled because sprites changed this session');
+if (await page.locator('.pf-notes.pf-shut').count()) await page.locator('.pf-notes > h4').click();
 await page.locator('.pf-note-add').click();
 { const b = await page.locator('.pf-view').boundingBox(); const st = await page.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { ox: S.ox, oy: S.oy, z: S.zoom, k: v.width / v.getBoundingClientRect().width }; }); await page.mouse.click(b.x + (st.ox + 3.5 * st.z) / st.k, b.y + (st.oy + 2.5 * st.z) / st.k); }
 await page.locator('.pf-note-item input').fill('left eye: one pixel lower?');
@@ -1396,6 +1399,7 @@ section('vision check, reference layer, variants and history');
   await mp2.keyboard.press('y'); await mp2.keyboard.press('y');
   ok(await mp2.locator('.pf-vision-tag').isHidden() && (await mp2.locator('.pf-view').evaluate((v) => getComputedStyle(v).filter)) === 'none', 'and back to normal');
   // reference
+  if (await mp2.locator('.pf-refpanel.pf-shut').count()) await mp2.locator('.pf-refpanel > h4').click(); // folded until it is used
   await mp2.locator('.pf-ref-sprite').focus(); await mp2.locator('.pf-ref-sprite').selectOption('art/hero_atk.png'); await mp2.waitForTimeout(200);
   const refPix = await at(2, 1);
   ok(!(await mp2.locator('.pf-ref-on').isHidden()) && /hero_atk\.png · 4×4/.test(await mp2.locator('.pf-ref-name').innerText()) && refPix[2] > refPix[0] + 40, 'a sprite as reference shows through where the art is transparent: ' + refPix);

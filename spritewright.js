@@ -1177,7 +1177,18 @@
 .pf-v-shift{display:flex;flex-direction:column;gap:4px}.pf-v-shift input[type=range]{flex:1;width:auto}.pf-v-shift b{min-width:3.2em;text-align:right;color:var(--pf-accent)}
 .pf-v-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.pf-v-col{display:flex;align-items:center;gap:4px;font-size:11.5px}.pf-v-col i{width:20px;height:20px;border:1px solid var(--pf-line2);flex:none}.pf-v-col input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--pf-line2);background:none}
 .pf-v-preview{display:flex;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-v-preview canvas{image-rendering:pixelated;height:72px}
-.pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}.pf-hist summary h4{display:inline}.pf-hist summary h4::after{content:" ▸";color:var(--pf-faint)}.pf-hist[open] summary h4::after{content:" ▾"}
+.pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}
+/* Right column: every section folds away by its title (remembered), with a chevron at the right. */
+.pf-right{scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:var(--pf-line2) transparent;scrollbar-gutter:stable}
+.pf-right>.pf-panel>h4,.pf-hist summary h4{display:flex;align-items:baseline;white-space:nowrap;gap:0;cursor:pointer;user-select:none;-webkit-user-select:none;margin:0}
+.pf-right>.pf-panel>h4::before,.pf-hist summary h4::before{white-space:pre}.pf-right>.pf-panel>h4>span{overflow:hidden;text-overflow:ellipsis}
+.pf-right>.pf-panel>h4::after,.pf-hist summary h4::after{content:"";margin-left:auto;align-self:center;flex:none;width:6px;height:6px;border-right:1.5px solid var(--pf-faint);border-bottom:1.5px solid var(--pf-faint);transform:translateY(-2px) rotate(45deg);transition:transform .15s ease}
+.pf-right>.pf-panel.pf-shut>h4::after,.pf-hist:not([open]) summary h4::after{transform:rotate(-45deg)}
+.pf-right>.pf-panel>h4:hover::after,.pf-hist summary h4:hover::after{border-color:var(--pf-ink)}
+.pf-right>.pf-panel>h4:focus-visible{outline:1px dashed var(--pf-accent);outline-offset:3px}
+.pf-right>.pf-panel.pf-shut>:not(h4){display:none!important}
+.pf .pf-right .pf-quiet{gap:2px}.pf .pf-right .pf-quiet button:not(:disabled){border-color:transparent;color:var(--pf-muted);padding:2px 6px!important}.pf .pf-right .pf-quiet button:hover:not(:disabled){color:var(--pf-ink)}
+.pf-prev .pf-p2{margin:0 auto}.pf-prev .pf-p1{max-height:120px;width:auto}.pf-anim-row input[type=number]{width:46px}
 .pf-hist-list{display:flex;flex-direction:column;gap:3px;max-height:260px;overflow:auto;margin-top:6px}
 .pf .pf-hist-e{display:grid;grid-template-columns:36px 1fr;gap:2px 8px;text-align:left;justify-content:stretch;align-items:center;background:none;border-color:transparent;padding:4px;min-height:0}
 .pf .pf-hist-e canvas{grid-row:span 2;width:36px;height:36px;image-rendering:pixelated;object-fit:contain;background:var(--pf-ckbg)}
@@ -1642,24 +1653,25 @@
         <div class="pf-panel pf-layers"><h4>Layers <span class="pf-notes-n pf-ly-n"></span></h4><div class="pf-ly-list" role="listbox" aria-label="Layers, top first"></div>
           <div class="pf-row"><button class="pf-ly-add" title="A new empty layer above this one">+ layer</button><button class="pf-ly-dup" title="A copy of this layer, above it">Copy</button><button class="pf-ly-up" title="Move this layer up">▲</button><button class="pf-ly-down" title="Move this layer down">▼</button><button class="pf-ly-merge" title="Merge this layer into the one below">Merge ↓</button><button class="pf-ly-del" title="Delete this layer">✕</button></div>
           <div class="pf-row pf-ly-oprow" hidden><label>opacity <input type="range" class="pf-ly-op" min="0" max="100" value="100" aria-label="Layer opacity"></label><span class="pf-note pf-ly-opv"></span></div>
-          <div class="pf-note pf-ly-tip">Tools draw on the highlighted layer. The PNG holds them flattened; the layers are kept next to it, in <code class="pf-ly-file"></code>.</div></div>
+          <div class="pf-note pf-ly-tip">Saved flat, with the layers in <code class="pf-ly-file"></code>.</div></div>
         <div class="pf-panel"><h4>Colour</h4><div class="pf-cur"><input type="color" class="pf-cpick" aria-label="Current colour"><input type="text" class="pf-chex" maxlength="9" aria-label="Hex colour"></div>
-          <div class="pf-row"><button class="pf-ramp-btn" title="A 5-colour ramp around this colour: cool, darker shadows and warm highlights">Hue-shift ramp</button><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour all…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div>
+          <div class="pf-row"><button class="pf-ramp-btn" title="A 5-colour ramp around this colour: cool, darker shadows and warm highlights">Hue ramp</button><button class="pf-recolor" title="Change this colour everywhere in the image">Recolour…</button><input type="color" class="pf-recolor-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"></div>
           <div class="pf-ramp" hidden><div class="pf-sw pf-ramp-colors"></div><button class="pf-ramp-add" title="Add these colours to the palette">+ add to palette</button></div></div>
         <div class="pf-panel"><h4>In this image <span class="pf-ccount"></span></h4><div class="pf-sw pf-img-colors"></div></div>
-        <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load a .hex (Lospec), or add colours with +.</div><div class="pf-note pf-off"></div></div>
-          <div class="pf-row"><button class="pf-pal-lock" title="Indexed: every colour you pick snaps to the palette, and double-clicking a palette colour changes it everywhere it is used in this image">Indexed</button><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><input type="color" class="pf-slot-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"><button class="pf-palload">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave">Save .hex</button><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
+        <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load one, or add colours.</div><div class="pf-note pf-off"></div></div>
+          <div class="pf-row"><button class="pf-pal-lock" title="Indexed: every colour you pick snaps to the palette, and double-clicking a palette colour changes it everywhere it is used in this image">Indexed</button><button class="pf-pal-add" title="Add the primary colour to the palette">+ colour</button><input type="color" class="pf-slot-in" aria-hidden="true" tabindex="-1" style="position:absolute;opacity:0;width:1px;height:1px;pointer-events:none"><button class="pf-snap" title="Move every pixel to its nearest palette colour">Snap</button></div>
+          <div class="pf-row pf-quiet"><button class="pf-palload" title="Load a palette file (.hex, one colour per line)">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave" title="Download this palette as a .hex file">Save .hex</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
           <form class="pf-row pf-lospec" hidden><input type="text" class="pf-lospec-name" placeholder="endesga-32, or a lospec.com link" aria-label="Lospec palette name" autocomplete="off" style="flex:1;min-width:0"><button type="submit" class="primary">Load</button></form></div>
         <div class="pf-panel pf-prev"><h4>Preview</h4>
-          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note"><kbd>,</kbd> <kbd>.</kbd> previous / next · Play flips through them</div></div>
-          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">click a frame to select it · the ×n badge sets how long it holds</div></div>
-          <canvas class="pf-p1"></canvas>
-          <div class="pf-row pf-sheet-row"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
-          <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button><button class="pf-sheet-out" title="Download the animation as one sprite sheet PNG with a JSON of its frames and timings (Aseprite json-array format, read by most engines)">Sheet + JSON</button></div>
-          <canvas class="pf-p2"></canvas></div>
+          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note pf-fam-hint"><kbd>,</kbd> <kbd>.</kbd> previous / next</div></div>
+          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">the ×n badge: how long a frame holds</div></div>
+          <canvas class="pf-p2"></canvas>
+          <canvas class="pf-p1" title="The whole sheet"></canvas>
+          <div class="pf-row pf-anim-row"><label class="pf-sheet-row" title="Frame size: smaller than the image makes it a sprite sheet">frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label><label class="pf-fps-l">fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
+          <div class="pf-row"><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button><button class="pf-sheet-out" title="Download the animation as one sprite sheet PNG with a JSON of its frames and timings (Aseprite json-array format, read by most engines)">Sheet + JSON</button></div></div>
         <div class="pf-panel pf-notes"><h4>Notes <span class="pf-notes-n"></span></h4><div class="pf-note-list"></div>
           <div class="pf-row"><button class="pf-note-add" title="Pin a note to a pixel: click here, then on the canvas">+ note</button></div>
-          <div class="pf-note">Pinned to a pixel. They go into the description of your next pull request, then clear.</div></div>
+          <div class="pf-note pf-notes-tip">Pinned to a pixel; they go in your next pull request.</div></div>
         <div class="pf-panel pf-refpanel"><h4>Reference</h4>
           <div class="pf-row"><button class="pf-ref-load" title="Any image: concept art, a photo, a screenshot of the game">Image…</button><select class="pf-ref-sprite" aria-label="Or a sprite from this project"><option value="">or a sprite…</option></select><input type="file" class="pf-ref-file" accept="image/*" hidden></div>
           <div class="pf-ref-on" hidden><div class="pf-note pf-ref-name"></div>
@@ -2319,7 +2331,7 @@
     function renderColors() {
       const d = doc(); if (!d) { $('.pf-img-colors').innerHTML = '<span class="pf-note">no image open</span>'; return; }
       const all = colorsOf(d.flat()).filter(([c]) => !isClear(c)), cols = all.slice(0, 64), max = S.maxColors; swatches();
-      const cc = $('.pf-ccount'); cc.textContent = `· ${all.length} colour${all.length === 1 ? '' : 's'}${max ? ' of ' + max : ''}`; cc.classList.toggle('over', !!max && all.length > max);
+      const cc = $('.pf-ccount'); cc.textContent = `· ${all.length}${max ? ' / ' + max : ''}`; cc.title = `${all.length} colour${all.length === 1 ? '' : 's'}${max ? ', of a budget of ' + max : ''}`; cc.classList.toggle('over', !!max && all.length > max);
       cc.title = max ? (all.length > max ? `Over the project's limit of ${max} colours` : `The project allows ${max} colours ("maxColors" in spritewright.config.json)`) : '';
       $('.pf-img-colors').innerHTML = cols.map(([c, n]) => `<button data-c="${c}" title="${toHex(c)} · ${n}px" class="${c === S.color ? 'on' : ''}" style="background:${toHex(c)}"></button>`).join('') || '<span class="pf-note">transparent</span>';
       $('.pf-cpick').value = toHex(S.color); if (document.activeElement !== $('.pf-chex')) $('.pf-chex').value = toHex(S.color);
@@ -2806,8 +2818,9 @@
     const memberLabel = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length).replace(/^[_-]/, ''); return r || 'base'; };
     function renderFamily() {
       renderSheet();
-      const d = doc(), fam = famOrSingle(d), box = $('.pf-fam:not(.pf-sheet)'); box.hidden = !fam; if (!fam) return;
-      const at = fam.members.indexOf(d.path); $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
+      const d = doc(), fam = famOrSingle(d), box = $('.pf-fam:not(.pf-sheet)'); box.hidden = !fam || (fam.members.length < 2 && isSheet(d)); if (box.hidden) return;
+      const at = fam.members.indexOf(d.path), one = fam.members.length < 2; $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
+      $('.pf-fam-left').hidden = $('.pf-fam-right').hidden = $('.pf-fam-hint').hidden = one; $('.pf-fam-strip:not(.pf-sheet-strip)').hidden = one;
       $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.members.length > 1 ? (fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`) : 'single sprite';
       const strip = $('.pf-fam-strip:not(.pf-sheet-strip)'); strip.innerHTML = '';
       for (const p of fam.members) {
@@ -2823,7 +2836,7 @@
       if (!d) { p1.width = p1.height = p2.width = p2.height = 0; return; } // nothing open: no picture left over from the last project
       drawPx(p1, d, d.w <= 32 ? 2 : 1);
       const sheet = frameSize(d), fam = famFor(d);
-      const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h); p1.hidden = flip; $('.pf-sheet-row').hidden = flip;
+      const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h), anim = flip || isSheet(d); p1.hidden = !isSheet(d); $('.pf-sheet-row').hidden = flip; $('.pf-fps-l').hidden = $('.pf-play').hidden = !anim; $('.pf-sheet-out').hidden = !anim;
       if (flip) { // flipbook through the family's images
         const i = S.anim.timer ? holdFrame(S.anim.t, holdsOf(d), fam.members.length) : fam.members.indexOf(d.path), img = memberImage(fam.members[i]);
         $$('.pf-fam-m:not(.pf-sheet-m)').forEach((b, k) => b.classList.toggle('playing', !!S.anim.timer && k === i));
@@ -3279,7 +3292,7 @@
     };
     function setRef(img, name, pixel) {
       S.ref = { img, name, pixel, opacity: +$('.pf-ref-op').value / 100, over: $('.pf-ref-place button.on').dataset.place === 'over', fit: $('.pf-ref-fit button.on').dataset.fit, visible: true };
-      $('.pf-ref-on').hidden = false; $('.pf-ref-name').textContent = `${name} · ${img.width}×${img.height}`; $('.pf-ref-toggle').textContent = 'hide'; render();
+      $('.pf-ref-on').hidden = false; foldPanel($('.pf-refpanel'), false, false); $('.pf-ref-name').textContent = `${name} · ${img.width}×${img.height}`; $('.pf-ref-toggle').textContent = 'hide'; render();
     }
     $('.pf-ref-load').onclick = () => $('.pf-ref-file').click();
     $('.pf-ref-file').onchange = async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { setRef(await createImageBitmap(f), f.name, false); } catch (err) { note('Could not read that image: ' + err.message); } };
@@ -3442,7 +3455,7 @@
     function addNote(d, x, y) { const list = notesOf(d); list.push({ x, y, text: '' }); setNotes(d.path, list); S.placingNote = false; renderNotes(); render(); const ins = $$('.pf-note-item input'); if (ins.length) ins[ins.length - 1].focus(); }
     function renderNotes() {
       const d = doc(), list = notesOf(d); $('.pf-note-add').classList.toggle('on', !!S.placingNote); $('.pf-note-add').disabled = !d;
-      $('.pf-notes-n').textContent = list.length ? '· ' + list.length : '';
+      $('.pf-notes-n').textContent = list.length ? '· ' + list.length : ''; $('.pf-notes-tip').hidden = !!list.length; if (list.length && $('.pf-notes').classList.contains('pf-shut')) foldPanel($('.pf-notes'), false, false);
       $('.pf-note-list').innerHTML = list.map((n, i) => `<div class="pf-note-item"><b>${i + 1}</b><input type="text" data-i="${i}" value="${esc(n.text)}" placeholder="what to look at (${n.x}, ${n.y})" aria-label="Note ${i + 1}"><button type="button" class="pf-note-del" data-i="${i}" title="Remove this note">✕</button></div>`).join('');
     }
     /* ---------- layers: line art, colour, shading… drawn apart, saved flattened (and kept in name.layers.png) ---------- */
@@ -3451,7 +3464,7 @@
       if (!d) { list.innerHTML = ''; $('.pf-ly-n').textContent = ''; $('.pf-ly-oprow').hidden = true; return; }
       const n = d.layers.length, a = d.active;
       $('.pf-ly-n').textContent = n > 1 ? '· ' + n : ''; $('.pf-ly-del').disabled = n < 2; $('.pf-ly-merge').disabled = a === 0; $('.pf-ly-down').disabled = a === 0; $('.pf-ly-up').disabled = a === n - 1;
-      $('.pf-ly-oprow').hidden = n < 2; $('.pf-ly-op').value = d.layer.opacity; $('.pf-ly-opv').textContent = d.layer.opacity + '%';
+      $('.pf-ly-oprow').hidden = n < 2; for (const c of ['.pf-ly-up', '.pf-ly-down', '.pf-ly-merge', '.pf-ly-del']) $(c).hidden = n < 2; $('.pf-ly-op').value = d.layer.opacity; $('.pf-ly-opv').textContent = d.layer.opacity + '%';
       $('.pf-ly-tip').hidden = n < 2; $('.pf-ly-file').textContent = layersPath(fileName(d));
       list.innerHTML = n < 2 ? '' : d.layers.map((l, k) => [l, k]).reverse().map(([l, k]) => `<div class="pf-ly${k === a ? ' on' : ''}${l.visible ? '' : ' off'}" data-k="${k}" role="option" aria-selected="${k === a}"><button type="button" class="pf-ly-eye" data-k="${k}" aria-pressed="${l.visible}" title="${l.visible ? 'Hide' : 'Show'} this layer">${l.visible ? '◉' : '○'}</button><canvas data-k="${k}"></canvas><input type="text" data-k="${k}" value="${esc(l.name)}" aria-label="Layer name"></div>`).join('');
       $$('.pf-ly canvas').forEach((c) => { const l = d.layers[+c.dataset.k]; drawPx(c, { w: d.w, h: d.h, imageData: () => new ImageData(new Uint8ClampedArray(l.px.buffer.slice(0)), d.w, d.h) }); });
@@ -3475,6 +3488,18 @@
     { let session = false;
       $('.pf-ly-op').oninput = (e) => { const d = doc(); if (!d) return; if (!session) { d.snapshot(); session = true; } d.layer.opacity = +e.target.value; $('.pf-ly-opv').textContent = d.layer.opacity + '%'; keepSoon(); status(); render(); drawPreview(); };
       $('.pf-ly-op').onchange = () => { session = false; changedUi(); }; }
+    /* Fold the right column's sections by their titles. Notes and Reference start folded; the choice is remembered. */
+    const SHUT_KEY = 'pf:shut', panelKey = (p) => ([...p.classList].find((c) => c !== 'pf-panel' && c !== 'pf-shut') || p.querySelector(':scope>h4').textContent.trim().split(/\s/)[0]).replace(/^pf-/, '').toLowerCase();
+    let shut; try { shut = new Set(JSON.parse(localStorage.getItem(SHUT_KEY) || 'null') || ['notes', 'refpanel']); } catch { shut = new Set(['notes', 'refpanel']); }
+    const foldPanel = (p, on, keep = true) => {
+      p.classList.toggle('pf-shut', on); p.querySelector(':scope>h4').setAttribute('aria-expanded', String(!on));
+      if (!keep) return; const k = panelKey(p); if (on) shut.add(k); else shut.delete(k); try { localStorage.setItem(SHUT_KEY, JSON.stringify([...shut])); } catch { /* this visit */ }
+    };
+    $$('.pf-right > .pf-panel').forEach((p) => {
+      const h = p.querySelector(':scope>h4'); if (!h) return; h.tabIndex = 0; h.setAttribute('role', 'button'); foldPanel(p, shut.has(panelKey(p)), false);
+      h.onclick = () => foldPanel(p, !p.classList.contains('pf-shut'));
+      h.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); h.click(); } };
+    });
     $('.pf-note-add').onclick = () => { S.placingNote = !S.placingNote; renderNotes(); if (S.placingNote) note('Click the pixel the note is about.'); };
     $('.pf-note-list').addEventListener('input', (e) => { const i = e.target.dataset.i; if (i == null) return; const d = doc(), list = notesOf(d); if (!list[i]) return; list[i].text = e.target.value; setNotes(d.path, list); });
     $('.pf-note-list').addEventListener('click', (e) => { const b = e.target.closest('.pf-note-del'); if (!b) return; const d = doc(), list = notesOf(d); list.splice(+b.dataset.i, 1); setNotes(d.path, list); renderNotes(); render(); });

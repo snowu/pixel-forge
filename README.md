@@ -107,6 +107,8 @@ Also **Trim** (cut away the empty border) and, with the select tool (`S`), **cro
 
 The **Layers** panel (top of the right column) splits a sprite into layers: line art, colour, shading. **+ layer** adds an empty one above the current one; **Copy**, ▲ ▼, **Merge ↓**, ✕, the eye to hide one, an **opacity** slider, and click a name to rename it. Every tool draws on the highlighted layer; flip, rotate, resize, trim, recolour and palette changes apply to all of them, and undo covers every layer change.
 
+![The Layers panel with a four-layer knight: a hidden sketch, flat colours, shading and line art](docs/readme/layers.png)
+
 The game only ever sees one image: Save writes the sprite's PNG flattened, as before. The layers go next to it in `name.layers.png`: the layers stacked top to bottom (bottom layer first), with their names, visibility and opacity in the PNG's text. It is a plain PNG, so it travels through git, pull requests and the zip download with its sprite, and it is left out of the sprite list. Merge back to one layer and the next save (or pull request) removes it. If the sprite's PNG is changed somewhere else and no longer matches its layers, the PNG wins: the sprite opens without layers and the older layers file is left alone.
 
 ## Families and animations

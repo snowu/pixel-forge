@@ -138,6 +138,21 @@ console.log('  palette.hex  8 colours');
   fs.writeFileSync(f, await PF.png.encode(pk.w, pk.h, pk.px, 1, pk.text)); console.log('  layers/slime.layers.png', pk.w + '×' + pk.h, '3 layers');
 }
 
+/* 10. layers as an artist uses them: a 32×32 knight with a hidden rough sketch, flat colours, shading at 70 % and line art on top */
+{
+  const W = 32, sketch = img(W, W), colour = img(W, W), shade = img(W, W), line = img(W, W);
+  sketch.ring(16, 9, 6, P.sky); sketch.line(16, 15, 16, 25, P.sky); sketch.line(16, 25, 11, 31, P.sky); sketch.line(16, 25, 21, 31, P.sky); sketch.line(9, 18, 23, 18, P.sky); // stick figure
+  colour.disc(16, 9, 6, P.stoneLt); colour.rect(11, 15, 11, 10, P.stoneLt); colour.rect(12, 25, 3, 6, P.stone); colour.rect(18, 25, 3, 6, P.stone); colour.rect(13, 8, 7, 2, P.ink); // helmet, body, legs, visor
+  colour.rect(23, 6, 2, 18, P.bone); colour.rect(21, 18, 6, 2, P.gold); colour.rect(6, 15, 5, 9, P.red); colour.rect(15, 1, 2, 3, P.red); // sword, guard, shield, plume
+  for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) if (colour.px[y * W + x] === P.stoneLt && x >= 16 + (y < 15 ? 2 : 3)) shade.set(x, y, P.stone); // shadow on the right half
+  shade.set(13, 5, P.bone); shade.set(14, 4, P.bone); shade.rect(7, 16, 1, 7, P.bone); // highlights
+  line.ring(16, 9, 6, P.ink); line.box(10, 15, 13, 11, P.ink); line.box(11, 24, 5, 8, P.ink); line.box(17, 24, 5, 8, P.ink); line.box(5, 14, 7, 11, P.ink); line.box(22, 5, 4, 20, P.ink);
+  const layers = [{ name: 'sketch', visible: false, px: sketch.px }, { name: 'flat colours', px: colour.px }, { name: 'shading', opacity: 70, px: shade.px }, { name: 'line art', px: line.px }];
+  await save('layers/knight.png', { w: W, h: W, px: PF.core.flattenLayers(layers, W * W) });
+  const pk = PF.core.packLayers(layers, W, W);
+  fs.writeFileSync(path.join(root, 'layers/knight.layers.png'), await PF.png.encode(pk.w, pk.h, pk.px, 1, pk.text)); console.log('  layers/knight.layers.png', pk.w + '×' + pk.h, '4 layers');
+}
+
 fs.writeFileSync(path.join(root, 'spritewright.config.json'), JSON.stringify({
   palette: 'palette.hex', tileGrid: 16, maxColors: 8, background: '#2a2238',
   frames: { 'animation/counter-sheet.png': { w: 16, h: 16, fps: 4 } },
