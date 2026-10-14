@@ -103,6 +103,12 @@ Works with Vite and other bundlers (checked with a Vite build). Options: `source
 
 Also **Trim** (cut away the empty border) and, with the select tool (`S`), **crop** to the selection. Selections also **cut**, **delete**, **move** (drag or arrows) and flip/rotate on their own.
 
+## Layers
+
+The **Layers** panel (top of the right column) splits a sprite into layers: line art, colour, shading. **+ layer** adds an empty one above the current one; **Copy**, ▲ ▼, **Merge ↓**, ✕, the eye to hide one, an **opacity** slider, and click a name to rename it. Every tool draws on the highlighted layer; flip, rotate, resize, trim, recolour and palette changes apply to all of them, and undo covers every layer change.
+
+The game only ever sees one image: Save writes the sprite's PNG flattened, as before. The layers go next to it in `name.layers.png`: the layers stacked top to bottom (bottom layer first), with their names, visibility and opacity in the PNG's text. It is a plain PNG, so it travels through git, pull requests and the zip download with its sprite, and it is left out of the sprite list. Merge back to one layer and the next save (or pull request) removes it. If the sprite's PNG is changed somewhere else and no longer matches its layers, the PNG wins: the sprite opens without layers and the older layers file is left alone.
+
 ## Families and animations
 
 The sprite list is grouped by folder (click a folder to fold it; that is remembered per project) and folds related images into one tile, worked out from the file names alone:
@@ -245,7 +251,7 @@ node test/e2e.mjs                  # real server + real browser: drawing, saving
 ## Known limitations
 
 - PNG only. Saving writes a plain 8-bit RGBA PNG: indexed or greyscale files become RGBA, 16-bit files are reduced to 8-bit, interlaced files are read through the browser (which may round semi-transparent pixels), and metadata chunks (colour profile, text, resolution) are not kept.
-- No layers. For layered work keep the `.aseprite` (or similar) source next to the PNG and use this for quick fixes, palette work and review.
+- Layers are plain "normal" blending with opacity (no blend modes, groups or `.aseprite` files).
 - Undo history is per session and held in memory (100 steps per image).
 - Folder mode needs the File System Access API (Chromium browsers). GitHub mode and the local server work in any modern browser; `CompressionStream` is needed for the lossless codec (all current browsers), with a canvas fallback otherwise.
 - The "Recolour all" colour dialog depends on the browser's `<input type=color>`.

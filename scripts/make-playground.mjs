@@ -124,6 +124,20 @@ console.log('  palette.hex  8 colours');
   await save('notes/face.png', f);
 }
 
+/* 9. layers: a slime in three layers (colour, shading, line art), saved flat in slime.png and as layers in slime.layers.png */
+{
+  const colour = img(16, 16), shade = img(16, 16), line = img(16, 16);
+  colour.disc(8, 10, 5, P.moss); colour.rect(3, 10, 11, 5, P.moss);
+  shade.rect(4, 13, 9, 2, P.ink); shade.set(6, 7, P.bone); shade.set(7, 7, P.bone); shade.set(6, 8, P.bone);
+  line.ring(8, 10, 5, P.ink); line.line(3, 15, 13, 15, P.ink); line.rect(6, 10, 1, 2, P.ink); line.rect(10, 10, 1, 2, P.ink);
+  for (let i = 0; i < 16 * 16; i++) if (!colour.px[i] && (shade.px[i] || line.px[i])) { shade.px[i] = 0; } // shading only inside the body
+  const layers = [{ name: 'colour', px: colour.px }, { name: 'shading', opacity: 60, px: shade.px }, { name: 'line art', px: line.px }];
+  const flat = PF.core.flattenLayers(layers, 16 * 16);
+  await save('layers/slime.png', { w: 16, h: 16, px: flat });
+  const pk = PF.core.packLayers(layers, 16, 16), f = path.join(root, 'layers/slime.layers.png');
+  fs.writeFileSync(f, await PF.png.encode(pk.w, pk.h, pk.px, 1, pk.text)); console.log('  layers/slime.layers.png', pk.w + '×' + pk.h, '3 layers');
+}
+
 fs.writeFileSync(path.join(root, 'spritewright.config.json'), JSON.stringify({
   palette: 'palette.hex', tileGrid: 16, maxColors: 8, background: '#2a2238',
   frames: { 'animation/counter-sheet.png': { w: 16, h: 16, fps: 4 } },

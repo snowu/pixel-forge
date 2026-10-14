@@ -1536,6 +1536,47 @@ section('lossless saves (semi-transparent pixels must survive exactly)');
   await p2.close(); await srv2.close();
 }
 
+section('layers: draw on a layer, save writes the flat PNG and name.layers.png, which reopen as layers');
+{
+  const r4 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-layers-'));
+  fs.writeFileSync(path.join(r4, 'knight.png'), fromRows(['rrrr', 'rrrr', 'rrrr', 'rrrr'], { r: [255, 0, 0] }).png);
+  const s4 = createServer({ root: r4, port: 0 }), b4 = await s4.listen();
+  const lp = await ctx.newPage(); const lerr = []; lp.on('pageerror', (e) => lerr.push(e.message));
+  const A = (fn, arg) => lp.evaluate(fn, arg);
+  await lp.goto(b4 + '?auth=off'); await lp.waitForSelector('.pf-item'); await A(() => document.getElementById('app').__pf.open('knight.png')); await lp.waitForTimeout(200);
+  ok(await lp.locator('.pf-ly').count() === 0 && await lp.locator('.pf-ly-add').isEnabled(), 'a plain sprite has no layer list, just + layer');
+  await lp.locator('.pf-ly-add').click();
+  ok(await lp.locator('.pf-ly').count() === 2 && await lp.locator('.pf-ly.on input').inputValue() === 'Layer 2', 'two layers, the new one on top and current');
+  await lp.locator('.pf-ly.on input').fill('line art'); await lp.locator('.pf-ly.on input').press('Enter'); await lp.waitForTimeout(150);
+  const lpos = async (x, y) => { const b = await lp.locator('.pf-view').boundingBox(), st = await A(() => { const S = document.getElementById('app').__pf.state; return { z: S.zoom, ox: S.ox, oy: S.oy }; }); const v = await lp.locator('.pf-view').evaluate((c) => c.width / c.getBoundingClientRect().width); return { x: b.x + (st.ox + (x + 0.5) * st.z) / v, y: b.y + (st.oy + (y + 0.5) * st.z) / v }; };
+  await lp.locator('.pf-chex').fill('#0000ff'); await lp.locator('.pf-chex').press('Tab'); await lp.keyboard.press('b');
+  { const p = await lpos(1, 1); await lp.mouse.click(p.x, p.y); }
+  const st = () => A(() => { const d = document.getElementById('app').__pf.current; return { n: d.layers.length, names: d.layers.map((l) => l.name), l0: d.layers[0].px[5], l1: d.layers[1] && d.layers[1].px[5], flat: d.flat()[5] }; });
+  { const s = await st(); ok(s.l0 === 0xff0000ff >>> 0 && s.l1 === 0xffff0000 >>> 0 && s.flat === s.l1 && s.names[1] === 'line art', 'the pen draws on the current layer only, and shows on top: ' + JSON.stringify(s)); }
+  await lp.locator('.pf-ly.on .pf-ly-eye').click(); ok((await st()).flat === 0xff0000ff >>> 0, 'hiding the layer hides what is on it');
+  await lp.keyboard.press('Control+z'); ok((await st()).flat === 0xffff0000 >>> 0, 'undo shows it again');
+  await lp.keyboard.press('Control+s'); await until(() => fs.existsSync(path.join(r4, 'knight.layers.png'))); await lp.waitForTimeout(300);
+  { const flat = decodePng(fs.readFileSync(path.join(r4, 'knight.png'))), side = decodePng(fs.readFileSync(path.join(r4, 'knight.layers.png')));
+    ok(flat.w === 4 && flat.h === 4 && flat.rgba[5 * 4 + 2] === 255 && flat.rgba[5 * 4] === 0, 'knight.png is the flattened image');
+    ok(side.w === 4 && side.h === 8 && side.rgba[5 * 4] === 255 && side.rgba[(16 + 5) * 4 + 2] === 255 && side.rgba[(16 + 0) * 4 + 3] === 0, 'knight.layers.png holds both layers, bottom first'); }
+  await lp.reload(); await lp.waitForSelector('.pf-item');
+  ok(await lp.locator('.pf-item', { hasText: 'layers' }).count() === 0, 'the layers file is not listed as a sprite');
+  await A(() => document.getElementById('app').__pf.open('knight.png')); await lp.waitForTimeout(300);
+  { const s = await st(); ok(s.n === 2 && s.names[1] === 'line art' && s.l1 === 0xffff0000 >>> 0 && !(await A(() => document.getElementById('app').__pf.current.changed)), 'reopened with its layers, names and pixels, and unchanged: ' + JSON.stringify(s)); }
+  await lp.locator('.pf-fliph').click(); { const s = await st(); ok(s.l1 !== 0xffff0000 >>> 0 && await A(() => document.getElementById('app').__pf.current.layers[1].px[6]) === 0xffff0000 >>> 0, 'flip turns every layer'); }
+  await lp.keyboard.press('Control+z');
+  await lp.locator('.pf-ly-merge').click(); ok((await st()).n === 1 && await lp.locator('.pf-ly').count() === 0, 'merge down leaves one layer');
+  await lp.keyboard.press('Control+s'); await until(() => !fs.existsSync(path.join(r4, 'knight.layers.png')));
+  ok(!fs.existsSync(path.join(r4, 'knight.layers.png')) && decodePng(fs.readFileSync(path.join(r4, 'knight.png'))).rgba[5 * 4 + 2] === 255, 'saving one layer again removes the layers file and keeps the image');
+  // a PNG changed elsewhere wins over older layers
+  await lp.locator('.pf-ly-add').click(); await lp.keyboard.press('Control+s'); await until(() => fs.existsSync(path.join(r4, 'knight.layers.png')));
+  fs.writeFileSync(path.join(r4, 'knight.png'), fromRows(['gggg', 'gggg', 'gggg', 'gggg'], { g: [0, 255, 0] }).png);
+  await lp.reload(); await lp.waitForSelector('.pf-item'); await A(() => document.getElementById('app').__pf.open('knight.png')); await lp.waitForTimeout(300);
+  ok((await st()).n === 1 && (await st()).flat === 0xff00ff00 >>> 0 && fs.existsSync(path.join(r4, 'knight.layers.png')), 'a PNG edited without its layers opens flat, as the file is, and the old layers file is left alone');
+  ok(lerr.length === 0, 'no page errors ' + lerr.join('|'));
+  await lp.close(); await s4.close();
+}
+
 ok(errors.length === 0, 'no page errors ' + JSON.stringify(errors.slice(0, 3)));
 await browser.close(); await srv.close();
 console.log(`\n${pass} passed, ${fail} failed`);

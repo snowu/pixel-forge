@@ -861,3 +861,34 @@ test('prBody: review notes become a Notes section, empty ones left out', () => {
   assert.match(body, /### Notes\n\n\*\*art\/a\.png\*\*\n\n1\. \(2, 5\) eye is 1px too high\n\n\*\*art\/b\.png\*\*\n\n1\. \(1, 1\) needs an outline\n/);
   assert.doesNotMatch(PF.prBody({ files: [{ path: 'a.png', w: 1, h: 1, pixels: 1 }], notes: [{ path: 'a.png', items: [{ x: 0, y: 0, text: '' }] }] }), /Notes/, 'no section for blank notes');
 });
+
+/* ---------- layers ---------- */
+test('layers: flatten (hidden, opacity, blending), the layers file round trip through PNG, and a layered Doc', async () => {
+  const red = C.pack(255, 0, 0), blue = C.pack(0, 0, 255), n = 4;
+  const bottom = { name: 'colour', visible: true, opacity: 100, px: new Uint32Array(n).fill(red) };
+  const top = { name: 'line ✎', visible: true, opacity: 100, px: Uint32Array.from([blue, 0, blue, 0]) };
+  assert.deepEqual([...C.flattenLayers([bottom, top], n)], [blue, red, blue, red], 'opaque pixels cover, clear ones show through');
+  assert.deepEqual([...C.flattenLayers([bottom, { ...top, visible: false }], n)], [red, red, red, red], 'hidden layers are left out');
+  const half = C.flattenLayers([bottom, { ...top, opacity: 50 }], n)[0];
+  assert.deepEqual(C.unpack(half).slice(0, 3), [128, 0, 128], 'opacity mixes'); assert.equal(C.unpack(half)[3], 255);
+  assert.deepEqual([...C.flattenLayers([{ ...top, opacity: 50 }], n)].map((c) => c >>> 24), [128, 0, 128, 0], 'over clear, opacity is alpha');
+  const pk = C.packLayers([bottom, { ...top, visible: false, opacity: 40 }], 2, 2); assert.deepEqual([pk.w, pk.h], [2, 4]);
+  const img = await PF.png.decode(await PF.png.encode(pk.w, pk.h, pk.px, 1, pk.text));
+  const back = C.unpackLayers(img, 2, 2);
+  assert.deepEqual(back.map((l) => [l.name, l.visible, l.opacity]), [['colour', true, 100], ['line ✎', false, 40]], 'names (any characters), visibility and opacity come back');
+  assert.deepEqual([...back[1].px], [...top.px]);
+  assert.equal(C.unpackLayers(img, 4, 4), null, 'a layers file of another size is not used');
+  assert.equal(C.unpackLayers({ ...img, text: {} }, 2, 2), null, 'nor a plain PNG');
+  assert.equal(C.layersPath('a/knight_0.png'), 'a/knight_0.layers.png'); assert.ok(C.isLayersFile('a/knight_0.layers.png') && !C.isLayersFile('a/knight_0.png'));
+
+  const d = new C.Doc('s.png', 2, 2, new Uint32Array(n).fill(red));
+  assert.equal(d.flat(), d.px, 'one plain layer is the image itself'); assert.ok(!d.changed && !d.layered);
+  d.snapshot(); d.layers.push({ name: 'Layer 2', visible: true, opacity: 100, px: new Uint32Array(n) }); d.active = 1; d.px[0] = blue;
+  assert.ok(d.layered && d.changed); assert.equal(d.flat()[0], blue); assert.equal(d.layers[0].px[0], red, 'tools draw on the current layer only');
+  d.snapshot(); d.layers[1].visible = false; assert.ok(d.changed); assert.equal(d.flat()[0], red);
+  d.layers[1].visible = true; d.markSaved(); d.snapshot(); d.layers[1].visible = false; d.layers[1].px[0] = red; d.layers[1].visible = true;
+  assert.ok(d.unsaved, 'a change on a layer counts even when the flat image looks the same'); d.undoOnce(); assert.ok(!d.unsaved);
+  d.snapshot(); d.allLayers((x) => { x.px = C.rotateCW(x.px, x.w, x.h); [x.w, x.h] = [x.h, x.w]; }); assert.equal(d.active, 1, 'a whole-image edit keeps the current layer');
+  assert.deepEqual([d.layers[0].px[0], d.layers[1].px[1]], [red, blue], 'and turns every layer');
+  d.undoOnce(); d.undoOnce(); d.undoOnce(); assert.equal(d.layers.length, 1, 'undo takes the new layer away again'); assert.ok(!d.changed);
+});
