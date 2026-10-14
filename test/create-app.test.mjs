@@ -10,7 +10,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 test('the manifest asks for exactly the permissions and URLs sign-in needs', async () => {
   const { manifest } = await import('../worker/create-app.mjs');
   const m = manifest('spritewright', 'https://w.example', 8737);
-  assert.deepEqual(m.default_permissions, { contents: 'write', pull_requests: 'write', metadata: 'read' });
+  assert.deepEqual(m.default_permissions, { contents: 'write', pull_requests: 'write', issues: 'write', metadata: 'read' });
   assert.deepEqual(m.callback_urls, ['https://w.example/callback']);
   assert.equal(m.redirect_url, 'http://localhost:8737/done');
   assert.equal(m.hook_attributes.active, false);

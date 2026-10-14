@@ -30,7 +30,7 @@ export const manifest = (name, worker, port) => ({
   callback_urls: [worker + '/callback'],
   public: true,
   request_oauth_on_install: false,
-  default_permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' },
+  default_permissions: { contents: 'write', pull_requests: 'write', issues: 'write', metadata: 'read' },
   default_events: [],
 });
 

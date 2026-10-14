@@ -9,3 +9,10 @@ ALLOWED_ORIGINS = "https://snowu.github.io"
 ALLOW_LOOPBACK = "true"
 # the public id of your GitHub App (a secret is NOT stored here, see worker/README.md)
 GITHUB_CLIENT_ID = "Iv23li3jrG7gfBenEFC2"
+# Feedback button: at most 5 reports a minute per signed-in person (also needs the FEEDBACK_TOKEN secret, see worker/README.md)
+[[ratelimits]]
+name = "FEEDBACK_LIMIT"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 5
+  period = 60

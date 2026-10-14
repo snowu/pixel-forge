@@ -45,6 +45,10 @@ export interface MountOptions {
   draftsKey?: string;
   /** false hides the pull request button. */
   pr?: boolean;
+  /** The Feedback button. Signed in with GitHub (authBase, with feedback set up: see worker/README.md) it sends the issue as the reporter;
+      signed out it opens a prefilled GitHub issue (screenshot on the clipboard). Default repository "snowu/spritewright"; another "owner/name"
+      sends the prefilled link there; false hides the button. */
+  feedback?: boolean | string | { repo: string };
   /** URL of the sign-in service (see worker/): enables the "Sign in with GitHub" button. */
   authBase?: string;
   /** Slug of the GitHub App used for sign-in; when set, the repository list links to installing it on more repositories. */
@@ -95,6 +99,13 @@ export interface GithubSourceOptions { repo: string; branch?: string; token?: st
 
 export function mount(host: HTMLElement, options?: MountOptions): Editor;
 export function createPullRequest(options: PullRequestOptions): Promise<PullRequestResult>;
+/** Helpers behind the Feedback button: the prefilled GitHub "new issue" link (template .github/ISSUE_TEMPLATE/feedback.yml, kept under GitHub's URL length limit) and its details as a markdown table. */
+export const feedback: {
+  url(o?: { what?: string; details?: string; kind?: 'bug' | 'idea' | 'other'; repo?: string }): string;
+  title(text: string, kind?: 'bug' | 'idea' | 'other', words?: number, maxChars?: number): string;
+  details(rows: [string, string][]): string;
+  repo: string;
+};
 export function prBody(o: { files: { path: string; w: number; h: number; pixels: number; scale?: number; baseW?: number; isNew?: boolean }[]; description?: string; repo?: string; baseSha?: string; commit?: string; headRepo?: string; prefix?: string; previewSha?: string | null }): string;
 
 export const png: {
@@ -123,7 +134,7 @@ export const auth: {
 };
 export const core: Record<string, unknown>;
 
-declare const Spritewright: { auth: typeof auth; mount: typeof mount; createPullRequest: typeof createPullRequest; prBody: typeof prBody; png: typeof png; sources: typeof sources; core: typeof core };
+declare const Spritewright: { auth: typeof auth; mount: typeof mount; createPullRequest: typeof createPullRequest; prBody: typeof prBody; feedback: typeof feedback; png: typeof png; sources: typeof sources; core: typeof core };
 export default Spritewright;
 
 declare global { interface Window { Spritewright: typeof Spritewright } }

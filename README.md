@@ -81,7 +81,7 @@ const editor = Spritewright.mount(document.getElementById('editor')!, {
 });
 ```
 
-Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `drafts: false` to not keep edits in the browser (or your own store; `draftsKey` names the project), `pr: false` to hide the pull-request button. `Spritewright.createPullRequest`, `Spritewright.png.decode/encode`, `Spritewright.sources.*` and `Spritewright.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
+Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `drafts: false` to not keep edits in the browser (or your own store; `draftsKey` names the project), `pr: false` to hide the pull-request button, `feedback: false` to hide the Feedback button (see Feedback below). `Spritewright.createPullRequest`, `Spritewright.png.decode/encode`, `Spritewright.sources.*` and `Spritewright.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
 
 ## Fullscreen on phones and tablets
 
@@ -170,7 +170,7 @@ Static hosting with a manifest, if you prefer it to the GitHub mode: `spritewrig
 
 ## Signing in with GitHub (no tokens to paste)
 
-Reading **public** repositories needs no sign-in at all. To open **private** repositories and to send pull requests, the editor offers **Sign in with GitHub**: a popup on github.com (your normal login, SSO and 2FA included), then the editor can act on the repositories where the *spritewright GitHub App* is installed, with exactly two permissions (Contents and Pull requests, read and write).
+Reading **public** repositories needs no sign-in at all. To open **private** repositories and to send pull requests, the editor offers **Sign in with GitHub**: a popup on github.com (your normal login, SSO and 2FA included), then the editor can act on the repositories where the *spritewright GitHub App* is installed, with exactly three permissions (Contents, Pull requests and Issues, read and write; Issues is only for the Feedback button).
 
 **Sign in once.** After signing in, the dialog lists the repositories you own or collaborate on where the app is installed, marked "pull requests" (you can write) or "read only". One click opens one; **Propose PR** then needs nothing else. The sign-in is remembered on that device: GitHub's 8-hour token is renewed quietly through the auth service (with GitHub's ~6-month refresh token), so the popup only comes back after **Sign out** or months of not using it. A repository missing from the list needs the app installed on it, and the dialog links to that. The local editor (`npx spritewright`) offers the same sign-in.
 
@@ -195,6 +195,10 @@ It uses only the REST API: read the repo and your permissions, fork it if you ca
 - Public repositories can be opened without a token, but anonymous GitHub API calls are limited to 60 an hour, so add a token for regular use.
 
 **What is and is not verified.** The PR client, GitHub mode and folder mode are covered by unit and browser tests against a **mocked GitHub API** and an **in-memory folder** standing in for the browser's directory picker. They have not been run against the live GitHub service or a real file-picker in this repository's tests, so try each once on a throwaway repository or folder before relying on it. One pull request holds the PNGs changed in the current session; binary files cannot be merged by git, so two people editing the same sprite will conflict like any other binary.
+
+## Feedback
+
+The **Feedback** button (top bar, next to `?`) is for bugs, ideas or anything else, from people **signed in with GitHub**. It takes a screenshot of the editor as it was and shows the details that go with it (project kind, sprite size, tool, view, screen and browser; the repository name and sprite path only for public repositories). **Send feedback** hands both to the sign-in service, which checks the person's GitHub sign-in, stores the screenshot in this repository (branch `feedback-screenshots`) and opens the issue **as that person**, with the screenshot shown inline, so it is theirs to follow and edit (if GitHub does not let their sign-in open issues, the service opens it for them, signed *Sent from the spritewright editor by @their-login*). Signed out, the dialog offers **Sign in with GitHub** instead. Setup is in [worker/README.md](worker/README.md#feedback); without it (or with `feedback: false`, or no sign-in service) the button is hidden.
 
 ## Safety of the local server
 
