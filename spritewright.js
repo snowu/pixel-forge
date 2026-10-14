@@ -1152,6 +1152,7 @@
     undo: '<path d="M9 13.5L4.5 9 9 4.5"/><path d="M4.5 9H15a5 5 0 0 1 0 10h-3.5"/>',
     redo: '<path d="M15 13.5L19.5 9 15 4.5"/><path d="M19.5 9H9a5 5 0 0 0 0 10h3.5"/>',
     grid: '<rect x="4" y="4" width="16" height="16"/><path d="M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16"/>',
+    tilegrid: '<rect x="4" y="4" width="16" height="16"/><path d="M12 4v16M4 12h16" stroke-width="2.6"/><path d="M8 4v16M16 4v16M4 8h16M4 16h16" stroke-width=".9" opacity=".6"/>',
     tile: '<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/>',
     changes: '<rect x="3.5" y="3.5" width="17" height="17"/><path d="M12 3.5v17"/><path d="M5.5 9.5h4M7.5 7.5v4"/><path d="M14.5 9.5h4"/><path d="M14.5 15.5h4" stroke-dasharray="1 1.6"/>',
     context: '<rect x="3.5" y="13.5" width="5" height="6"/><rect x="9.5" y="7.5" width="5" height="12" fill="currentColor"/><rect x="15.5" y="11.5" width="5" height="8"/><path d="M2 20.5h20"/>',
@@ -1374,7 +1375,7 @@
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
           <span class="pf-grp pf-grp-fs"><button class="pf-fs-go" title="Fullscreen: canvas and tools only, menus slide in from the sides">${icon('fullscreen')}<span>Fullscreen</span></button></span>
-          <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-grid-more" title="Tile grid: a line every 8, 16 or 32 pixels" aria-haspopup="menu" aria-label="Tile grid">▾</button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
+          <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tgrid" title="Tile grid: a stronger line every 8, 16, 32 or 64 pixels (the ▾ picks the size)">${icon('tilegrid')}<span>Tiles</span></button><button class="pf-grid-more" title="Tile grid size" aria-haspopup="menu" aria-label="Tile grid size">▾</button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
           <span class="pf-grp pf-grp-end"><button class="pf-feedback" title="Send feedback or report a bug, with a screenshot of the editor, as a GitHub issue">${icon('feedback')}<span>Feedback</span></button><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
         <div class="pf-opts">
@@ -3000,9 +3001,20 @@
     /* Tile grid: 0 (off) or a size in pixels (sprite sheets already show their frames). The project's config sets the default
        ("tileGrid": 16); a choice made here is remembered per project. */
     const tgKey = () => 'pf:tgrid:' + ((S.meta && S.meta.repo && S.meta.repo.slug) || (S.src && (S.src.name || S.src.kind)) || '');
-    function loadTileGrid() { let v = null; try { v = JSON.parse(localStorage.getItem(tgKey()) || 'null'); } catch { /* none */ } S.tgrid = v != null ? v : (S.src && S.src.tileGrid) || 0; $('.pf-grid-more').classList.toggle('on', !!S.tgrid); }
+    /* S.tgrid is the size drawn (0 = off); S.tgridSize the last size picked, which the toggle brings back. Stored as { v, size }
+       (older visits stored just the number). */
+    function loadTileGrid() {
+      let v = null; try { v = JSON.parse(localStorage.getItem(tgKey()) || 'null'); } catch { /* none */ }
+      const dflt = (S.src && S.src.tileGrid) || 0;
+      if (v && typeof v === 'object') { S.tgrid = +v.v | 0; S.tgridSize = +v.size | 0 || dflt || 16; } else { S.tgrid = v != null ? +v | 0 : dflt; S.tgridSize = S.tgrid || dflt || 16; }
+      $('.pf-tgrid').classList.toggle('on', !!S.tgrid);
+    }
     const tileGridSize = () => +S.tgrid | 0;
-    function setTileGrid(v) { S.tgrid = v; try { localStorage.setItem(tgKey(), JSON.stringify(v)); } catch { /* this visit only */ } $('.pf-grid-more').classList.toggle('on', !!v); render(); }
+    function setTileGrid(v) {
+      S.tgrid = v; if (v) S.tgridSize = v; try { localStorage.setItem(tgKey(), JSON.stringify({ v: S.tgrid, size: S.tgridSize })); } catch { /* this visit only */ }
+      $('.pf-tgrid').classList.toggle('on', !!v); render();
+    }
+    $('.pf-tgrid').onclick = () => setTileGrid(S.tgrid ? 0 : S.tgridSize || 16);
     $('.pf-grid-more').onclick = (e) => {
       e.stopPropagation(); const open = root.querySelector('.pf-tgmenu'); if (open) return open.remove();
       const opts = [[0, 'Tile grid off'], [8, '8 × 8'], [16, '16 × 16'], [32, '32 × 32'], [64, '64 × 64']];
