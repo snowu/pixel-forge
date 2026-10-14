@@ -819,3 +819,21 @@ test('lintPixels: stray pixels, doubled corners in 1px lines, near-duplicate col
   const near = clean.slice(); near[3 * W + 3] = (F - 3) >>> 0; // one pixel of a colour 3 off the fill (red 0xfc instead of 0xff)
   const L = C.lintPixels(near, W, H); assert.equal(L.near.length, 1); assert.deepEqual(L.nearPx, [3 * W + 3], 'the rarer of the two is marked');
 });
+
+/* ---------- Scale2x and RotSprite ---------- */
+test('scale2x: flat areas stay flat, a diagonal step is rounded instead of blocked', () => {
+  const X = 1, O = 0;
+  const flat = C.scale2x(new Uint32Array(4).fill(X), 2, 2); assert.deepEqual([flat.w, flat.h], [4, 4]); assert.ok(flat.px.every((v) => v === X));
+  // a diagonal X . / . X becomes a smooth 2-pixel diagonal, not two 2x2 blocks touching at a corner:
+  // X X . . / X . X . / . X . X / . . X X
+  const diag = C.scale2x(Uint32Array.from([X, O, O, X]), 2, 2);
+  assert.deepEqual([...diag.px], [X, X, O, O, X, O, X, O, O, X, O, X, O, O, X, X]);
+});
+test('rotSprite: 0° is the image itself, 90° matches the exact rotation, any angle only uses colours that were there', () => {
+  const w = 6, h = 4, px = Uint32Array.from({ length: w * h }, (_, i) => (i % 3 === 0 ? 0 : 10 + (i % 5)));
+  assert.deepEqual([...C.rotSprite(px, w, h, 0).px], [...px]);
+  const r90 = C.rotSprite(px, w, h, 90); assert.deepEqual([r90.w, r90.h], [h, w]); assert.deepEqual([...r90.px], [...C.rotateCW(px, w, h)]);
+  const r30 = C.rotSprite(px, w, h, 30), colours = new Set(px); assert.ok([...r30.px].every((v) => colours.has(v)), 'no new colours, no blending');
+  assert.ok(r30.w > w && r30.h > h, 'the box grows to fit');
+  const kept = C.rotSprite(px, w, h, 30, w, h); assert.deepEqual([kept.w, kept.h], [w, h], 'or keeps the canvas size');
+});

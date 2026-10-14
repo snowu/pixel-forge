@@ -212,6 +212,25 @@ section('pixel check');
   await lctx.close();
 }
 
+section('rotate by any angle, smooth x2');
+{
+  const rctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
+  const rp = await rctx.newPage(); const rerr = []; rp.on('pageerror', (e) => rerr.push(e.message));
+  await rp.goto(base + '?auth=off'); await rp.waitForSelector('.pf-item'); await rp.locator('.pf-item', { hasText: 'slime.png' }).click(); await rp.waitForTimeout(250);
+  const cur = () => rp.evaluate(() => { const d = document.getElementById('app').__pf.current; return { w: d.w, h: d.h, px: [...d.px] }; });
+  const before = await cur();
+  await rp.locator('.pf-rotfree').click(); await rp.waitForSelector('.pf-dlg-rot[open]');
+  await rp.locator('.pf-rot-quick [data-a="30"]').click();
+  ok((await rp.locator('.pf-rot-n').inputValue()) === '30' && await rp.locator('.pf-rot-prev').evaluate((c) => c.width > 0) && /whole image/.test(await rp.locator('.pf-rot-what').innerText()), 'Rotate… previews the angle you pick');
+  await rp.locator('.pf-rot-go').click(); const rot = await cur();
+  ok(rot.w === before.w && rot.h === before.h && JSON.stringify(rot.px) !== JSON.stringify(before.px) && rot.px.every((v) => before.px.includes(v)), 'the image turns inside its canvas, with no new colours');
+  await rp.keyboard.press('Control+z');
+  await rp.locator('.pf-x2').click(); const big = await cur();
+  ok(big.w === before.w * 2 && big.h === before.h * 2, 'Smooth ×2 doubles the image: ' + big.w + '×' + big.h);
+  ok(rerr.length === 0, 'no page errors ' + rerr.join('|'));
+  await rctx.close();
+}
+
 section('more tools: brush size, dither, ellipse, shading, selection, tile, outline, ramps');
 {
   const C = (await import('../spritewright.js'), globalThis.Spritewright.core);
