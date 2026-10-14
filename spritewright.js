@@ -268,6 +268,36 @@
     for (let j = 0; j < sh; j++) for (let i = 0; i < sw; i++) { const X = x + i, Y = y + j, v = src[j * sw + i]; if (X >= 0 && Y >= 0 && X < w && Y < h && (opaque || !isClear(v))) px[Y * w + X] = v; }
     return px;
   }
+  /* Selection masks. A selection is a rectangle { x, y, w, h } plus, for lasso, wand and combined selections, mask: a
+     Uint8Array(w*h) of the pixels inside it. These work on whole-image masks (Uint8Array(W*H)) and convert back. */
+  function selMask(sel, W, H) {
+    const m = new Uint8Array(W * H); if (!sel) return m;
+    for (let y = 0; y < sel.h; y++) for (let x = 0; x < sel.w; x++) { const X = sel.x + x, Y = sel.y + y; if (X >= 0 && Y >= 0 && X < W && Y < H && (!sel.mask || sel.mask[y * sel.w + x])) m[Y * W + X] = 1; }
+    return m;
+  }
+  /** The selection a whole-image mask describes: its bounding box, with a mask unless it fills that box. Null when empty. */
+  function maskSel(m, W, H) {
+    let x0 = W, y0 = H, x1 = -1, y1 = -1, n = 0;
+    for (let i = 0; i < m.length; i++) if (m[i]) { const x = i % W, y = (i / W) | 0; n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (!n) return null;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1, sel = { x: x0, y: y0, w, h };
+    if (n === w * h) return sel;
+    sel.mask = new Uint8Array(w * h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) sel.mask[y * w + x] = m[(y0 + y) * W + x0 + x];
+    return sel;
+  }
+  /** A lasso: the pixels whose centres fall inside the polygon through pts ([x, y] cells), and the cells on its outline. */
+  function lassoMask(pts, W, H) {
+    const m = new Uint8Array(W * H), n = pts.length, put = (x, y) => { if (x >= 0 && y >= 0 && x < W && y < H) m[y * W + x] = 1; };
+    for (let i = 0; i < n; i++) { const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % n]; for (const [x, y] of linePoints(ax, ay, bx, by)) put(x, y); }
+    if (n >= 3) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let inside = false; const px = x + 0.5, py = y + 0.5;
+      for (let i = 0, j = n - 1; i < n; j = i++) { const [xi, yi] = [pts[i][0] + 0.5, pts[i][1] + 0.5], [xj, yj] = [pts[j][0] + 0.5, pts[j][1] + 0.5]; if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside; }
+      if (inside) m[y * W + x] = 1;
+    }
+    return m;
+  }
+  /** Combine whole-image masks: 'add', 'sub' (a without b), or replace. */
+  const combineMasks = (a, b, op) => (op === 'add' ? a.map((v, i) => v | b[i]) : op === 'sub' ? a.map((v, i) => (v && !b[i] ? 1 : 0)) : b);
   /** Normalise a drag between two cells into a rectangle clipped to the image (null when it misses the image). */
   function rectBetween(a, b, w, h) {
     const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y)), x1 = Math.min(w - 1, Math.max(a.x, b.x)), y1 = Math.min(h - 1, Math.max(a.y, b.y));
@@ -1198,9 +1228,9 @@
   ];
   const icon = (name) => `<svg class="pf-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   // [id, name, key, rail icon or the rail tool it belongs to]
-  const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['shade', 'Shade: lighter, right click darker', 'D'], ['gradient', 'Dither gradient: drag from the primary to the secondary colour', 'J']];
+  const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['lasso', 'Lasso select', 'Q', 'select'], ['wand', 'Magic wand: select by colour', 'W', 'select'], ['shade', 'Shade: lighter, right click darker', 'D'], ['gradient', 'Dither gradient: drag from the primary to the secondary colour', 'J']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
-  const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S D J', 'select & move · shade · dither gradient'], ['[ ]', 'brush size (pencil, eraser, shade, and the line / outline shapes)'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
+  const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S Q W', 'select a rectangle · lasso · magic wand (Shift adds, Alt subtracts; drag inside to move)'], ['D J', 'shade · dither gradient'], ['[ ]', 'brush size (pencil, eraser, shade, and the line / outline shapes)'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
     ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save (to the project folder when it can be written; edits are kept in this browser either way)'], ['Ctrl+Shift+S', 'download this sprite as a PNG'], ['Ctrl+Alt+C', 'canvas size'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
   /* What shows behind transparent pixels. No single background suits all art (dark details vanish on the dark checker, pale
      ones on the light one), so like Aseprite, Pixelorama and Piskel the editor offers a few and remembers the choice.
@@ -1394,12 +1424,13 @@
             <span class="pf-seg pf-shape"><button data-shape="square" class="on" title="Square tip">${icon('sq')}</button><button data-shape="round" title="Round tip">${icon('circ')}</button></span></span>
           <span class="pf-opt" data-for="pen fill rect rectf ellipse ellipsef line"><span class="pf-ol">pattern</span><span class="pf-seg pf-pattern"><button data-pattern="solid" class="on" title="Solid">solid</button><button data-pattern="dither" title="Checkerboard dither: the primary colour on every other pixel (fills put the secondary colour in between)">dither</button></span></span>
           <span class="pf-opt" data-for="gradient"><span class="pf-note">drag from the primary colour to the secondary · fills the selection, or the area you start in</span></span>
-          <span class="pf-opt" data-for="fill gradient"><span class="pf-ol">fill</span><span class="pf-seg pf-fillmode"><button data-fill="area" class="on" title="Only the connected area">area</button><button data-fill="same" title="Every pixel of that colour in the image">same colour</button></span></span>
+          <span class="pf-opt" data-for="fill gradient wand"><span class="pf-ol">fill</span><span class="pf-seg pf-fillmode"><button data-fill="area" class="on" title="Only the connected area">area</button><button data-fill="same" title="Every pixel of that colour in the image">same colour</button></span></span>
           <span class="pf-opt" data-for="rect rectf ellipse ellipsef"><span class="pf-seg pf-filled"><button data-filled="0" class="on" title="Outline (R / O)">outline</button><button data-filled="1" title="Filled (F / U)">filled</button></span><span class="pf-note">Shift: square / circle</span></span>
           <span class="pf-opt" data-for="line"><span class="pf-note">Shift snaps to 45°</span></span>
           <span class="pf-opt" data-for="pen"><button class="pf-pp" title="Pixel-perfect pencil: removes the corner doubles that make 1-pixel lines lumpy. Best for single lines; leave it off to fill areas by dragging.">clean lines</button><span class="pf-note">Shift+click: line from the last point</span></span>
           <span class="pf-opt" data-for="shade"><span class="pf-note">click lightens · right click darkens · steps through the palette when one is loaded</span></span>
-          <span class="pf-opt" data-for="select"><button class="pf-sel-copy" title="Copy (Ctrl+C)">copy</button><button class="pf-sel-cut" title="Cut (Ctrl+X)">cut</button><button class="pf-sel-paste" title="Paste (Ctrl+V; images from other apps too)">paste</button><button class="pf-sel-del" title="Delete (Del)">delete</button><button class="pf-sel-all" title="Select all (Ctrl+A)">all</button><button class="pf-sel-crop" title="Crop the canvas to the selection">crop</button><button class="pf-sel-none" title="Drop the selection (Esc)">deselect</button><span class="pf-note">drag inside to move · arrows nudge</span></span>
+          <span class="pf-opt" data-for="select lasso wand"><span class="pf-seg pf-selmode"><button data-t="select" title="Rectangle (S)">rect</button><button data-t="lasso" title="Lasso: draw round what you want (Q)">lasso</button><button data-t="wand" title="Magic wand: click a colour (W)">wand</button></span></span>
+          <span class="pf-opt" data-for="select lasso wand"><button class="pf-sel-copy" title="Copy (Ctrl+C)">copy</button><button class="pf-sel-cut" title="Cut (Ctrl+X)">cut</button><button class="pf-sel-paste" title="Paste (Ctrl+V; images from other apps too)">paste</button><button class="pf-sel-del" title="Delete (Del)">delete</button><button class="pf-sel-all" title="Select all (Ctrl+A)">all</button><button class="pf-sel-crop" title="Crop the canvas to the selection">crop</button><button class="pf-sel-none" title="Drop the selection (Esc)">deselect</button><span class="pf-note">Shift adds · Alt subtracts · drag inside to move · arrows nudge</span></span>
           <span class="pf-opt pf-opt-end" data-for="*"><button class="pf-mx" title="Mirror left-right (M)">${icon('mx')}<span>mirror X</span></button><button class="pf-my" title="Mirror up-down">${icon('my')}<span>mirror Y</span></button></span>
         </div>
         <div class="pf-work">
@@ -2128,10 +2159,19 @@
       g.strokeStyle = 'rgba(224,140,255,.75)';
       if (S.mx) { g.beginPath(); g.moveTo(S.ox + W / 2, S.oy); g.lineTo(S.ox + W / 2, S.oy + H); g.stroke(); }
       if (S.my) { g.beginPath(); g.moveTo(S.ox, S.oy + H / 2); g.lineTo(S.ox + W, S.oy + H / 2); g.stroke(); }
-      if (S.sel) { /* marching ants, without the marching */
-        const r = [S.ox + S.sel.x * z + .5, S.oy + S.sel.y * z + .5, S.sel.w * z - 1, S.sel.h * z - 1];
-        g.setLineDash([4, 4]); g.strokeStyle = '#000'; g.strokeRect(...r); g.lineDashOffset = 4; g.strokeStyle = '#fff'; g.strokeRect(...r); g.setLineDash([]); g.lineDashOffset = 0;
+      if (S.sel) { /* marching ants, without the marching: round the rectangle, or along the edges of a masked selection */
+        const r = S.sel; g.beginPath();
+        if (!r.mask) g.rect(S.ox + r.x * z + .5, S.oy + r.y * z + .5, r.w * z - 1, r.h * z - 1);
+        else {
+          const on = (x, y) => x >= 0 && y >= 0 && x < r.w && y < r.h && r.mask[y * r.w + x], X = (x) => S.ox + (r.x + x) * z + .5, Y = (y) => S.oy + (r.y + y) * z + .5;
+          for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++) if (on(x, y)) {
+            if (!on(x, y - 1)) { g.moveTo(X(x), Y(y)); g.lineTo(X(x + 1), Y(y)); } if (!on(x, y + 1)) { g.moveTo(X(x), Y(y + 1)); g.lineTo(X(x + 1), Y(y + 1)); }
+            if (!on(x - 1, y)) { g.moveTo(X(x), Y(y)); g.lineTo(X(x), Y(y + 1)); } if (!on(x + 1, y)) { g.moveTo(X(x + 1), Y(y)); g.lineTo(X(x + 1), Y(y + 1)); }
+          }
+        }
+        g.setLineDash([4, 4]); g.strokeStyle = '#000'; g.stroke(); g.lineDashOffset = 4; g.strokeStyle = '#fff'; g.stroke(); g.setLineDash([]); g.lineDashOffset = 0;
       }
+      if (drag && drag.tool === 'lasso') { g.beginPath(); drag.pts.forEach(([x, y], i) => g[i ? 'lineTo' : 'moveTo'](S.ox + (x + .5) * z, S.oy + (y + .5) * z)); g.setLineDash([4, 4]); g.strokeStyle = '#fff'; g.stroke(); g.setLineDash([]); }
       const hv = S.hover;
       if (hv && !drag && sized(S.tool) && z >= 3) { /* brush footprint */
         g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1;
@@ -2212,6 +2252,7 @@
       $$('.pf-tools button').forEach((b) => b.classList.toggle('on', b.dataset.t === rail));
       $$('.pf-opt').forEach((o) => { const f = o.dataset.for.split(' '); o.hidden = !(f.includes('*') || f.includes(t)); });
       $$('.pf-filled button').forEach((b) => b.classList.toggle('on', (b.dataset.filled === '1') === (t === 'rectf' || t === 'ellipsef')));
+      $$('.pf-selmode button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
       view.style.cursor = t === 'select' ? 'default' : 'crosshair'; render();
     }
     $('.pf-tools').innerHTML = TOOLS.filter((x) => !x[3]).map(([k, n, key]) => `<button data-t="${k}" title="${n} (${key})" aria-label="${n}">${icon(k)}</button>`).join('');
@@ -2257,32 +2298,43 @@
     /* selection: S.sel is the selected rectangle; S.float holds lifted or pasted pixels that move with it until they are applied */
     function liftSelection() {
       const d = doc(); if (!d || !S.sel || S.float) return;
-      d.snapshot(); const px = copyRect(d.px, d.w, d.h, S.sel);
-      for (let y = 0; y < S.sel.h; y++) for (let x = 0; x < S.sel.w; x++) d.px[(S.sel.y + y) * d.w + S.sel.x + x] = 0;
-      S.float = { px, w: S.sel.w, h: S.sel.h, x: S.sel.x, y: S.sel.y };
+      d.snapshot(); const px = copySelPx(d); clearSel(d.px, d.w);
+      S.float = { px, w: S.sel.w, h: S.sel.h, x: S.sel.x, y: S.sel.y, mask: S.sel.mask || null };
     }
     function commitFloat() {
       const d = doc(), f = S.float; if (!f) return; S.float = null;
-      if (d) { pasteRect(d.px, d.w, d.h, f.px, f.w, f.h, f.x, f.y, false); S.sel = rectBetween({ x: f.x, y: f.y }, { x: f.x + f.w - 1, y: f.y + f.h - 1 }, d.w, d.h); changedUi(); }
+      if (d) {
+        pasteRect(d.px, d.w, d.h, f.px, f.w, f.h, f.x, f.y, false);
+        const inside = f.x >= 0 && f.y >= 0 && f.x + f.w <= d.w && f.y + f.h <= d.h; // a masked selection stays its shape while it fits
+        S.sel = f.mask && inside ? { x: f.x, y: f.y, w: f.w, h: f.h, mask: f.mask } : rectBetween({ x: f.x, y: f.y }, { x: f.x + f.w - 1, y: f.y + f.h - 1 }, d.w, d.h); changedUi();
+      }
     }
     function dropSelection() { commitFloat(); S.sel = null; render(); status(); }
-    function selectAll() { const d = doc(); if (!d) return; commitFloat(); S.sel = { x: 0, y: 0, w: d.w, h: d.h }; if (S.tool !== 'select') setTool('select'); render(); status(); }
+    function selectAll() { const d = doc(); if (!d) return; commitFloat(); S.sel = { x: 0, y: 0, w: d.w, h: d.h }; if (!isSelTool(S.tool)) setTool('select'); render(); status(); }
     function copySel(cut) {
       const d = doc(); if (!d || !S.sel && !S.float) return false;
-      S.clip = S.float ? { px: S.float.px.slice(), w: S.float.w, h: S.float.h } : { px: copyRect(d.px, d.w, d.h, S.sel), w: S.sel.w, h: S.sel.h };
-      if (cut) { if (S.float) { S.float = null; S.sel = null; changedUi(); } else { d.snapshot(); for (let y = 0; y < S.sel.h; y++) for (let x = 0; x < S.sel.w; x++) d.px[(S.sel.y + y) * d.w + S.sel.x + x] = 0; S.sel = null; changedUi(); } }
+      S.clip = S.float ? { px: S.float.px.slice(), w: S.float.w, h: S.float.h } : { px: copySelPx(d), w: S.sel.w, h: S.sel.h };
+      if (cut) { if (S.float) { S.float = null; S.sel = null; changedUi(); } else { d.snapshot(); clearSel(d.px, d.w); S.sel = null; changedUi(); } }
       note((cut ? 'cut ' : 'copied ') + S.clip.w + '×' + S.clip.h); return true;
     }
     function pastePx(px, w, h) {
       const d = doc(); if (!d) return; commitFloat(); d.snapshot();
       const x = S.sel ? S.sel.x : 0, y = S.sel ? S.sel.y : 0;
-      S.float = { px: px.slice(), w, h, x, y }; S.sel = { x, y, w, h }; if (S.tool !== 'select') { S.tool = 'select'; setTool('select'); } changedUi(); note('pasted ' + w + '×' + h + ': drag to place, Enter to apply');
+      S.float = { px: px.slice(), w, h, x, y }; S.sel = { x, y, w, h }; if (!isSelTool(S.tool)) setTool('select'); changedUi(); note('pasted ' + w + '×' + h + ': drag to place, Enter to apply');
     }
-    function deleteSel() { const d = doc(); if (!d) return; if (S.float) { S.float = null; S.sel = null; changedUi(); return; } if (!S.sel) return; edit((dd) => { for (let y = 0; y < S.sel.h; y++) for (let x = 0; x < S.sel.w; x++) dd.px[(S.sel.y + y) * dd.w + S.sel.x + x] = 0; }); }
+    function deleteSel() { const d = doc(); if (!d) return; if (S.float) { S.float = null; S.sel = null; changedUi(); return; } if (!S.sel) return; edit((dd) => clearSel(dd.px, dd.w)); }
     function nudge(dx, dy) { if (!S.sel) return false; liftSelection(); S.float.x += dx; S.float.y += dy; S.sel = { ...S.sel, x: S.float.x, y: S.float.y }; render(); status(); return true; }
     /** Flip or rotate the selection instead of the whole image when there is one. */
-    function transformSel(fn) { if (!S.sel) return false; liftSelection(); const f = S.float, r = fn(f.px, f.w, f.h); f.px = r.px; f.w = r.w; f.h = r.h; S.sel = { x: f.x, y: f.y, w: f.w, h: f.h }; changedUi(); return true; }
-    const inSel = (c) => S.sel && c.x >= S.sel.x && c.y >= S.sel.y && c.x < S.sel.x + S.sel.w && c.y < S.sel.y + S.sel.h;
+    function transformSel(fn) { if (!S.sel) return false; liftSelection(); const f = S.float, r = fn(f.px, f.w, f.h); f.px = r.px; f.w = r.w; f.h = r.h; f.mask = null; S.sel = { x: f.x, y: f.y, w: f.w, h: f.h }; changedUi(); return true; } // the shape stays: what was outside the mask is clear and pastes as nothing
+    const selHas = (x, y) => { const r = S.sel; if (!r || x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h) return false; return !r.mask || !!r.mask[(y - r.y) * r.w + x - r.x]; };
+    const inSel = (c) => selHas(c.x, c.y);
+    const isSelTool = (t) => t === 'select' || t === 'lasso' || t === 'wand';
+    /** Clear the selected pixels of px (w wide), mask and all. */
+    const clearSel = (px, w) => { const r = S.sel; for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++) if (!r.mask || r.mask[y * r.w + x]) px[(r.y + y) * w + r.x + x] = 0; };
+    /** The selected pixels as a rectangle, with what is outside the mask left clear. */
+    const copySelPx = (d) => { const r = S.sel, o = copyRect(d.px, d.w, d.h, r); if (r.mask) for (let i = 0; i < o.length; i++) if (!r.mask[i]) o[i] = 0; return o; };
+    /** A new selection from a whole-image mask, added to (Shift) or taken from (Alt) the current one. */
+    function setSelMask(d, m, op) { S.sel = maskSel(op ? combineMasks(selMask(S.sel, d.w, d.h), m, op) : m, d.w, d.h); }
 
     let drag = null, pan = null, space = false; const pointers = new Map(); let pinch = null;
     /* On a touch screen the first finger of a pinch lands a moment before the second, and would draw (or fill, or pick a colour).
@@ -2311,17 +2363,24 @@
       if (e.button === 1 || space || (e.button === 0 && e.shiftKey && e.altKey)) { pan = { x: e.clientX, y: e.clientY, ox: S.ox, oy: S.oy }; return; }
       const c = toCell(e), right = e.button === 2, inb = !!cell(d, c.x, c.y);
       let tool = S.tool;
-      if (e.altKey && tool !== 'select') tool = 'pick';
+      if (e.altKey && !isSelTool(tool)) tool = 'pick';
       if (tool === 'pick') { pickAt(d, c, right); return; }
-      if (tool === 'select') {
-        if (inSel(c)) { liftSelection(); drag = { tool, move: true, start: c, fx: S.float.x, fy: S.float.y }; }
-        else { commitFloat(); drag = { tool, start: c }; S.sel = rectBetween(c, c, d.w, d.h); render(); }
-        status(); return;
+      if (isSelTool(tool)) {
+        const op = e.shiftKey ? 'add' : e.altKey ? 'sub' : null; // Shift adds to the selection, Alt takes away
+        if (!op && inSel(c)) { liftSelection(); drag = { tool: 'select', move: true, start: c, fx: S.float.x, fy: S.float.y }; status(); return; }
+        commitFloat(); const prev = op ? S.sel : null;
+        if (tool === 'wand') { // every pixel of that colour: connected (area) or anywhere (same colour), like fill
+          if (!inb) return; const probe = d.px.slice(), mark = (probe[c.y * d.w + c.x] ^ 0x5a5a5a5a) >>> 0, m = new Uint8Array(d.w * d.h);
+          for (const i of S.fillMode === 'same' ? fillSame(probe, c.x, c.y, d.w, mark) : floodFill(probe, d.w, d.h, c.x, c.y, mark)) m[i] = 1;
+          setSelMask(d, m, op); render(); status(); return;
+        }
+        if (tool === 'lasso') { drag = { tool: 'lasso', pts: [[c.x, c.y]], op, prev }; render(); return; }
+        drag = { tool, start: c, op, prev }; if (op) setSelMask(d, selMask(rectBetween(c, c, d.w, d.h), d.w, d.h), op); else S.sel = rectBetween(c, c, d.w, d.h); render(); status(); return;
       }
       if (tool === 'gradient') { // the area: the selection, else what a fill would cover from here
         if (!inb) return;
         let region;
-        if (S.sel) { region = []; for (let y = S.sel.y; y < S.sel.y + S.sel.h; y++) for (let x = S.sel.x; x < S.sel.x + S.sel.w; x++) region.push(y * d.w + x); }
+        if (S.sel) { region = []; for (let y = S.sel.y; y < S.sel.y + S.sel.h; y++) for (let x = S.sel.x; x < S.sel.x + S.sel.w; x++) if (selHas(x, y)) region.push(y * d.w + x); }
         else { const probe = d.px.slice(), mark = (probe[c.y * d.w + c.x] ^ 0x5a5a5a5a) >>> 0; region = S.fillMode === 'same' ? fillSame(probe, c.x, c.y, d.w, mark) : floodFill(probe, d.w, d.h, c.x, c.y, mark); }
         d.snapshot(); if (touchEdit && touchEdit.d === d) touchEdit.snap = d.undo[d.undo.length - 1];
         drag = { tool, start: c, last: c, region, base: d.px.slice(), a: right ? S.color2 : S.color, b: right ? S.color : S.color2 };
@@ -2346,7 +2405,8 @@
       const hovered = !S.hover || S.hover.x !== c.x || S.hover.y !== c.y; S.hover = c;
       if (!drag) { if (hovered && sized(S.tool)) render(); return; }
       if (drag.tool === 'select') {
-        if (drag.move) { S.float.x = drag.fx + c.x - drag.start.x; S.float.y = drag.fy + c.y - drag.start.y; S.sel = { x: S.float.x, y: S.float.y, w: S.float.w, h: S.float.h }; }
+        if (drag.move) { S.float.x = drag.fx + c.x - drag.start.x; S.float.y = drag.fy + c.y - drag.start.y; S.sel = { x: S.float.x, y: S.float.y, w: S.float.w, h: S.float.h, ...(S.float.mask ? { mask: S.float.mask } : {}) }; }
+        else if (drag.op) { S.sel = drag.prev; setSelMask(d, selMask(rectBetween(drag.start, c, d.w, d.h), d.w, d.h), drag.op); }
         else S.sel = rectBetween(drag.start, c, d.w, d.h);
         render(); status(); return;
       }
@@ -2354,6 +2414,7 @@
         if (c.x === drag.last.x && c.y === drag.last.y) return; drag.last = c;
         d.px = ditherGradient(drag.base.slice(), d.w, drag.region, drag.start.x, drag.start.y, c.x, c.y, drag.a, drag.b); changedUi(); return;
       }
+      if (drag.tool === 'lasso') { const l = drag.pts[drag.pts.length - 1]; if (l[0] !== c.x || l[1] !== c.y) { drag.pts.push([c.x, c.y]); render(); } return; }
       if (drag.tool === 'pen' || drag.tool === 'erase' || drag.tool === 'shade') {
         for (const [x, y] of linePoints(drag.last.x, drag.last.y, c.x, c.y).slice(1)) {
           dab(d, x, y, drag); drag.trail.push({ x, y }); const vk = y * d.w + x; drag.visits.set(vk, (drag.visits.get(vk) || 0) + 1);
@@ -2374,7 +2435,8 @@
     const end = (e) => {
       pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null; pan = null; if (!pointers.size) touchEdit = null;
       const d = doc(); if (!drag || !d) return;
-      if (drag.tool === 'select') { if (!drag.move && S.sel && S.sel.w * S.sel.h <= 1 && drag.start.x === (S.hover || drag.start).x && drag.start.y === (S.hover || drag.start).y) S.sel = null; drag = null; render(); status(); return; }
+      if (drag.tool === 'lasso') { S.sel = drag.prev; setSelMask(d, lassoMask(drag.pts, d.w, d.h), drag.op); drag = null; render(); status(); return; }
+      if (drag.tool === 'select') { if (!drag.move && !drag.op && S.sel && S.sel.w * S.sel.h <= 1 && drag.start.x === (S.hover || drag.start).x && drag.start.y === (S.hover || drag.start).y) S.sel = null; drag = null; render(); status(); return; }
       if (overlay) { for (const [x, y] of overlay.pts) d.px[y * d.w + x] = overlay.value; overlay = null; }
       else if (isShape(drag.tool) && !drag.moved) { for (const [x, y] of mirrorPts(d, shapePts(drag.tool, drag.start, drag.start))) { const c = cell(d, x, y); if (c && (S.pattern !== 'dither' || ditherOn(c[0], c[1]))) d.px[c[1] * d.w + c[0]] = drag.value; } }
       if (drag.tool === 'pen' || drag.tool === 'erase') S.lastPt = drag.last;
@@ -3023,6 +3085,7 @@
     $('.pf-side').addEventListener('click', (e) => { if (fsOn() && e.target.closest('.pf-item,.pf-openrow')) setTimeout(() => fsDrawer(null), 150); });
     document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fsReal && fsOn()) { fsReal = false; fsSet(false); } }); // left with the back gesture or Esc
     window.addEventListener('resize', () => { if (fsOn()) fsRail(); });
+    $$('.pf-selmode button').forEach((b) => (b.onclick = () => setTool(b.dataset.t)));
     $('.pf-grid').onclick = (e) => { S.grid = !S.grid; e.currentTarget.classList.toggle('on', S.grid); render(); };
     /* Tile grid: 0 (off) or a size in pixels (sprite sheets already show their frames). The project's config sets the default
        ("tileGrid": 16); a choice made here is remembered per project. */
@@ -3262,5 +3325,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });

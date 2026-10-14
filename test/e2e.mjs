@@ -144,6 +144,43 @@ section('dither gradient and Lospec palettes');
   await gctx2.close();
 }
 
+section('selection: magic wand, lasso, add and subtract');
+{
+  const sctx2 = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
+  const wp = await sctx2.newPage(); const werr = []; wp.on('pageerror', (e) => werr.push(e.message));
+  await wp.goto(base + '?auth=off'); await wp.waitForSelector('.pf-item');
+  await wp.locator('.pf-new').click(); await wp.locator('.pf-nw').fill('8'); await wp.locator('.pf-nh').fill('8'); await wp.locator('.pf-nn').fill('sel.png'); await wp.locator('.pf-new-ok').click(); await wp.waitForTimeout(300);
+  const R = 0xff0000ff >>> 0, B = 0xffff0000 >>> 0; // ABGR: red, blue
+  await wp.evaluate(([R, B]) => { const d = document.getElementById('app').__pf.current; d.snapshot(); for (const [x, y] of [[1, 1], [2, 1], [1, 2], [6, 6]]) d.px[y * 8 + x] = R; for (const [x, y] of [[5, 5], [6, 5]]) d.px[y * 8 + x] = B; }, [R, B]);
+  await wp.keyboard.press('w'); await wp.waitForTimeout(100);
+  const w0 = await wp.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'), r = v.getBoundingClientRect(); return { ox: S.ox, oy: S.oy, z: S.zoom, k: v.width / r.width, l: r.left, t: r.top }; });
+  const wat = (x, y) => ({ x: w0.l + (w0.ox + (x + .5) * w0.z) / w0.k, y: w0.t + (w0.oy + (y + .5) * w0.z) / w0.k });
+  const selCount = () => wp.evaluate(() => { const S = document.getElementById('app').__pf.state, r = S.sel; if (!r) return 0; return r.mask ? r.mask.reduce((a, b) => a + b, 0) : r.w * r.h; });
+  ok(await wp.locator('.pf-selmode button.on').innerText() === 'wand' && await wp.locator('.pf-tools [data-t="select"].on').count() === 1, 'W picks the magic wand, under the Select rail button');
+  await wp.mouse.click(wat(1, 1).x, wat(1, 1).y);
+  ok(await selCount() === 3, 'the wand selects the connected red pixels (an L of 3)');
+  await wp.keyboard.down('Shift'); await wp.mouse.click(wat(6, 6).x, wat(6, 6).y); await wp.keyboard.up('Shift');
+  ok(await selCount() === 4, 'Shift+click adds the other red pixel');
+  await wp.keyboard.press('Delete');
+  const after = await wp.evaluate(() => [...document.getElementById('app').__pf.current.px]);
+  ok([[1, 1], [2, 1], [1, 2], [6, 6]].every(([x, y]) => after[y * 8 + x] === 0) && after[5 * 8 + 5] === B && after[5 * 8 + 6] === B, 'Delete clears only the selected pixels, not the rest of the box');
+  await wp.keyboard.press('Control+z'); await wp.locator('.pf-fillmode [data-fill="same"]').click();
+  await wp.mouse.click(wat(6, 6).x, wat(6, 6).y);
+  ok(await selCount() === 4, 'in same-colour mode the wand takes every red pixel at once');
+  await wp.locator('.pf-fillmode [data-fill="area"]').click();
+  await wp.keyboard.down('Alt'); await wp.mouse.click(wat(6, 6).x, wat(6, 6).y); await wp.keyboard.up('Alt');
+  ok(await selCount() === 3, 'Alt+click takes the clicked (connected) pixels away again: ' + await selCount());
+  await wp.keyboard.press('Escape');
+  await wp.keyboard.press('q');
+  await wp.mouse.move(wat(4, 4).x, wat(4, 4).y); await wp.mouse.down(); for (const [x, y] of [[7, 4], [7, 7], [4, 7], [4, 4]]) await wp.mouse.move(wat(x, y).x, wat(x, y).y, { steps: 3 }); await wp.mouse.up();
+  ok(await selCount() === 16 && await wp.evaluate(() => { const S = document.getElementById('app').__pf.state; return S.sel.x === 4 && S.sel.y === 4; }), 'the lasso selects what it is drawn round: ' + await selCount());
+  await wp.mouse.move(wat(5, 5).x, wat(5, 5).y); await wp.mouse.down(); await wp.mouse.move(wat(4, 5).x, wat(4, 5).y, { steps: 2 }); await wp.mouse.up(); await wp.keyboard.press('Enter');
+  const moved = await wp.evaluate(() => [...document.getElementById('app').__pf.current.px]);
+  ok(moved[5 * 8 + 4] === B && moved[5 * 8 + 5] === B && moved[6 * 8 + 5] === R && moved[1 * 8 + 1] === R, 'dragging inside moves just the selection');
+  ok(werr.length === 0, 'no page errors ' + werr.join('|'));
+  await sctx2.close();
+}
+
 section('more tools: brush size, dither, ellipse, shading, selection, tile, outline, ramps');
 {
   const C = (await import('../spritewright.js'), globalThis.Spritewright.core);
