@@ -837,3 +837,20 @@ test('rotSprite: 0° is the image itself, 90° matches the exact rotation, any a
   assert.ok(r30.w > w && r30.h > h, 'the box grows to fit');
   const kept = C.rotSprite(px, w, h, 30, w, h); assert.deepEqual([kept.w, kept.h], [w, h], 'or keeps the canvas size');
 });
+
+/* ---------- sprite sheets ---------- */
+test('sheetEdit / packSheet / sheetJson / holdFrame: reorder, copy and delete frames; pack a family; timings', () => {
+  const fw = 2, fh = 2, frame = (v) => new Uint32Array(fw * fh).fill(v);
+  const strip = C.sheetJoin([frame(1), frame(2), frame(3)], fw, fh, 3); assert.deepEqual([strip.w, strip.h], [6, 2]);
+  const ids = (r) => C.sheetCut(r.px, r.w, r.h, fw, fh).frames.map((f) => f[0]);
+  assert.deepEqual(ids(C.sheetEdit(strip.px, strip.w, strip.h, fw, fh, 'swap', 0, 1)), [2, 1, 3]);
+  const dup = C.sheetEdit(strip.px, strip.w, strip.h, fw, fh, 'dup', 1); assert.deepEqual([dup.w, ids(dup)], [8, [1, 2, 2, 3]], 'a one-row sheet grows');
+  const del = C.sheetEdit(strip.px, strip.w, strip.h, fw, fh, 'del', 0); assert.deepEqual([del.w, ids(del)], [4, [2, 3]], 'and shrinks');
+  const grid = C.sheetJoin([frame(1), frame(2), frame(3), frame(4)], fw, fh, 2); // 2 x 2
+  const g2 = C.sheetEdit(grid.px, grid.w, grid.h, fw, fh, 'dup', 3); assert.deepEqual([g2.w, g2.h, ids(g2)], [4, 6, [1, 2, 3, 4, 4, 0]], 'a grid keeps its columns and adds a row');
+  const pk = C.packSheet([{ px: frame(5), w: 2, h: 2 }, { px: new Uint32Array(3 * 4).fill(6), w: 3, h: 4 }]);
+  assert.deepEqual([pk.w, pk.h, pk.rects], [5, 4, [{ x: 0, y: 2, w: 2, h: 2 }, { x: 2, y: 0, w: 3, h: 4 }]], 'side by side, bottom-aligned');
+  const j = C.sheetJson('a.png', 5, 4, pk.rects, [100, 250], ['a_0', 'a_1']);
+  assert.deepEqual(j.frames.map((f) => [f.filename, f.frame.x, f.duration]), [['a_0', 0, 100], ['a_1', 2, 250]]); assert.deepEqual(j.meta.size, { w: 5, h: 4 });
+  assert.deepEqual([0, 1, 2, 3, 4, 5].map((t) => C.holdFrame(t, [1, 2], 3)), [0, 1, 1, 2, 0, 1], 'frame 2 holds for two ticks');
+});

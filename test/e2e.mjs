@@ -476,6 +476,32 @@ const seen = new Set(); for (let i = 0; i < 12; i++) { await page.waitForTimeout
 await page.locator('.pf-play').click();
 ok(seen.size >= 3, 'playing the animation cycles through the frames (' + seen.size + ' distinct)'); ok((await page.locator('.pf-play').innerText()) === 'Play', 'and can be stopped');
 
+section('sprite sheet frames: pick, reorder, copy, delete, hold, export');
+{
+  const shctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark', acceptDownloads: true });
+  const shp = await shctx.newPage(); const sherr = []; shp.on('pageerror', (e) => sherr.push(e.message));
+  await shp.goto(base + '?auth=off'); await shp.waitForSelector('.pf-item'); await shp.locator('.pf-item', { hasText: 'walk.png' }).click(); await shp.waitForTimeout(300);
+  const sd = () => shp.evaluate(() => { const a = document.getElementById('app').__pf, d = a.current; return { w: d.w, h: d.h, sel: a.state.sel, k: a.state.sheetK, holds: (d.frames && d.frames.holds) || [], dot: [...d.px].findIndex((v) => (v >>> 24) > 0) }; });
+  ok(await shp.locator('.pf-sheet').isVisible() && await shp.locator('.pf-sheet-m').count() === 4 && /4 frames · 4×4/.test(await shp.locator('.pf-sheet-kind').innerText()), 'a sprite sheet shows its frames in a strip');
+  await shp.locator('.pf-sheet-m[data-k="1"]').click(); let st2 = await sd();
+  ok(st2.k === 1 && st2.sel && st2.sel.x === 4 && st2.sel.w === 4, 'clicking a frame selects it on the canvas');
+  await shp.locator('.pf-sh-add').click(); st2 = await sd();
+  ok(st2.w === 20 && await shp.locator('.pf-sheet-m').count() === 5 && st2.k === 2, '+ frame copies it right after, and the sheet grows: ' + st2.w);
+  await shp.locator('.pf-sh-del').click(); st2 = await sd();
+  ok(st2.w === 16 && await shp.locator('.pf-sheet-m').count() === 4, '✕ deletes the frame, and the sheet shrinks');
+  await shp.locator('.pf-sheet-m[data-k="0"]').click(); await shp.locator('.pf-sh-right').click(); st2 = await sd();
+  ok(st2.k === 1 && st2.dot === 1, 'the frame moves later: the first frame is now the old second one (its dot one pixel in)');
+  await shp.locator('.pf-sheet-m[data-k="2"] .pf-hold').click(); await shp.locator('.pf-sheet-m[data-k="2"] .pf-hold').click(); st2 = await sd();
+  ok(st2.holds[2] === 3 && /×3/.test(await shp.locator('.pf-sheet-m[data-k="2"] .pf-hold').innerText()), 'the ×n badge sets how long a frame holds');
+  const [dl] = await Promise.all([shp.waitForEvent('download'), shp.locator('.pf-sheet-out').click()]);
+  const zip = fs.readFileSync(await dl.path()).toString('latin1');
+  ok(dl.suggestedFilename() === 'walk-sheet.zip' && zip.includes('walk.png') && zip.includes('walk.json'), 'Sheet + JSON downloads the sheet and its JSON together');
+  const j0 = zip.indexOf('{\n'), js = JSON.parse(zip.slice(j0, zip.indexOf('\n}\n', j0) + 2)); // the JSON is stored uncompressed
+  ok(js.frames.length === 4 && js.frames[2].duration === js.frames[0].duration * 3 && js.meta.size.w === 16, 'the JSON lists the frames with their timings (Aseprite json-array): ' + js.frames.map((f) => f.duration).join(','));
+  ok(sherr.length === 0, 'no page errors ' + sherr.join('|'));
+  await shctx.close();
+}
+
 section('pull request flow (GitHub API mocked)');
 const calls = []; let pushAccess = true;
 const authSeen = new Set();

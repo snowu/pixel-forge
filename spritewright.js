@@ -232,7 +232,7 @@
     for (const f of frames) {
       const ox = Math.floor((W / scale - f.w) / 2), oy = H / scale - f.h, idx = new Uint8Array(W * H);
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const sx = Math.floor(x / scale) - ox, sy = Math.floor(y / scale) - oy; if (sx < 0 || sy < 0 || sx >= f.w || sy >= f.h) continue; const c = f.px[sy * f.w + sx]; if (c >>> 24 >= 128) idx[y * W + x] = lookup(c & 0xffffff); }
-      out.push(0x21, 0xf9, 4, (2 << 2) | 1); u16(delay); out.push(0, 0); // restore to background, index 0 is transparent
+      out.push(0x21, 0xf9, 4, (2 << 2) | 1); u16(f.delay || delay); out.push(0, 0); // restore to background, index 0 is transparent; a frame may hold longer
       out.push(0x2c); u16(0); u16(0); u16(W); u16(H); out.push(0, min);
       const data = gifLzw(idx, min); for (let i = 0; i < data.length; i += 255) { const n = Math.min(255, data.length - i); out.push(n); for (let j = 0; j < n; j++) out.push(data[i + j]); }
       out.push(0);
@@ -366,6 +366,40 @@
     }
     return { px: o, w: outW, h: outH };
   }
+  /* Sprite sheets: frames of fw x fh in rows, left to right. These cut a sheet into frames and put it back together, so frames
+     can be reordered, copied and removed; a one-row sheet grows or shrinks in width, a grid keeps its columns. */
+  function sheetCut(px, w, h, fw, fh) {
+    const cols = Math.max(1, Math.floor(w / fw)), rows = Math.max(1, Math.floor(h / fh)), out = [];
+    for (let k = 0; k < cols * rows; k++) out.push(copyRect(px, w, h, { x: (k % cols) * fw, y: Math.floor(k / cols) * fh, w: fw, h: fh }));
+    return { frames: out, cols, rows };
+  }
+  function sheetJoin(frames, fw, fh, cols) {
+    const n = Math.max(1, frames.length), c = Math.max(1, Math.min(cols, n)), rows = Math.ceil(n / c), w = c * fw, h = rows * fh, px = new Uint32Array(w * h);
+    frames.forEach((f, k) => pasteRect(px, w, h, f, fw, fh, (k % c) * fw, Math.floor(k / c) * fh, true));
+    return { px, w, h };
+  }
+  /** 'swap' frames k and j, 'dup' frame k (the copy right after it), or 'del' frame k. A one-row sheet changes width. */
+  function sheetEdit(px, w, h, fw, fh, op, k, j) {
+    const { frames, cols, rows } = sheetCut(px, w, h, fw, fh);
+    if (op === 'swap') [frames[k], frames[j]] = [frames[j], frames[k]];
+    else if (op === 'dup') frames.splice(k + 1, 0, frames[k].slice());
+    else if (op === 'del' && frames.length > 1) frames.splice(k, 1);
+    return sheetJoin(frames, fw, fh, rows === 1 ? frames.length : cols);
+  }
+  /** Frames of any sizes side by side in one row, bottom-aligned like a game draws them, with where each one landed. */
+  function packSheet(frames) {
+    const w = frames.reduce((a, f) => a + f.w, 0), h = Math.max(...frames.map((f) => f.h)), px = new Uint32Array(w * h), rects = []; let x = 0;
+    for (const f of frames) { pasteRect(px, w, h, f.px, f.w, f.h, x, h - f.h, true); rects.push({ x, y: h - f.h, w: f.w, h: f.h }); x += f.w; }
+    return { px, w, h, rects };
+  }
+  /** The frames as Aseprite's "json-array" export, which most engines and tools read (Phaser, Godot importers, Unity, ...). */
+  function sheetJson(image, w, h, rects, durations, names) {
+    return { frames: rects.map((r, i) => ({ filename: names ? names[i] : String(i), frame: { x: r.x, y: r.y, w: r.w, h: r.h }, rotated: false, trimmed: false,
+      spriteSourceSize: { x: 0, y: 0, w: r.w, h: r.h }, sourceSize: { w: r.w, h: r.h }, duration: durations[i] })),
+    meta: { app: 'spritewright', version: '1', image, format: 'RGBA8888', size: { w, h }, scale: '1', frameTags: [] } };
+  }
+  /** Which frame plays at tick t when frame i lasts holds[i] ticks. */
+  const holdFrame = (t, holds, n) => { const hs = Array.from({ length: n }, (_, i) => Math.max(1, (holds && holds[i]) | 0 || 1)), total = hs.reduce((a, b) => a + b, 0); let r = t % total; for (let i = 0; i < n; i++) { if (r < hs[i]) return i; r -= hs[i]; } return 0; };
   /** Normalise a drag between two cells into a rectangle clipped to the image (null when it misses the image). */
   function rectBetween(a, b, w, h) {
     const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y)), x1 = Math.min(w - 1, Math.max(a.x, b.x)), y1 = Math.min(h - 1, Math.max(a.y, b.y));
@@ -1051,6 +1085,7 @@
 .pf-ctx{border-top:1px solid var(--pf-line);background:var(--pf-panel);display:flex;flex-direction:column;flex:none}
 .pf-ctx-bar{display:flex;gap:10px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--pf-line)}.pf .pf-ctx-bar .pf-seg button{min-height:24px;padding:1px 8px}.pf .pf-ctx-bar .pf-ctx-group{width:auto;max-width:260px;min-height:24px;padding:1px 6px;flex:0 1 auto;min-width:0;text-overflow:ellipsis}.pf-ctx-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .pf-ctx-cv{display:block;width:100%;height:150px;image-rendering:pixelated}
+.pf-fam-m .pf-hold{position:absolute;right:1px;top:1px;font-size:10px;line-height:1;padding:1px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted);cursor:pointer}.pf-fam-m .pf-hold.x{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent)}.pf .pf-fam-m{position:relative}
 .pf-fam-tools{margin-left:auto;display:inline-flex;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11.5px}
 .pf-lint-tag{position:absolute;right:14px;top:12px;display:flex;gap:10px;font-size:11px;padding:3px 8px;background:rgba(14,9,24,.88);border:1px solid var(--pf-line2);color:var(--pf-ink);pointer-events:none}.pf-lint-tag i{display:inline-block;width:9px;height:9px;margin-right:5px;border:2px solid currentColor;vertical-align:-1px}.pf-lint-tag .ok{color:var(--pf-good)}
 .pf-vision-tag{position:absolute;left:14px;top:12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;background:var(--pf-accent2);color:var(--pf-on);font-weight:700;pointer-events:none}
@@ -1526,9 +1561,10 @@
           <form class="pf-row pf-lospec" hidden><input type="text" class="pf-lospec-name" placeholder="endesga-32, or a lospec.com link" aria-label="Lospec palette name" autocomplete="off" style="flex:1;min-width:0"><button type="submit" class="primary">Load</button></form></div>
         <div class="pf-panel pf-prev"><h4>Preview</h4>
           <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note"><kbd>,</kbd> <kbd>.</kbd> previous / next · Play flips through them</div></div>
+          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">click a frame to select it · the ×n badge sets how long it holds</div></div>
           <canvas class="pf-p1"></canvas>
           <div class="pf-row pf-sheet-row"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
-          <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button></div>
+          <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button><button class="pf-sheet-out" title="Download the animation as one sprite sheet PNG with a JSON of its frames and timings (Aseprite json-array format, read by most engines)">Sheet + JSON</button></div>
           <canvas class="pf-p2"></canvas></div>
         <div class="pf-panel pf-refpanel"><h4>Reference</h4>
           <div class="pf-row"><button class="pf-ref-load" title="Any image: concept art, a photo, a screenshot of the game">Image…</button><select class="pf-ref-sprite" aria-label="Or a sprite from this project"><option value="">or a sprite…</option></select><input type="file" class="pf-ref-file" accept="image/*" hidden></div>
@@ -1823,7 +1859,7 @@
       } catch (e) { note('Could not open ' + path + ': ' + e.message); return null; }
     }
     async function openSprite(path) {
-      if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; }
+      if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; S.sheetK = 0; }
       if (!(await loadDoc(path))) return;
       S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit();
       // Opening a sprite reveals its folder, so navigating back to it never
@@ -2618,12 +2654,14 @@
     }
     const memberLabel = (fam, p) => { const r = p.split('/').pop().replace(/\.png$/i, '').slice(fam.key.length).replace(/^[_-]/, ''); return r || 'base'; };
     function renderFamily() {
-      const d = doc(), fam = famOrSingle(d), box = $('.pf-fam'); box.hidden = !fam; if (!fam) return;
+      renderSheet();
+      const d = doc(), fam = famOrSingle(d), box = $('.pf-fam:not(.pf-sheet)'); box.hidden = !fam; if (!fam) return;
       const at = fam.members.indexOf(d.path); $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
       $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.members.length > 1 ? (fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`) : 'single sprite';
-      const strip = $('.pf-fam-strip'); strip.innerHTML = '';
+      const strip = $('.pf-fam-strip:not(.pf-sheet-strip)'); strip.innerHTML = '';
       for (const p of fam.members) {
-        const b = el(`<button class="pf-fam-m${p === S.cur ? ' on' : ''}" data-path="${esc(p)}" role="option" title="${esc(p)}"><canvas></canvas><span>${esc(memberLabel(fam, p))}</span></button>`);
+        const k = fam.members.indexOf(p), hd = fam.members.length > 1 ? holdsOf(d)[k] || 1 : 0;
+        const b = el(`<button class="pf-fam-m${p === S.cur ? ' on' : ''}" data-path="${esc(p)}" role="option" title="${esc(p)}"><canvas></canvas><span>${esc(memberLabel(fam, p))}</span>${hd ? `<i class="pf-hold${hd > 1 ? ' x' : ''}" data-k="${k}" title="How long this frame holds: click for ×1 to ×4">×${hd}</i>` : ''}</button>`);
         strip.appendChild(b); const img = memberImage(p), c = b.querySelector('canvas');
         if (img) { c.width = img.width; c.height = img.height; const k = c.getContext('2d'); k.imageSmoothingEnabled = false; k.drawImage(img, 0, 0); }
       }
@@ -2636,14 +2674,15 @@
       const sheet = frameSize(d), fam = famFor(d);
       const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h); p1.hidden = flip; $('.pf-sheet-row').hidden = flip;
       if (flip) { // flipbook through the family's images
-        const i = S.anim.timer ? S.anim.t % fam.members.length : fam.members.indexOf(d.path), img = memberImage(fam.members[i]);
-        $$('.pf-fam-m').forEach((b, k) => b.classList.toggle('playing', !!S.anim.timer && k === i));
+        const i = S.anim.timer ? holdFrame(S.anim.t, holdsOf(d), fam.members.length) : fam.members.indexOf(d.path), img = memberImage(fam.members[i]);
+        $$('.pf-fam-m:not(.pf-sheet-m)').forEach((b, k) => b.classList.toggle('playing', !!S.anim.timer && k === i));
         const w = img ? img.width : d.w, h = img ? img.height : d.h, sc = Math.max(1, Math.min(8, Math.floor(190 / Math.max(w, h))));
         p2.width = w * sc; p2.height = h * sc; const k = p2.getContext('2d'); k.imageSmoothingEnabled = false; k.clearRect(0, 0, p2.width, p2.height);
         if (img) k.drawImage(img, 0, 0, w * sc, h * sc);
         return;
       }
-      const f = sheet, cols = Math.max(1, Math.floor(d.w / f.w)), rows = Math.max(1, Math.floor(d.h / f.h)), n = cols * rows, i = S.anim.t % n;
+      const f = sheet, cols = Math.max(1, Math.floor(d.w / f.w)), rows = Math.max(1, Math.floor(d.h / f.h)), n = cols * rows, i = S.anim.timer ? holdFrame(S.anim.t, holdsOf(d), n) : Math.min(S.sheetK || 0, n - 1);
+      $$('.pf-sheet-m').forEach((b, k) => b.classList.toggle('playing', !!S.anim.timer && k === i));
       const sc = Math.max(1, Math.min(8, Math.floor(190 / f.w)));
       p2.width = f.w * sc; p2.height = f.h * sc; const k = p2.getContext('2d'); k.imageSmoothingEnabled = false; k.clearRect(0, 0, p2.width, p2.height);
       offscreen.width = d.w; offscreen.height = d.h; offscreen.getContext('2d').putImageData(d.imageData(), 0, 0);
@@ -2654,9 +2693,9 @@
       if (on) S.anim.timer = setInterval(() => { S.anim.t++; drawPreview(); }, 1000 / Math.max(1, Math.min(60, +$('.pf-fps').value || 8)));
     }
     function frameInputs() {
-      const d = doc(); if (!d) return; d.frames = { w: +$('.pf-fw').value || d.w, h: +$('.pf-fh').value || d.h, fps: +$('.pf-fps').value || 8 };
+      const d = doc(); if (!d) return; d.frames = { ...(d.frames || {}), w: +$('.pf-fw').value || d.w, h: +$('.pf-fh').value || d.h, fps: +$('.pf-fps').value || 8 }; // holds stay
       try { localStorage.setItem(frameKey(d), JSON.stringify(d.frames)); } catch { /* ignore */ }
-      if (S.anim.timer) play(true); drawPreview(); render();
+      if (S.anim.timer) play(true); drawPreview(); render(); renderSheet();
     }
 
     /* ---------- pull request dialog ---------- */
@@ -2814,8 +2853,10 @@
 
     /* ---------- events ---------- */
     root.addEventListener('click', (e) => {
+      const hold = e.target.closest('.pf-hold'); if (hold) { e.stopPropagation(); return cycleHold(+hold.dataset.k); }
       const t = e.target.closest('button'); if (!t) return;
       if (t.dataset.t) return setTool(t.dataset.t);
+      if (t.classList.contains('pf-sheet-m')) return pickSheetFrame(+t.dataset.k);
       if (t.classList.contains('pf-item')) return openSprite(t.dataset.path);
       if (t.classList.contains('pf-dir')) return toggleDir(t.dataset.dir);
       if (t.classList.contains('pf-openrow')) return toggleDir(t.dataset.dir);
@@ -3014,6 +3055,62 @@
       await openSprite(o.path); note(`moved ${dir < 0 ? 'earlier' : 'later'}: now ${o.path.split('/').pop()}`); changedUi(); renderList();
     }
     $('.pf-fam-left').onclick = () => moveFrame(-1); $('.pf-fam-right').onclick = () => moveFrame(1);
+    /* ---------- sprite sheets: the frames of one image, and how long each one holds ----------
+       A sheet's holds live with its frame size (d.frames.holds, remembered like the size); a family's in this browser per family. */
+    const isSheet = (d) => { const f = d && frameSize(d); return !!f && (f.w < d.w || f.h < d.h); };
+    const famHoldKey = (fam, d) => 'pf:holds:' + (d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/') + 1) : '') + fam.key;
+    function holdsOf(d) {
+      if (!d) return [];
+      if (isSheet(d)) return (d.frames && d.frames.holds) || [];
+      const fam = famFor(d); if (!fam) return []; try { return JSON.parse(localStorage.getItem(famHoldKey(fam, d)) || '[]'); } catch { return []; }
+    }
+    function setHolds(d, hs) {
+      if (isSheet(d)) { d.frames = { ...d.frames, holds: hs }; try { localStorage.setItem(frameKey(d), JSON.stringify(d.frames)); } catch { /* this visit */ } return; }
+      const fam = famFor(d); if (fam) try { localStorage.setItem(famHoldKey(fam, d), JSON.stringify(hs)); } catch { /* this visit */ }
+    }
+    function cycleHold(k) { const d = doc(); if (!d) return; const hs = holdsOf(d).slice(); hs[k] = ((hs[k] || 1) % 4) + 1; for (let i = 0; i < k; i++) hs[i] = hs[i] || 1; setHolds(d, hs); renderFamily(); drawPreview(); note(`frame ${k + 1} holds ×${hs[k]}`); }
+    function sheetInfo(d) { const f = frameSize(d), cols = Math.max(1, Math.floor(d.w / f.w)), rows = Math.max(1, Math.floor(d.h / f.h)); return { f, cols, rows, n: cols * rows }; }
+    function renderSheet() {
+      const d = doc(), box = $('.pf-sheet'), on = isSheet(d); box.hidden = !on; if (!on) return;
+      const { f, cols, n } = sheetInfo(d), k0 = Math.min(S.sheetK || 0, n - 1), hs = holdsOf(d); S.sheetK = k0;
+      $('.pf-sheet-kind').textContent = `${n} frames · ${f.w}×${f.h}`;
+      $('.pf-sh-left').disabled = k0 <= 0; $('.pf-sh-right').disabled = k0 >= n - 1; $('.pf-sh-del').disabled = n <= 1;
+      const strip = $('.pf-sheet-strip'); strip.innerHTML = '';
+      for (let k = 0; k < n; k++) {
+        const b = el(`<button class="pf-fam-m pf-sheet-m${k === k0 ? ' on' : ''}" data-k="${k}" role="option" title="frame ${k + 1}"><canvas></canvas><span>${k + 1}</span><i class="pf-hold${(hs[k] || 1) > 1 ? ' x' : ''}" data-k="${k}" title="How long this frame holds: click for ×1 to ×4">×${hs[k] || 1}</i></button>`);
+        strip.appendChild(b); const px = copyRect(d.px, d.w, d.h, { x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h }), c = b.querySelector('canvas');
+        c.width = f.w; c.height = f.h; c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer), f.w, f.h), 0, 0);
+      }
+    }
+    /** Click a frame: it becomes the one the buttons act on, and is selected on the canvas so flip, rotate and friends work on it. */
+    function pickSheetFrame(k) {
+      const d = doc(); if (!isSheet(d)) return; const { f, cols } = sheetInfo(d); commitFloat();
+      S.sheetK = k; S.sel = { x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h }; renderSheet(); drawPreview(); render(); status();
+    }
+    function sheetOp(op, dir) {
+      const d = doc(); if (!isSheet(d)) return; commitFloat(); const { f, n } = sheetInfo(d), k = S.sheetK || 0, j = k + (dir || 0);
+      if (op === 'swap' && (j < 0 || j >= n)) return; if (op === 'del' && n <= 1) return;
+      const hs = holdsOf(d).slice(); while (hs.length < n) hs.push(1);
+      edit((dd) => { const r = sheetEdit(dd.px, dd.w, dd.h, f.w, f.h, op, k, j); dd.px = r.px; dd.w = r.w; dd.h = r.h; });
+      if (op === 'swap') [hs[k], hs[j]] = [hs[j], hs[k]]; else if (op === 'dup') hs.splice(k + 1, 0, hs[k]); else if (op === 'del') hs.splice(k, 1);
+      setHolds(d, hs); if (!S.touched) fit();
+      pickSheetFrame(op === 'swap' ? j : op === 'dup' ? k + 1 : Math.max(0, Math.min(k, n - 2)));
+      note(op === 'swap' ? `frame moved to ${j + 1}` : op === 'dup' ? `frame ${k + 1} copied: now ${n + 1} frames (${d.w}×${d.h})` : `frame ${k + 1} deleted: now ${n - 1} frames`);
+    }
+    $('.pf-sh-left').onclick = () => sheetOp('swap', -1); $('.pf-sh-right').onclick = () => sheetOp('swap', 1);
+    $('.pf-sh-add').onclick = () => sheetOp('dup'); $('.pf-sh-del').onclick = () => sheetOp('del');
+    /** The animation as one sheet PNG plus a JSON of its frames (Aseprite json-array), zipped. A family is packed into a row. */
+    $('.pf-sheet-out').onclick = async () => {
+      const d = doc(); if (!d) return; commitFloat(); const fam = famFor(d), ms = Math.round(1000 / Math.max(1, +$('.pf-fps').value || 8)), hs = holdsOf(d);
+      let img, rects, names, name;
+      if (isSheet(d)) { const { f, cols, n } = sheetInfo(d); img = { px: d.px, w: d.w, h: d.h }; rects = [...Array(n).keys()].map((k) => ({ x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h })); name = stem(d.path); names = rects.map((_, k) => `${name} ${k}`); }
+      else if (fam) { const fr = []; for (const p of fam.members) { const x = await loadDoc(p); if (x) fr.push({ px: x.px, w: x.w, h: x.h }); } const pk = packSheet(fr); img = pk; rects = pk.rects; name = fam.key; names = fam.members.map(stem); }
+      else return note('Sheet + JSON is for animations: a sprite sheet, or numbered frames like walk_0, walk_1.');
+      const png = new Uint8Array(await (await pngOf(new Doc(name + '.png', img.w, img.h, img.px))).arrayBuffer());
+      const json = new TextEncoder().encode(JSON.stringify(sheetJson(name + '.png', img.w, img.h, rects, rects.map((_, i) => ms * (hs[i] || 1)), names), null, 2) + '\n');
+      download(new Blob([zipFiles([{ name: name + '.png', bytes: png }, { name: name + '.json', bytes: json }])], { type: 'application/zip' }), name + '-sheet.zip');
+      note(`${name}-sheet.zip: ${rects.length} frames in a ${img.w}×${img.h} sheet, with ${name}.json`);
+    };
     $('.pf-gif').onclick = async () => {
       const d = doc(); if (!d) return; const fam = famFor(d), sheet = frameSize(d), frames = [];
       if (sheet.w < d.w || sheet.h < d.h) { const cols = Math.floor(d.w / sheet.w), rows = Math.floor(d.h / sheet.h); for (let k = 0; k < cols * rows; k++) frames.push({ w: sheet.w, h: sheet.h, px: copyRect(d.px, d.w, d.h, { x: (k % cols) * sheet.w, y: Math.floor(k / cols) * sheet.h, w: sheet.w, h: sheet.h }) }); }
@@ -3021,7 +3118,8 @@
       else frames.push({ w: d.w, h: d.h, px: d.px });
       const s = +(prompt(`GIF of ${frames.length} frame${frames.length > 1 ? 's' : ''} at ${+$('.pf-fps').value || 8} fps. Scale (1 = original size):`, String(Math.max(1, Math.min(8, Math.floor(256 / Math.max(d.w, d.h)))))) || 0);
       if (!s || s < 1 || s > 32) return;
-      const gif = encodeGif(frames, { delay: Math.max(2, Math.round(100 / Math.max(1, +$('.pf-fps').value || 8))), scale: Math.floor(s) });
+      const base = Math.max(2, Math.round(100 / Math.max(1, +$('.pf-fps').value || 8))), hs = holdsOf(d); if (frames.length > 1) frames.forEach((f, i) => { f.delay = base * (hs[i] || 1); });
+      const gif = encodeGif(frames, { delay: base, scale: Math.floor(s) });
       download(new Blob([gif], { type: 'image/gif' }), (fam && !(sheet.w < d.w) ? fam.key : d.path.split('/').pop().replace(/\.png$/i, '')) + (s > 1 ? '@' + s + 'x' : '') + '.gif');
       note(`GIF: ${frames.length} frame${frames.length > 1 ? 's' : ''}, ${(gif.length / 1024).toFixed(1)} KB`);
     };
@@ -3448,5 +3546,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });
