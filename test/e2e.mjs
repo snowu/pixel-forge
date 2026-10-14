@@ -548,6 +548,10 @@ section('art folders: a repository without spritewright.config.json asks once, a
     if (m === 'POST') posts.push({ p, body });
     if (p === '/user') return j(200, { login: 'artist' });
     if (p === '/repos/me/art' && m === 'GET') return j(200, { name: 'art', default_branch: 'main', permissions: { push: true } });
+    if (p === '/repos/me/empty' && m === 'GET') return j(200, { name: 'empty', default_branch: 'main', permissions: { push: true } });
+    if (p === '/repos/me/empty/git/ref/heads/main') return j(200, { object: { sha: 'e1' } });
+    if (p === '/repos/me/empty/git/commits/e1') return j(200, { tree: { sha: 'et' } });
+    if (p === '/repos/me/empty/git/trees/et') return j(200, { tree: [{ path: 'src', type: 'tree' }, { path: 'src/app.js', type: 'blob', sha: 'x', size: 10 }, { path: 'assets', type: 'tree' }, { path: 'node_modules', type: 'tree' }], truncated: false });
     if (p === '/repos/me/art/git/ref/heads/main') return j(200, { object: { sha: 'c1' } });
     if (p === '/repos/me/art/git/commits/c1') return j(200, { tree: { sha: 't1' } });
     if (p === '/repos/me/art/git/trees/t1') return j(200, { tree, truncated: false });
@@ -563,6 +567,7 @@ section('art folders: a repository without spritewright.config.json asks once, a
   ok(rows.join(' ') === '+(top level) +assets/sprites/ +assets/tiles/ -docs/ -public/screenshots/', 'opening it asks which folders hold the art, docs and screenshots unticked: ' + rows.join(' '));
   if (process.env.PF_SHOTS) await fp2.locator('.pf-dlg-folders').screenshot({ path: process.env.PF_SHOTS + '/art-folders.png' });
   await fp2.locator('.pf-af-list input[value=""]').uncheck(); await fp2.click('.pf-af-go');
+  ok(/Art folders picked/.test(await fp2.locator('.pf-setup').innerText()), 'the sprite list says the pick goes with the next pull request, with a way to change it');
   await fp2.waitForFunction(() => document.querySelectorAll('.pf-item').length === 2);
   ok((await fp2.locator('.pf-item').evaluateAll((b) => b.map((x) => x.dataset.path).sort())).join() === 'assets/sprites/hero.png,assets/tiles/floor.png', 'the list narrows to the picked folders at once');
   await fp2.reload(); await fp2.waitForSelector('.pf-item'); await fp2.waitForTimeout(300);
@@ -581,6 +586,16 @@ section('art folders: a repository without spritewright.config.json asks once, a
   ok(cfgBlob && JSON.stringify(JSON.parse(cfgBlob.toString()).dirs) === '["assets/sprites","assets/tiles"]', 'with the picked folders: ' + (cfgBlob && cfgBlob.toString().replace(/\s+/g, ' ')));
   ok(/Also adds `spritewright\.config\.json`/.test(posts.find((x) => x.p.endsWith('/pulls')).body.body), 'and the description says so');
   ok(await fp2.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('pf:folders:')).every((k) => JSON.parse(localStorage.getItem(k)).sent)), 'it is sent once: the next pull request does not carry it again');
+  ok(await fp2.locator('.pf-setup').isHidden(), 'and the setup note goes away');
+  // a repository with no art yet: nothing to tick, so it asks where the art goes
+  await fp2.goto(abase + '?auth=off&repo=me/empty'); await fp2.waitForFunction(() => document.querySelector('.pf-source').textContent.includes('me/empty')); await fp2.waitForTimeout(300);
+  ok(!(await fp2.locator('.pf-dlg-folders').evaluate((d) => d.open)) && /No sprites here yet/.test(await fp2.locator('.pf-setup').innerText()), 'a repository without sprites does not pop the question, but the sprite list offers to set it up');
+  await fp2.locator('.pf-setup-go').click(); await fp2.waitForSelector('.pf-dlg-folders[open] .pf-af-dir');
+  ok((await fp2.locator('#pf-af-dirs option').evaluateAll((o) => o.map((x) => x.value))).join() === 'assets,src' && await fp2.locator('.pf-af-all').isHidden(), 'it asks which folder the art goes in, suggesting the repository\'s folders');
+  await fp2.locator('.pf-af-dir').fill('assets/sprites'); await fp2.click('.pf-af-go');
+  await fp2.locator('.pf-new').click(); await fp2.waitForSelector('.pf-dlg-new[open]');
+  ok((await fp2.locator('.pf-nn').inputValue()) === 'assets/sprites/new_sprite.png', 'and New puts the first sprite there: ' + await fp2.locator('.pf-nn').inputValue());
+  await fp2.keyboard.press('Escape');
   ok(aerr2.length === 0, 'no page errors ' + aerr2.join('|'));
   await actx2.close(); stat.close();
 }
@@ -742,7 +757,8 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   if (process.env.PF_SHOTS) { await ap.locator('.pf-dlg-connect').screenshot({ path: process.env.PF_SHOTS + '/signed-in.png' }); await ap.setViewportSize({ width: 390, height: 844 }); await ap.screenshot({ path: process.env.PF_SHOTS + '/signed-in-phone.png' }); await ap.setViewportSize({ width: 1280, height: 900 }); }
   ok(/github\.com\/apps\/spritewright\/installations\/select_target/.test(await ap.locator('.pf-c-addrepo a').getAttribute('href')), 'a link to install the app on more repositories sits under the list');
   await ap.locator('.pf-c-pick', { hasText: 'me/game' }).click();
-  ok(await ap.waitForSelector('.pf-c-pick.busy[aria-busy=true]', { timeout: 2000 }).then(() => true, () => false) && /Reading|Listing/.test(await ap.locator('.pf-c-pick.busy .pf-note').innerText()), 'the repository being opened shows it is loading, step by step: ' + await ap.locator('.pf-c-pick.busy .pf-note').innerText().catch(() => '-'));
+  ok(await ap.waitForSelector('.pf-list .pf-loading .pf-spin', { timeout: 2000 }).then(() => true, () => false) && !(await ap.locator('.pf-dlg-connect').evaluate((d) => d.open)), 'picking a repository closes the dialog and the sprite list shows a spinner while it loads');
+  ok(/me\/game/.test(await ap.locator('.pf-loading b').innerText()) && /Reading|Listing|setup/.test(await ap.locator('.pf-loading-step').innerText()), 'naming the repository and the current step: ' + await ap.locator('.pf-loading-step').innerText().catch(() => '-'));
   await ap.waitForSelector('.pf-item');
   await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-brmenu .pf-br-share'); await ap.locator('.pf-br-share').click();
   ok((await ap.evaluate(() => navigator.clipboard.readText())) === 'https://snowu.github.io/spritewright/?repo=me%2Fgame', 'Copy link to this project: a link that opens the repository (the hosted editor, from a local page)');
@@ -780,7 +796,7 @@ section('sign in with GitHub (auth service and GitHub both mocked)');
   { const hid = await ap.locator('.pf-dlg-connect').isHidden(), items = (await ap.locator('.pf-item').allInnerTexts()).join(); ok(hid && items.includes('b.png'), 'one click switches to the other repository and lists its sprites: ' + hid + ' ' + items.replace(/\n/g, ' ')); }
   await ap.waitForFunction(() => document.getElementById('app').__pf.current); await ap.waitForTimeout(200); await ap.keyboard.press('b'); await ap.locator('.pf-view').click();
   await ap.locator('.pf-prbtn').click(); await ap.waitForSelector('.pf-dlg-pr[open]');
-  ok((await ap.locator('.pf-pr-repo').inputValue()) === 'them/art-only' && (await ap.locator('.pf-pr-base').inputValue()) === 'master', 'after switching, the pull request goes to the new repository, not the old one');
+  ok((await ap.locator('.pf-pr-repo').inputValue()) === 'them/art-only' && (await ap.locator('.pf-pr-base').inputValue()) === 'master', 'after switching, the pull request goes to the new repository, not the old one: ' + await ap.locator('.pf-pr-repo').inputValue() + ' @ ' + await ap.locator('.pf-pr-base').inputValue());
   await ap.locator('.pf-dlg-pr button[value=cancel]').click();
   ap.removeAllListeners('dialog'); ap.on('dialog', (d) => d.accept()); await ap.locator('.pf-source').click(); await ap.waitForSelector('.pf-brmenu'); await ap.locator('.pf-br-other').click(); await ap.waitForSelector('.pf-dlg-connect[open]');
   // 6. sign out, from the sidebar (always visible) and from the dialog

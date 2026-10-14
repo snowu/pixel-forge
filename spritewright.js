@@ -326,7 +326,7 @@
 
     log('Checking the token…');
     const me = (await call('GET', '/user')).login;
-    log('Reading ' + o.repo + '…');
+    log('Reading the repository…');
     const repo = await call('GET', '/repos/' + o.repo);
     const base = o.base || repo.default_branch;
     let headRepo = o.repo, headOwner = null;
@@ -432,7 +432,7 @@
     if (!o.files || !o.files.length) throw new Error('There are no changed sprites to commit.');
     log('Checking the token…');
     const me = (await call('GET', '/user')).login;
-    log('Reading ' + o.repo + '…');
+    log('Reading the repository…');
     const repo = await call('GET', '/repos/' + o.repo);
     const base = o.base || repo.default_branch;
     let headRepo = o.repo, headOwner = null;
@@ -738,7 +738,7 @@
       return json;
     };
     const log = o.onProgress || (() => {});
-    log('Reading ' + o.repo + '…');
+    log('Reading the repository…');
     const info = await call('/repos/' + o.repo), branch = o.branch || info.default_branch;
     const ref = await call('/repos/' + o.repo + '/git/ref/heads/' + refPath(branch));
     const commit = await call('/repos/' + o.repo + '/git/commits/' + ref.object.sha);
@@ -768,7 +768,7 @@
       if (rawUrl) { try { const r = await doFetch(`${rawBase.replace(/\/$/, '')}/${o.repo}/${sha}/${path.split('/').map(encodeURIComponent).join('/')}`); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* use the API */ } }
       const f = await call(`/repos/${o.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`); return b64ToBytes(f.content.replace(/\n/g, ''));
     };
-    return { kind: 'github', public: info.private === false, thumbs: true, history, readAt, sprites, hidden, all: png, config: cfg, hasConfig: entries.has('spritewright.config.json'), palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
+    return { kind: 'github', public: info.private === false, thumbs: true, history, readAt, sprites, hidden, all: png, dirs: [...new Set((tree.tree || []).filter((e) => e.type === 'tree' && !e.path.split('/').some((x) => IGNORE.includes(x) || x.startsWith('.')) && e.path.split('/').length <= 2).map((e) => e.path))].sort(), config: cfg, hasConfig: entries.has('spritewright.config.json'), palette, groups, alpha: cfg.alpha || null, branch, background: cfg.background || null,
       note: 'GitHub ' + o.repo + ' @ ' + branch + (tree.truncated ? ' (very large repository: the list is incomplete)' : '') + '. Edits are kept in this browser; Propose PR sends them back.',
       repo: { slug: o.repo, base: branch, defaultBranch: info.default_branch || null, prefix: '', canPush: !!(info.permissions && info.permissions.push) }, read: blob };
   }
@@ -895,6 +895,9 @@
 .pf-caret{width:10px;color:var(--pf-accent)}.pf-dirname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.pf-dircount{color:var(--pf-faint);font-size:11.5px}.pf-dirchg{color:var(--pf-accent);font-size:11.5px;flex:none}
 .pf-side-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .pf-side-head h4{margin:0}
+/* No spritewright.config.json in the open repository: say so where the sprites are, with the one button that sets it up. */
+.pf-setup{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px dashed var(--pf-line2);color:var(--pf-muted);font-size:12px;line-height:1.4}.pf-setup b{color:var(--pf-ink);font-weight:400}
+.pf .pf-setup button{align-self:flex-start;min-height:26px;padding:2px 9px;font-size:12px}
 .pf-foldmini{display:flex;gap:2px;flex:none}
 .pf-foldmini button{min-height:0;padding:1px 6px;font-size:11px;color:var(--pf-muted);background:none;border-color:transparent}
 .pf .pf-openrow{display:flex;width:100%;align-items:center;gap:8px;background:none;border:1px solid var(--pf-line2);border-top:0;padding:4px 6px;min-height:0;color:var(--pf-ink);font-size:11.5px}
@@ -959,16 +962,32 @@
 .pf-badge.anim{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent);font-weight:700}
 .pf .pf-cell .dot{position:absolute;top:4px;left:4px}
 .pf-main{display:flex;flex-direction:column;min-width:0;min-height:0}
-.pf-bar,.pf-opts{display:flex;flex-wrap:wrap;gap:6px 14px;padding:7px 10px;border-bottom:1px solid var(--pf-line);background:var(--pf-panel);align-items:center}
-.pf-opts{background:var(--pf-bg);height:46px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.pf-opt{flex-wrap:nowrap;white-space:nowrap;flex:none}
-.pf-grp,.pf-opt{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}.pf-opt[hidden]{display:none}
+.pf-bar,.pf-opts{display:flex;flex-wrap:nowrap;gap:0 14px;padding:0 8px;border-bottom:1px solid var(--pf-line);background:var(--pf-panel);align-items:center;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.pf-bar::-webkit-scrollbar,.pf-opts::-webkit-scrollbar{display:none}
+.pf-bar{min-height:40px;flex-wrap:wrap;row-gap:2px;padding:4px 8px}
+.pf-opts{background:var(--pf-bg);height:36px}.pf-opt{flex-wrap:nowrap;white-space:nowrap;flex:none}
+.pf-grp,.pf-opt{display:inline-flex;gap:2px;align-items:center;flex-wrap:nowrap;flex:none}.pf-opt[hidden]{display:none}
+/* The toolbars are quiet: borderless icon buttons, groups split by a hairline, labels in the tooltips. A toggle that is on is
+   tinted, not filled; solid accent is kept for the one thing to press (Save) and the current tool. */
+.pf-bar .pf-grp+.pf-grp{margin-left:8px;padding-left:8px;border-left:1px solid var(--pf-line)}.pf-bar .pf-grp.pf-grp-end{margin-left:auto}
+.pf .pf-bar button,.pf .pf-opts button{min-height:28px;padding:3px 7px;background:transparent;border-color:transparent;color:var(--pf-muted)}
+.pf .pf-bar button:hover:not(:disabled),.pf .pf-opts button:hover:not(:disabled){background:var(--pf-panel2);border-color:var(--pf-line2);color:var(--pf-ink);box-shadow:none}
+.pf .pf-bar button.on,.pf .pf-opts button.on,.pf .pf-seg button.on{background:rgba(185,140,255,.14);border-color:rgba(185,140,255,.38);color:var(--pf-accent)}
+.pf .pf-bar button.on:hover:not(:disabled),.pf .pf-opts button.on:hover:not(:disabled),.pf .pf-seg button.on:hover:not(:disabled){background:rgba(185,140,255,.22);color:var(--pf-accent)}
+.pf .pf-opts button:not(.pf-seg button){border-color:var(--pf-line)}
+.pf .pf-bar button.primary{background:var(--pf-accent);border-color:var(--pf-accent);color:var(--pf-on);padding:3px 12px}
+.pf .pf-bar button.primary:hover:not(:disabled){background:#cba8ff;color:var(--pf-on)}
+.pf .pf-bar .pf-prbtn:not(:disabled){border-color:var(--pf-line2);color:var(--pf-ink)}
+.pf-bar button>span:not(.pf-bg-sw),.pf-opt-end button>span{display:none}
+.pf .pf-bar .pf-ic{width:17px;height:17px}
 .pf-grp-end,.pf-opt-end{margin-left:auto}
 .pf-ol{color:var(--pf-faint);text-transform:uppercase;letter-spacing:.1em;font-size:10.5px;margin-right:2px}
 .pf-sizev{min-width:1.5em;color:var(--pf-accent)}
-.pf-zl{min-width:3.2em;text-align:center;color:var(--pf-muted)}
-.pf-seg{display:inline-flex;border:1px solid var(--pf-line2)}
-.pf .pf-seg button{border:0;border-right:1px solid var(--pf-line2);min-height:28px;padding:3px 9px;background:var(--pf-panel)}
-.pf .pf-seg button:last-child{border-right:0}.pf .pf-seg button.on{background:var(--pf-accent);color:var(--pf-on)}
+.pf-zl{min-width:3.2em;text-align:center;color:var(--pf-ink);font-variant-numeric:tabular-nums}
+.pf .pf-opts input[type=range]{width:80px}
+.pf-seg{display:inline-flex;border:1px solid var(--pf-line);gap:0}
+.pf .pf-seg button{border:0;border-right:1px solid var(--pf-line);min-height:24px;padding:2px 8px;background:transparent}
+.pf .pf-seg button:last-child{border-right:0}.pf .pf-seg button.on{border-color:var(--pf-line)}
 .pf-work{flex:1;display:flex;min-height:0}
 .pf-rail{display:flex;flex-direction:column;gap:4px;padding:8px 6px;border-right:1px solid var(--pf-line);background:var(--pf-panel);align-items:center;overflow:auto}
 .pf-tools{display:flex;flex-direction:column;gap:4px}
@@ -998,6 +1017,16 @@
 .pf-cur{display:flex;gap:8px;align-items:center}.pf-cur input[type=color]{width:44px;height:32px;padding:0;border:1px solid var(--pf-line2);background:none;flex:none;cursor:pointer}
 .pf-ramp{display:flex;flex-direction:column;gap:6px}.pf-ramp[hidden]{display:none}.pf .pf-ramp .pf-sw button{width:34px;height:24px}
 .pf-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+/* Loading a project: a pixel spinner in the sprite list, eight squares round a ring lighting up in turn (steps, no smoothing). */
+.pf-loading{display:flex;flex-direction:column;align-items:center;gap:14px;padding:36px 12px;text-align:center;color:var(--pf-muted)}.pf-loading b{color:var(--pf-ink);font-weight:400;word-break:break-all}
+.pf-spin{display:grid;grid-template-columns:repeat(3,9px);grid-template-rows:repeat(3,9px);gap:2px}
+.pf-spin i{background:var(--pf-line);animation:pf-spin .8s steps(1) infinite}
+.pf-spin i:nth-child(1){grid-area:1/1}.pf-spin i:nth-child(2){grid-area:1/2;animation-delay:.1s}.pf-spin i:nth-child(3){grid-area:1/3;animation-delay:.2s}.pf-spin i:nth-child(4){grid-area:2/3;animation-delay:.3s}
+.pf-spin i:nth-child(5){grid-area:3/3;animation-delay:.4s}.pf-spin i:nth-child(6){grid-area:3/2;animation-delay:.5s}.pf-spin i:nth-child(7){grid-area:3/1;animation-delay:.6s}.pf-spin i:nth-child(8){grid-area:2/1;animation-delay:.7s}
+@keyframes pf-spin{0%{background:var(--pf-accent)}12.5%{background:var(--pf-line2)}25%{background:var(--pf-line)}}
+@media (prefers-reduced-motion:reduce){.pf-spin i{animation-duration:2.4s}}
+.pf .pf-right button:not(.primary):not(.on):not(.pf-fam-m),.pf .pf-side>.pf-row button:not(.primary){background:transparent;min-height:26px;padding:2px 9px;font-size:12px}
+.pf .pf-right button:not(.primary):not(.on):not(.pf-fam-m):hover:not(:disabled),.pf .pf-side>.pf-row button:not(.primary):hover:not(:disabled){background:var(--pf-panel2);box-shadow:none}
 .pf-prev canvas{image-rendering:pixelated;background:var(--pf-ckbg);max-width:100%;display:block;border:1px solid var(--pf-line)}
 .pf-note{color:var(--pf-muted);font-size:11.5px}.pf-bad{color:var(--pf-bad)}.pf-ok{color:var(--pf-good)}
 .pf .pf-s-size{min-height:0;padding:0 5px;font:inherit;background:none;border:1px dashed var(--pf-line2);color:inherit;cursor:pointer}.pf .pf-s-size:hover{border-color:var(--pf-accent);color:var(--pf-accent)}
@@ -1010,9 +1039,6 @@
 .pf-pal-empty[hidden]{display:none}
 .pf-box{border:1px solid var(--pf-line);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--pf-bg)}
 .pf .pf-c-pick.on{border-color:var(--pf-accent)}
-.pf .pf-c-pick.busy{border-color:var(--pf-accent);background:linear-gradient(90deg,transparent,rgba(185,140,255,.16),transparent) 0 0/200% 100%;animation:pf-busy 1.2s linear infinite}.pf .pf-c-pick.busy .pf-note{color:var(--pf-accent)}.pf-c-repolist.busy .pf-c-pick:not(.busy){opacity:.5}
-@keyframes pf-busy{to{background-position:-200% 0}}
-@media (prefers-reduced-motion:reduce){.pf .pf-c-pick.busy{animation:none}}
 .pf dialog.pf-dlg-connect{width:min(640px,94vw)}
 .pf-dlg-head{display:flex;justify-content:space-between;align-items:center}.pf-dlg-head h4{margin:0}
 .pf .pf-x{min-height:0;width:30px;height:30px;padding:0;background:none;border-color:transparent;color:var(--pf-muted);font-size:14px}
@@ -1052,8 +1078,8 @@
 .pf-fb-more{max-height:24vh;overflow:auto}.pf-fb-more summary{cursor:pointer}
 .pf-fb-facts{border-collapse:collapse;margin:4px 0;font-size:12px}.pf-fb-facts th{text-align:left;font-weight:normal;color:var(--pf-muted);padding:1px 12px 1px 0;white-space:nowrap;vertical-align:top}.pf-fb-facts td{padding:1px 0;word-break:break-word}
 .pf-keys{display:grid;grid-template-columns:1fr;gap:6px}.pf-key{display:grid;grid-template-columns:minmax(150px,auto) 1fr;gap:12px;align-items:baseline;padding:3px 0;border-bottom:1px dashed var(--pf-line)}.pf-key span{color:var(--pf-muted)}.pf-key kbd{justify-self:start}
-@media (max-width:1600px){.pf-grp-view button > span:not(.pf-bg-sw){display:none}.pf .pf-grp-view button{padding:4px 8px}}
-@media (max-width:1100px){.pf{--pf-cl:200px;--pf-cr:220px}.pf-bar button span,.pf-opt-end button span{display:none}}
+@media (max-width:1100px){.pf{--pf-cl:200px;--pf-cr:220px}}
+@media (max-width:1300px){.pf-opts .pf-opt>.pf-note{display:none}}
 @media (max-width:900px){
   .pf-c-grid{grid-template-columns:1fr}.pf-c-other{grid-template-columns:1fr}
   .pf{grid-template-columns:1fr;grid-template-rows:auto minmax(420px,1fr) auto;height:auto}
@@ -1065,7 +1091,7 @@
   .pf-swatch{margin:0 0 0 8px}
   .pf-stage{min-height:340px}
   .pf-grp-end,.pf-opt-end{margin-left:0}
-  .pf button{min-height:38px}.pf input[type=text],.pf input[type=password],.pf input[type=number],.pf select,.pf textarea{font-size:16px;min-height:38px}
+  .pf button,.pf .pf-bar button,.pf .pf-opts button,.pf .pf-seg button,.pf .pf-right button:not(.primary):not(.on):not(.pf-fam-m){min-height:38px}.pf-bar,.pf-opts{height:auto;flex-wrap:wrap;padding:4px 8px;gap:4px 8px}.pf-bar .pf-grp+.pf-grp{margin-left:0;padding-left:0;border-left:0}.pf input[type=text],.pf input[type=password],.pf input[type=number],.pf select,.pf textarea{font-size:16px;min-height:38px}
   .pf-key{grid-template-columns:1fr}
 }
 /* Fullscreen (touch and narrow screens): the canvas and the tool rail fill the screen; the sprite list slides in from the
@@ -1332,6 +1358,7 @@
     const root = el(`<div class="pf" tabindex="-1">
       <aside class="pf-side"><button class="pf-source" title="Switch to another GitHub repository or a folder on this computer">Open project…</button>
         <div class="pf-row pf-auth-row pf-side-auth"><button type="button" class="pf-signin">Sign in with GitHub</button><span class="pf-who pf-note"></span><button type="button" class="pf-signout" hidden>Sign out</button></div><div><div class="pf-side-head"><h4>Sprites</h4><span class="pf-foldmini"><button type="button" class="pf-fold-all" title="Fold every folder">▸ all</button><button type="button" class="pf-unfold-all" title="Unfold every folder">▾ all</button></span></div><input type="text" class="pf-q" placeholder="filter…" aria-label="Filter sprites"></div>
+        <div class="pf-setup" hidden></div>
         <div class="pf-list" role="listbox" aria-label="Sprites"></div>
         <details class="pf-commit" hidden><summary><h4>Changes <span class="pf-commit-n"></span></h4></summary>
           <div class="pf-commit-list"></div>
@@ -1483,6 +1510,12 @@
     const offscreen = document.createElement('canvas'), diffCanvas = document.createElement('canvas');
     let overlay = null; // preview pixels while dragging a shape: { pts, value }
     const note = (t) => { S.notice = t; status(); };
+    /** Opening a project: the sprite list becomes a pixel spinner with the current step, until useSource lists the new sprites. */
+    const loaderHtml = () => `<div class="pf-loading" role="status" aria-live="polite"><span class="pf-spin" aria-hidden="true">${'<i></i>'.repeat(8)}</span><b>${esc(S.loading.label)}</b><span class="pf-loading-step">${esc(S.loading.step)}</span></div>`;
+    let loadSeq = 0;
+    function showLoading(label) { S.loading = { label, step: 'Connecting…' }; $('.pf-list').innerHTML = loaderHtml(); }
+    function loadingStep(t) { if (!S.loading) return; S.loading.step = t; const el = $('.pf-loading-step'); if (el) el.textContent = t; else $('.pf-list').innerHTML = loaderHtml(); }
+    function hideLoading() { if (!S.loading) return; S.loading = null; renderList(); }
 
     /* ---------- sign in ----------
        One sign-in per device: the session (access token + refresh token) is kept in localStorage and the access token is renewed
@@ -1566,8 +1599,9 @@
     /** Narrow the open repository to the picked folders, in place. */
     function applyFolders(src, picked) {
       const cfg = { ...(src.config || {}) }; delete cfg.dirs; delete cfg.exclude; // the pick replaces the folders, keeps everything else
-      Object.assign(cfg, folderConfig(src.all.map((x) => x.path), picked));
-      if (!cfg.exclude.length && cfg.dirs) delete cfg.exclude;
+      if (!src.all.length) cfg.dirs = picked.filter(Boolean).map((d) => d.replace(/^\/+|\/+$/g, '')); // nothing to list yet: the folder art will go in
+      else Object.assign(cfg, folderConfig(src.all.map((x) => x.path), picked));
+      if (cfg.exclude && !cfg.exclude.length && cfg.dirs) delete cfg.exclude;
       if (!cfg.dirs) delete cfg.dirs;
       src.sprites = applyConfig(src.all, cfg); src.hidden = [];
       return cfg;
@@ -1583,7 +1617,11 @@
       const src = S.src; if (!src || src.kind !== 'github' || !src.all) return;
       const folders = artFolders(src.all.map((x) => x.path)), now = new Set(S.sprites.map((x) => x.path.split('/').slice(0, -1).slice(0, 2).join('/')));
       const first = !src.hasConfig && !readFolders(src);
-      $('.pf-af-list').innerHTML = folders.map((f) => `<label><input type="checkbox" value="${esc(f.dir)}"${(first ? f.art : now.has(f.dir)) ? ' checked' : ''}><code>${f.dir ? esc(f.dir) + '/' : '(top level)'}</code><span class="pf-note">${f.count} PNG${f.count === 1 ? '' : 's'}</span></label>`).join('');
+      $('.pf-af-all').hidden = !folders.length;
+      if (!folders.length) { // a repository with no art yet: say where it will go
+        const was = (readFolders(src) || {}).picked || (src.config && src.config.dirs) || [];
+        $('.pf-af-list').innerHTML = `<div class="pf-note">No PNG files in this repository yet. Which folder should its art go in? New sprites start there.</div><input type="text" class="pf-af-dir" list="pf-af-dirs" value="${esc(was[0] || 'art')}" aria-label="Art folder" autocomplete="off"><datalist id="pf-af-dirs">${(src.dirs || []).map((d) => `<option value="${esc(d)}">`).join('')}</datalist>`;
+      } else $('.pf-af-list').innerHTML = folders.map((f) => `<label><input type="checkbox" value="${esc(f.dir)}"${(first ? f.art : now.has(f.dir)) ? ' checked' : ''}><code>${f.dir ? esc(f.dir) + '/' : '(top level)'}</code><span class="pf-note">${f.count} PNG${f.count === 1 ? '' : 's'}</span></label>`).join('');
       $('.pf-af-save').textContent = src.hasConfig ? `This repository has a ${CONFIG_PATH}: your pick updates its folders in your next pull request.` : `Your pick is saved as ${CONFIG_PATH} in your next pull request, so everyone who opens this repository gets the same list.`;
       $('.pf-dlg-folders').showModal();
     }
@@ -1592,9 +1630,10 @@
       const cfg = applyFolders(src, picked); writeFolders(src, { picked, cfg, sent: false });
       S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
       renderList(); if (!S.sprites.some((x) => x.path === S.cur) && S.sprites.length) await openSprite(S.sprites[0].path);
-      note(`${S.sprites.length} sprite${S.sprites.length === 1 ? '' : 's'} in the folders you picked. ${CONFIG_PATH} goes with your next pull request.`);
+      note(src.all.length ? `${S.sprites.length} sprite${S.sprites.length === 1 ? '' : 's'} in the folders you picked. ${CONFIG_PATH} goes with your next pull request.` : `New sprites go in ${cfg.dirs[0]}/. ${CONFIG_PATH} goes with your first pull request.`);
+      renderSetup();
     }
-    $('.pf-af-go').onclick = () => pickFolders($$('.pf-af-list input:checked').map((i) => i.value));
+    $('.pf-af-go').onclick = () => { const dir = $('.pf-af-dir'); pickFolders(dir ? [dir.value.trim()].filter(Boolean) : $$('.pf-af-list input:checked').map((i) => i.value)); };
     $('.pf-af-all').onclick = () => pickFolders(artFolders(S.src.all.map((x) => x.path)).map((f) => f.dir));
     /** On opening a GitHub repository: reapply a pick made earlier in this browser, or say whether to ask. */
     function foldersOnOpen(src) {
@@ -1604,8 +1643,10 @@
     }
     async function useSource(src, how = {}) {
       commitFloat(); await flushDrafts(); // this project's edits stay in the browser: they come back when it is opened again
+
       if (!keeping() && [...S.docs.values()].some((d) => d.changed) && !confirm('Switching source discards this session\'s changes. Save or propose them first to keep them. Switch anyway?')) return false;
       const askFolders = foldersOnOpen(src);
+      S.loading = null;
       play(false); S.float = null; S.sel = null; S.docs.clear(); S.cur = null; S.src = src; folded = null; S.sprites = src.sprites.map((x) => ({ ...x })); thumbs.clear();
       S.anim.t = 0; drawPreview(); renderFamily(); renderColors(); resetHistory(); // the side panels drop the old project's sprite right away
       S.meta = { repo: Object.assign({}, src.repo || {}, Object.fromEntries(Object.entries(O.github || {}).filter(([, v]) => v != null && v !== ''))) };
@@ -1626,7 +1667,8 @@
         if (O.sprites) return void (await useSource(staticSource({ sprites: O.sprites, palette: O.paletteList || null, repo: O.github || null }, O.baseUrl)));
         if (O.manifestUrl) { const mf = await fetchJson(O.manifestUrl); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); }
         if (O.connect === 'github' && O.github && O.github.slug) {
-          try { return void (await useSource(await githubSource({ repo: O.github.slug, branch: O.github.base, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase, onProgress: note }))); } catch (e) { return openConnect(e.message); }
+          showLoading(O.github.slug);
+          try { return void (await useSource(await githubSource({ repo: O.github.slug, branch: O.github.base, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase, onProgress: loadingStep }))); } catch (e) { hideLoading(); return openConnect(e.message); }
         }
         try { const mf = await fetchJson('api/manifest'), m = document.querySelector('meta[name="pf-token"]'); return void (await useSource(serverSource(mf, m ? m.content : ''))); } catch { /* no local server here */ }
         try { const mf = await fetchJson('pixel-art.json'); return void (await useSource(staticSource(mf, O.baseUrl != null ? O.baseUrl : (mf.base || '')))); } catch { /* no manifest here */ }
@@ -1634,7 +1676,8 @@
         /* no project given: reopen the last GitHub repository, or carry on with what was drawn in this browser */
         const last = O.blank ? null : lastProject(); let why = '';
         if (last && last.kind === 'github' && O.connect !== false) {
-          try { return void (await useSource(await githubSource({ repo: last.slug, branch: last.branch, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase, onProgress: note }))); } catch (e) { why = 'Could not reopen ' + last.slug + ': ' + e.message; }
+          showLoading(last.slug);
+          try { return void (await useSource(await githubSource({ repo: last.slug, branch: last.branch, token: storedToken() || await authToken().catch(() => ''), apiBase: O.apiBase, onProgress: loadingStep }))); } catch (e) { hideLoading(); why = 'Could not reopen ' + last.slug + ': ' + e.message; }
         }
         await useSource(last && last.kind === 'browser' ? browserSource(last.id, localName(last.id)) : browserSource(), { remember: !last || last.kind === 'browser' });
         if (O.blank && !S.docs.size) await addLocal(O.blank.name || 'sprite.png', O.blank.w || 16, O.blank.h || 16, new Uint32Array((O.blank.w || 16) * (O.blank.h || 16)), false);
@@ -1872,7 +1915,20 @@
       const on = members.includes(S.cur);
       return `<button class="pf-item${flat ? '' : ' pf-cell'}${on ? ' on' : ''}" role="option" data-path="${esc(s.path)}" title="${esc(s.path)}"><canvas width="${s.w || 16}" height="${s.h || 16}"></canvas><span class="n">${esc(label)}<small>${flat ? esc(dir) + ' · ' : ''}${size}</small></span>${badge}${marker(dirty, changed, d)}</button>`;
     }
+    /** The setup callout: a GitHub repository without spritewright.config.json, until the pick has gone out in a pull request. */
+    function renderSetup() {
+      const box = $('.pf-setup'), src = S.src, f = src && src.kind === 'github' && src.all && !src.hasConfig ? readFolders(src) : null;
+      const show = !!(src && src.kind === 'github' && src.all && !src.hasConfig && !(f && f.sent)) && !S.loading;
+      box.hidden = !show; if (!show) return;
+      box.innerHTML = f && f.picked
+        ? `<span><b>Art folders picked.</b> ${CONFIG_PATH} goes with your next pull request, so everyone gets this list.</span><button type="button" class="pf-setup-go">Change folders…</button>`
+        : src.all.length ? `<span><b>No project setup yet.</b> Choose the folders that hold your art; it is saved as ${CONFIG_PATH} in your next pull request.</span><button type="button" class="primary pf-setup-go">Choose art folders…</button>`
+        : `<span><b>No sprites here yet.</b> Choose the folder your art goes in, then draw the first one with New.</span><button type="button" class="primary pf-setup-go">Choose art folder…</button>`;
+      box.querySelector('.pf-setup-go').onclick = openFolders;
+    }
     function renderList() {
+      renderSetup();
+      if (S.loading) { if (!$('.pf-loading')) $('.pf-list').innerHTML = loaderHtml(); return; }
       const q = $('.pf-q').value.toLowerCase(), list = $('.pf-list'), groups = regroup();
       // Rows whose markup is unchanged keep their DOM nodes — and with them their painted thumbnails —
       // so drawing does not flash the whole explorer. Only the open sprite rebuilds (a live thumbnail).
@@ -2002,7 +2058,7 @@
 
     function render() {
       const d = doc(); g.clearRect(0, 0, view.width, view.height); g.imageSmoothingEnabled = false;
-      if (!d) return;
+      if (!d) { const cv = $('.pf-ctx-cv'); cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); ctxHits = []; $('.pf-ctx-note').textContent = ''; return; } // nothing open: no context left over from the last project
       // holding \ shows the image as it was when this session opened it (what a pull request compares against)
       const shown = S.peek ? { w: d.base.w, h: d.base.h, img: new ImageData(new Uint8ClampedArray(d.base.px.buffer.slice(0)), d.base.w, d.base.h) } : { w: d.w, h: d.h, img: d.imageData() };
       const z = S.zoom, W = shown.w * z, H = shown.h * z;
@@ -3001,7 +3057,13 @@
     }
     const markQuick = () => $$('.pf-n-quick button').forEach((b) => b.classList.toggle('on', b.dataset.w === $('.pf-nw').value && b.dataset.h === $('.pf-nh').value));
     /** The name sidebar New suggests: the next free `new_sprite[N].png`, so creating never silently numbers a duplicate. */
-    function nextSpriteName() { const taken = new Set(S.sprites.map((s) => s.path)); if (!taken.has('new_sprite.png')) return 'new_sprite.png'; let n = 1; while (taken.has(`new_sprite${n}.png`)) n++; return `new_sprite${n}.png`; }
+    /** Where a new sprite goes in a project with none open yet: its art folder (configured, or just picked), else the top level. */
+    function artDir() {
+      if (doc()) return '';
+      const src = S.src, f = src && src.kind === 'github' ? readFolders(src) : null, dirs = (f && f.cfg && f.cfg.dirs) || (src && src.config && src.config.dirs) || [];
+      return dirs[0] && dirs[0] !== '.' ? dirs[0].replace(/\/+$/, '') + '/' : '';
+    }
+    function nextSpriteName() { const taken = new Set(S.sprites.map((s) => s.path)), dir = artDir(); if (!taken.has(dir + 'new_sprite.png')) return dir + 'new_sprite.png'; let n = 1; while (taken.has(`${dir}new_sprite${n}.png`)) n++; return `${dir}new_sprite${n}.png`; }
     function openNew() {
       const sizes = commonSizes(), d = doc();
       $('.pf-n-quick').innerHTML = sizes.map((x) => `<button type="button" data-w="${x.w}" data-h="${x.h}" title="${x.c ? x.c + ' sprite' + (x.c > 1 ? 's' : '') + ' in this project are this size' : 'a common size'}">${x.w}×${x.h}</button>`).join('');
@@ -3050,20 +3112,19 @@
     $('.pf-c-blank').onclick = () => newLocalProject();
     $('.pf-delete').onclick = deleteSprite;
     $('.pf-c-gh').onclick = async () => {
-      const msg = $('.pf-c-msg'), btn = $('.pf-c-gh'), typed = S.auth.token ? '' : $('.pf-c-token').value.trim(), repo = $('.pf-c-repo').value.trim(); btn.disabled = true; msg.textContent = 'Connecting…';
-      // The repository being opened says so in the list (or on the Open button), with each step, until it is open or fails.
-      const pick = $$('.pf-c-pick').find((b) => b.dataset.repo === repo), list = $('.pf-c-repolist'), label = btn.textContent;
-      const say = (t) => { msg.textContent = t; if (pick) pick.querySelector('.pf-note').textContent = t; };
-      if (pick) { pick.classList.add('busy'); pick.setAttribute('aria-busy', 'true'); list.classList.add('busy'); $$('.pf-c-pick').forEach((b) => (b.disabled = true)); } else btn.textContent = 'Opening…';
-      const idle = () => { btn.textContent = label; list.classList.remove('busy'); if (pick && pick.isConnected) renderRepos(); };
+      const msg = $('.pf-c-msg'), typed = S.auth.token ? '' : $('.pf-c-token').value.trim(), repo = $('.pf-c-repo').value.trim();
+      if (!repo) { msg.textContent = 'Pick a repository, or type owner/name.'; return; }
+      // The dialog gets out of the way at once; the sprite list shows the loading, and the dialog comes back only if it fails.
+      $('.pf-dlg-connect').close(); showLoading(repo);
+      const ticket = ++loadSeq, current = () => ticket === loadSeq; // picking again while one loads: the newer pick wins
       try {
         const token = typed || await authToken();
-        const src = await githubSource({ repo, branch: $('.pf-c-branch').value.trim() || undefined, token, apiBase: O.apiBase, onProgress: say });
+        const src = await githubSource({ repo, branch: $('.pf-c-branch').value.trim() || undefined, token, apiBase: O.apiBase, onProgress: (t) => current() && loadingStep(t) });
+        if (!current()) return;
         try { if (typed) { if ($('.pf-c-remember').checked) localStorage.setItem('pf:token', token); else sessionStorage.setItem('pf:token', token); } } catch { /* storage blocked */ }
-        say(src.sprites.length + ' PNG file' + (src.sprites.length === 1 ? '' : 's') + ' found, opening…');
-        if (await useSource(src)) $('.pf-dlg-connect').close();
-        idle();
-      } catch (e) { idle(); msg.textContent = e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { btn.disabled = false; }
+        loadingStep(src.sprites.length + ' PNG file' + (src.sprites.length === 1 ? '' : 's') + ' found');
+        if (!(await useSource(src))) { hideLoading(); openConnect(); }
+      } catch (e) { if (!current()) return; hideLoading(); openConnect(e.message); if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); }
     };
     $('.pf-c-folder').onclick = async () => {
       const msg = $('.pf-c-msg'); msg.textContent = '';
