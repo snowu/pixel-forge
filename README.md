@@ -81,7 +81,7 @@ const editor = Spritewright.mount(document.getElementById('editor')!, {
 });
 ```
 
-Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `drafts: false` to not keep edits in the browser (or your own store; `draftsKey` names the project), `pr: false` to hide the pull-request button, `feedback` to point the Feedback button at your repository or hide it (see Feedback below). `Spritewright.createPullRequest`, `Spritewright.png.decode/encode`, `Spritewright.sources.*` and `Spritewright.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
+Works with Vite and other bundlers (checked with a Vite build). Options: `source` (your own), `sprites` + `baseUrl`, `manifestUrl`, `palette`, `save(doc, pngBlob)` to replace saving, `drafts: false` to not keep edits in the browser (or your own store; `draftsKey` names the project), `pr: false` to hide the pull-request button, `feedback: false` to hide the Feedback button (see Feedback below). `Spritewright.createPullRequest`, `Spritewright.png.decode/encode`, `Spritewright.sources.*` and `Spritewright.core.*` are exported and tested without a browser. The controller returned by `mount` exposes `current`, `docs`, `open`, `save`, `undo`, `redo`, `dispose`.
 
 ## Fullscreen on phones and tablets
 
@@ -198,7 +198,7 @@ It uses only the REST API: read the repo and your permissions, fork it if you ca
 
 ## Feedback
 
-The **Feedback** button (top bar, next to `?`) is for bugs, ideas or anything else. It takes a screenshot of the editor as it was, shows the details that will go with it (project kind, sprite size, tool, view, screen and browser; the repository name and sprite path only for public repositories), and **Open on GitHub** opens a prefilled issue in this repository while copying the screenshot to the clipboard, so you paste it into the form with `Ctrl+V`. Nothing is sent until you submit the issue on GitHub yourself; there is no token and no server involved. When embedding, `feedback: 'owner/name'` sends reports to your own repository (add `.github/ISSUE_TEMPLATE/feedback.yml` from here), and `feedback: false` hides the button.
+The **Feedback** button (top bar, next to `?`) is for bugs, ideas or anything else, from people **signed in with GitHub**. It takes a screenshot of the editor as it was and shows the details that go with it (project kind, sprite size, tool, view, screen and browser; the repository name and sprite path only for public repositories). **Send feedback** hands both to the sign-in service, which checks the person's GitHub sign-in, stores the screenshot in this repository (branch `feedback-screenshots`) and opens an issue with it shown inline, signed *Sent from the spritewright editor by @their-login*. Signed out, the dialog offers **Sign in with GitHub** instead. Setup is in [worker/README.md](worker/README.md#feedback); without it (or with `feedback: false`, or no sign-in service) the button is hidden.
 
 ## Safety of the local server
 

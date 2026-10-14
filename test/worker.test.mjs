@@ -91,3 +91,62 @@ test('loopback origins are allowed only when ALLOW_LOOPBACK is on', async () => 
   for (const o of ['http://localhost:5173', 'http://127.0.0.1:41234', 'http://localhost']) assert.equal((await login(o, lb)).status, 302, o);
   for (const o of ['https://localhost.evil.example', 'http://localhost.evil.example', 'http://localhost:5173.evil.example', 'http://127.0.0.2:80', 'https://evil.example']) assert.equal((await login(o, lb)).status, 403, o);
 });
+
+/* ---------- /feedback ---------- */
+const FB_ENV = { ...env, FEEDBACK_TOKEN: 'github_pat_feedback', FEEDBACK_REPO: 'snowu/spritewright' };
+const PNG = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(40, 7)]);
+const fbReq = (body, { token = 'ghu_reporter', origin = 'https://snowu.github.io', method = 'POST' } = {}) => new Request('https://auth.example/feedback', { method, headers: { origin, 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: method === 'POST' ? JSON.stringify(body) : undefined });
+/** A fake GitHub: who is signed in, a missing screenshot branch the first time, and what was written. */
+function fakeGithub({ user = 'reporter', branch = false } = {}) {
+  const calls = [];
+  const fetchMock = async (url, init = {}) => {
+    const p = new URL(url).pathname, method = init.method || 'GET', auth = init.headers.authorization, body = init.body ? JSON.parse(init.body) : null; calls.push({ p, method, auth, body });
+    const res = (status, o) => ({ ok: status < 300, status, json: async () => o });
+    if (p === '/user') return auth === 'Bearer ghu_reporter' ? res(200, { login: user }) : res(401, { message: 'Bad credentials' });
+    if (auth !== 'Bearer github_pat_feedback') return res(403, { message: 'wrong token' });
+    if (p === '/repos/snowu/spritewright/git/ref/heads/feedback-screenshots') return branch ? res(200, { object: { sha: 's0' } }) : res(404, { message: 'Not Found' });
+    if (p === '/repos/snowu/spritewright') return res(200, { default_branch: 'main' });
+    if (p === '/repos/snowu/spritewright/git/ref/heads/main') return res(200, { object: { sha: 'm1' } });
+    if (p === '/repos/snowu/spritewright/git/refs' && method === 'POST') { branch = true; return res(201, {}); }
+    if (p.startsWith('/repos/snowu/spritewright/contents/feedback/') && method === 'PUT') return res(201, { commit: { sha: 'c9' } });
+    if (p === '/repos/snowu/spritewright/issues' && method === 'POST') return res(201, { number: 42, html_url: 'https://github.com/snowu/spritewright/issues/42' });
+    return res(404, { message: 'Not Found' });
+  };
+  return { calls, fetchMock };
+}
+
+test('feedback: a signed-in person\'s report becomes an issue with the screenshot stored in the repository and shown inline', async () => {
+  const gh = fakeGithub(), now = Date.UTC(2026, 9, 14, 12, 30, 5);
+  const r = await handle(fbReq({ kind: 'idea', what: '  Onion skin for numbered files please  ', details: '| | |\n|---|---|\n| Sprite | 16×16 |', screenshot: PNG.toString('base64') }), FB_ENV, gh.fetchMock, now);
+  assert.equal(r.status, 200); assert.deepEqual(await r.json(), { number: 42, url: 'https://github.com/snowu/spritewright/issues/42' });
+  assert.equal(r.headers.get('access-control-allow-origin'), 'https://snowu.github.io');
+  assert.deepEqual(gh.calls.find((c) => c.p === '/repos/snowu/spritewright/git/refs').body, { ref: 'refs/heads/feedback-screenshots', sha: 'm1' }, 'the screenshot branch is made from the default branch the first time');
+  const put = gh.calls.find((c) => c.method === 'PUT');
+  assert.match(put.p, /^\/repos\/snowu\/spritewright\/contents\/feedback\/2026-10\/2026-10-14-12-30-05-reporter-[0-9a-f]{8}\.png$/);
+  assert.equal(put.body.branch, 'feedback-screenshots'); assert.deepEqual(Buffer.from(put.body.content, 'base64'), PNG);
+  const issue = gh.calls.find((c) => c.p.endsWith('/issues')).body;
+  assert.equal(issue.title, 'Idea: Onion skin for numbered files please'); assert.deepEqual(issue.labels, ['feedback']);
+  assert.match(issue.body, /^Onion skin for numbered files please\n\n!\[Screenshot\]\(https:\/\/raw\.githubusercontent\.com\/snowu\/spritewright\/c9\/feedback\/2026-10\/[^)]+\.png\)/);
+  assert.match(issue.body, /\| Sprite \| 16×16 \|[\s\S]*Sent from the spritewright editor by @reporter\.$/);
+  assert.ok(gh.calls.filter((c) => c.p !== '/user').every((c) => c.auth === 'Bearer github_pat_feedback'), 'the repository is written with the service\'s token, never the reporter\'s');
+  const again = fakeGithub({ branch: true });
+  assert.equal((await handle(fbReq({ kind: 'bug', what: 'no picture' }), FB_ENV, again.fetchMock)).status, 200);
+  assert.ok(!again.calls.some((c) => c.method === 'PUT' || c.p.endsWith('/git/refs')), 'no screenshot, nothing stored');
+  assert.match(again.calls.find((c) => c.p.endsWith('/issues')).body.body, /_No screenshot\._/);
+});
+
+test('feedback: only signed-in GitHub accounts, from allowed pages, with a real PNG', async () => {
+  const gh = fakeGithub(), send = (body, o) => handle(fbReq(body, o), FB_ENV, gh.fetchMock);
+  assert.equal((await send({ what: 'hi' }, { token: '' })).status, 401, 'no sign-in, no feedback');
+  assert.equal((await send({ what: 'hi' }, { token: 'ghu_forged' })).status, 401, 'a token GitHub does not accept');
+  assert.equal((await send({ what: 'hi' }, { origin: 'https://evil.example' })).status, 403);
+  assert.equal((await send({ what: '   ' })).status, 400, 'an empty report');
+  assert.equal((await send({ what: 'hi', screenshot: Buffer.from('<svg/>').toString('base64') })).status, 400, 'not a PNG');
+  assert.equal((await send({ what: 'hi', screenshot: Buffer.concat([PNG, Buffer.alloc(4.1 * 1024 * 1024)]).toString('base64') })).status, 413);
+  assert.ok(!gh.calls.some((c) => c.p.endsWith('/issues')), 'none of these opened an issue');
+  const pre = await handle(fbReq(null, { method: 'OPTIONS' }), FB_ENV, gh.fetchMock);
+  assert.equal(pre.status, 204); assert.match(pre.headers.get('access-control-allow-headers'), /authorization/);
+  assert.equal((await handle(fbReq({ what: 'hi' }), env, gh.fetchMock)).status, 503, 'not set up without FEEDBACK_TOKEN');
+  const limited = await handle(fbReq({ what: 'hi' }), { ...FB_ENV, FEEDBACK_LIMIT: { limit: async ({ key }) => ({ success: key !== 'reporter' }) } }, gh.fetchMock);
+  assert.equal(limited.status, 429, 'the rate limit is per GitHub account');
+});

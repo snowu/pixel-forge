@@ -44,10 +44,25 @@ Open the editor with `?auth=https://<your-worker>.workers.dev`, or set `DEFAULT_
 
 Check it with `curl https://<your-worker>.workers.dev/health` (should print `{"ok":true}`).
 
+## Feedback
+
+The editor's **Feedback** button sends to `POST /feedback` on this Worker. Only people signed in with GitHub can use it: the Worker checks their token with GitHub (`GET /user`) and rejects anything else. It then, with a token of its own:
+
+1. commits the screenshot (a PNG, at most 4 MB) to the `feedback-screenshots` branch of the feedback repository (`feedback/<yyyy-mm>/<time>-<login>-<random>.png`; the branch is made from the default branch the first time), and
+2. opens an issue there with the text, the screenshot inline, the details folded away, the `feedback` label, and *Sent from the spritewright editor by @login*.
+
+Setup:
+1. Create a **fine-grained personal access token** (GitHub → Settings → Developer settings → Fine-grained tokens) for **only** the feedback repository (`snowu/spritewright`), with **Contents: Read and write** and **Issues: Read and write**. Issues are opened under that token's account.
+2. `npx wrangler secret put FEEDBACK_TOKEN` and paste it, then `npx wrangler deploy`.
+3. Optional vars: `FEEDBACK_REPO` (default `snowu/spritewright`), `FEEDBACK_BRANCH` (default `feedback-screenshots`).
+
+`wrangler.toml` binds a rate limiter (`FEEDBACK_LIMIT`): 5 reports a minute per GitHub account. The reporter's token is only used to find out who they are; nothing is written with it.
+
 ## How it stays safe
 - `/login` only accepts origins listed in `ALLOWED_ORIGINS`. The origin and a random nonce from the page are packed into a **signed, 10-minute `state`** (HMAC-SHA256 with `STATE_SECRET`); `/callback` rejects anything unsigned, tampered, expired or for an origin that is not allowed.
 - The token is posted to the popup's opener with `postMessage` **only to that verified origin**, and the page only accepts a message from the service's origin that carries its own nonce.
 - The client secret never reaches the page. The refresh token does, so the page can keep people signed in (`POST /refresh`, CORS only for allowed origins); refresh tokens are single use and GitHub rotates them on every renewal. Responses are `no-store` with a strict CSP.
+- `/feedback` needs a GitHub sign-in GitHub itself accepts, answers CORS only for `ALLOWED_ORIGINS`, takes only PNG screenshots up to 4 MB, and writes with `FEEDBACK_TOKEN`, which never leaves the Worker.
 - `ALLOW_LOOPBACK = "true"` also allows `http://localhost:<port>` and `http://127.0.0.1:<port>` for the local editor. Only code already running on that computer can use those origins.
 - Anything the user or GitHub supplies in an error message is JSON-escaped before it goes into the page.
 

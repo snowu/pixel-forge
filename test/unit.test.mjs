@@ -736,23 +736,7 @@ test('countDiff: clear pixels are equal whatever colour they carry, so erasing n
   b[2] = 0x00000000; assert.equal(C.countDiff(a, b), 1, 'opaque to clear still counts');
 });
 
-/* ---------- feedback link ---------- */
-test('feedback.url: a prefilled issue form in the repository, with the details whole and the link under GitHub\'s limit', () => {
-  const F = PF.feedback, details = F.details([['Project', 'a|b'], ['Browser', 'Firefox\n128']]);
-  assert.equal(details, '| | |\n|---|---|\n| Project | a\\|b |\n| Browser | Firefox 128 |');
-  const u = new URL(F.url({ what: '  The fill tool leaks through diagonal gaps when I click near the edge  ', details, kind: 'bug' }));
-  assert.equal(u.origin + u.pathname, 'https://github.com/snowu/spritewright/issues/new');
-  assert.equal(u.searchParams.get('template'), 'feedback.yml');
-  assert.equal(u.searchParams.get('title'), 'Bug: The fill tool leaks through diagonal gaps when I click…');
-  assert.equal(u.searchParams.get('what'), 'The fill tool leaks through diagonal gaps when I click near the edge');
-  assert.equal(u.searchParams.get('details'), details);
-  assert.match(u.searchParams.get('body'), /### What happened\?\n\nThe fill tool[\s\S]*### Details\n\n\| \| \|/);
-  assert.equal(new URL(F.url({ what: 'hi', kind: 'idea', repo: 'me/game' })).pathname, '/me/game/issues/new');
-  assert.equal(new URL(F.url({ what: 'hi', kind: 'idea' })).searchParams.get('title'), 'Idea: hi');
-  assert.equal(new URL(F.url({ what: '', details })).searchParams.has('title'), false, 'no words, no title: the reporter writes one');
-  const long = F.url({ what: 'word '.repeat(5000), details });
-  assert.ok(long.length <= 7500, 'a long description is trimmed to fit: ' + long.length);
-  assert.equal(new URL(long).searchParams.get('details'), details, 'the details are never trimmed');
-  assert.match(new URL(long).searchParams.get('what'), /trimmed to fit the link/);
-  assert.ok(F.title('x'.repeat(500)).length <= 100, 'one long word is capped too');
+/* ---------- feedback details ---------- */
+test('feedback.details: rows as a markdown table, pipes and newlines kept from breaking it', () => {
+  assert.equal(PF.feedback.details([['Project', 'a|b'], ['Browser', 'Firefox\n128']]), '| | |\n|---|---|\n| Project | a\\|b |\n| Browser | Firefox 128 |');
 });

@@ -45,8 +45,8 @@ export interface MountOptions {
   draftsKey?: string;
   /** false hides the pull request button. */
   pr?: boolean;
-  /** The Feedback button: opens a prefilled GitHub issue (with a screenshot of the editor on the clipboard) in this repository. Default "snowu/spritewright"; another "owner/name" sends it there; false hides the button. */
-  feedback?: boolean | string | { repo: string };
+  /** false hides the Feedback button. It needs a sign-in service (authBase) with feedback set up: see worker/README.md. */
+  feedback?: boolean;
   /** URL of the sign-in service (see worker/): enables the "Sign in with GitHub" button. */
   authBase?: string;
   /** Slug of the GitHub App used for sign-in; when set, the repository list links to installing it on more repositories. */
@@ -97,13 +97,8 @@ export interface GithubSourceOptions { repo: string; branch?: string; token?: st
 
 export function mount(host: HTMLElement, options?: MountOptions): Editor;
 export function createPullRequest(options: PullRequestOptions): Promise<PullRequestResult>;
-/** The prefilled GitHub "new issue" link behind the Feedback button (template .github/ISSUE_TEMPLATE/feedback.yml), kept under GitHub's URL length limit. */
-export const feedback: {
-  url(o?: { what?: string; details?: string; kind?: 'bug' | 'idea' | 'other'; repo?: string }): string;
-  title(text: string, kind?: 'bug' | 'idea' | 'other', words?: number, maxChars?: number): string;
-  details(rows: [string, string][]): string;
-  repo: string;
-};
+/** Helpers behind the Feedback button: its details as a markdown table. */
+export const feedback: { details(rows: [string, string][]): string };
 export function prBody(o: { files: { path: string; w: number; h: number; pixels: number; scale?: number; baseW?: number; isNew?: boolean }[]; description?: string; repo?: string; baseSha?: string; commit?: string; headRepo?: string; prefix?: string; previewSha?: string | null }): string;
 
 export const png: {

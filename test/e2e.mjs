@@ -1118,11 +1118,21 @@ section('vision check, reference layer, variants and history');
   await mp2.close(); await s4.close();
 }
 
-section('feedback: a prefilled GitHub issue and a screenshot of the editor');
+section('feedback: signed-in people send it, screenshot included, through the sign-in service');
 {
-  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
-  const fp = await ctx.newPage(); const ferrors = []; fp.on('pageerror', (e) => ferrors.push(e.message));
-  await fp.goto(base + '?auth=off'); await fp.waitForSelector('.pf-item'); await fp.locator('.pf-item', { hasText: 'slime.png' }).click(); await fp.waitForTimeout(150);
+  const fctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' }); const sent = [];
+  await fctx.route('https://auth.test/**', async (route) => {
+    const r = route.request(), u = new URL(r.url()), cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type' };
+    if (u.pathname === '/login') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>opener.postMessage(${JSON.stringify({ type: 'pf-auth', nonce: u.searchParams.get('nonce'), token: 'ghu_reporter', expires_in: 28800, refresh_token: 'ghr_1' })}, ${JSON.stringify(u.searchParams.get('origin'))}); window.close();</script>` });
+    if (u.pathname === '/feedback' && r.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { ...cors, 'access-control-allow-methods': 'POST' } });
+    if (u.pathname === '/feedback') { sent.push({ auth: r.headers().authorization, body: JSON.parse(r.postData()) }); return route.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: JSON.stringify({ number: 42, url: 'https://github.com/snowu/spritewright/issues/42' }) }); }
+    return route.fulfill({ status: 404, body: 'x' });
+  });
+  await fctx.route('https://api.github.com/user', (route) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ login: 'reporter' }) }));
+  const fp = await fctx.newPage(); const ferrors = []; fp.on('pageerror', (e) => ferrors.push(e.message));
+  await fp.goto(base + '?auth=off'); await fp.waitForSelector('.pf-item');
+  ok(await fp.locator('.pf-feedback').isHidden(), 'without a sign-in service there is no Feedback button');
+  await fp.goto(base + '?auth=https://auth.test'); await fp.waitForSelector('.pf-item'); await fp.locator('.pf-item', { hasText: 'slime.png' }).click(); await fp.waitForTimeout(150);
   await fp.click('.pf-feedback');
   ok(await fp.locator('.pf-dlg-feedback').evaluate((d) => d.open), 'the Feedback button opens the feedback dialog');
   ok(await fp.waitForSelector('.pf-fb-shot img', { timeout: 10000 }).then(() => true, () => false), 'a screenshot of the editor is shown');
@@ -1131,22 +1141,23 @@ section('feedback: a prefilled GitHub issue and a screenshot of the editor');
   const facts = await fp.locator('.pf-fb-facts').textContent(); // folded away under <details>, so not innerText
   ok(/local server/.test(facts) && /16×16/.test(facts) && /Browser/.test(facts), 'the details name the project kind, the sprite size and the browser');
   ok(!/slime\.png/.test(facts), 'no file names from a project that is not a public GitHub repository');
+  ok(await fp.locator('.pf-fb-send').isHidden() && await fp.locator('.pf-dlg-feedback .pf-signin').isVisible() && /Sign in with GitHub to send/.test(await fp.locator('.pf-fb-note').innerText()), 'signed out: no Send, a sign-in button instead');
   await fp.locator('.pf-fb-text').fill('The fill tool leaks through diagonal gaps');
-  await fp.click('.pf-fb-kind [data-kind=idea]');
-  const href = new URL(await fp.getAttribute('.pf-fb-go', 'href'));
-  ok(href.pathname === '/snowu/spritewright/issues/new' && href.searchParams.get('template') === 'feedback.yml', 'the link opens the feedback issue form: ' + href.pathname);
-  ok(href.searchParams.get('title') === 'Idea: The fill tool leaks through diagonal gaps' && href.searchParams.get('what') === 'The fill tool leaks through diagonal gaps', 'what was typed is the title and the description');
-  ok(/\| Sprite \| 16×16/.test(href.searchParams.get('details')), 'the details go along as a table');
-  await ctx.route('https://github.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<p>issue form</p>' }));
-  const [tab] = await Promise.all([ctx.waitForEvent('page'), fp.click('.pf-fb-go')]);
-  await tab.waitForLoadState().catch(() => {}); ok(tab.url().startsWith('https://github.com/snowu/spritewright/issues/new?'), 'Open on GitHub opens the issue form in a new tab: ' + tab.url().slice(0, 60)); await tab.close(); await ctx.unroute('https://github.com/**');
-  ok((await fp.evaluate(async () => (await navigator.clipboard.read()).flatMap((i) => i.types))).includes('image/png'), 'and puts the screenshot on the clipboard to paste');
-  ok(/Screenshot copied/.test(await fp.locator('.pf-fb-note').innerText()) && !/blocked/.test(await fp.locator('.pf-fb-note').innerText()), 'it says so (and does not cry popup blocker)');
+  await fp.click('.pf-dlg-feedback .pf-signin');
+  ok(await fp.waitForSelector('.pf-fb-send:not([hidden]):not([disabled])', { timeout: 5000 }).then(() => true, () => false), 'signing in from the dialog unlocks Send');
+  await fp.click('.pf-fb-kind [data-kind=idea]'); await fp.click('.pf-fb-send');
+  ok(await fp.waitForSelector('.pf-fb-done', { timeout: 5000 }).then(() => true, () => false), 'it says it was sent');
+  const f = sent[0] || { body: {} };
+  ok(sent.length === 1 && f.auth === 'Bearer ghu_reporter', 'one report, sent with the signed-in token');
+  ok(f.body.kind === 'idea' && f.body.what === 'The fill tool leaks through diagonal gaps' && /\| Sprite \| 16×16/.test(f.body.details), 'with the kind, the text and the details table');
+  const png = Buffer.from(f.body.screenshot || '', 'base64'); ok(png.subarray(1, 4).toString() === 'PNG' && png.length > 1000, 'and the screenshot as a PNG: ' + png.length + ' bytes');
+  ok((await fp.getAttribute('.pf-fb-done a', 'href')) === 'https://github.com/snowu/spritewright/issues/42' && /#42/.test(await fp.locator('.pf-fb-done').innerText()), 'it links the new issue');
+  ok(await fp.locator('.pf-fb-send').isDisabled(), 'and cannot be sent twice');
   ok(ferrors.length === 0, 'no errors around feedback ' + ferrors.join('|'));
-  await fp.close();
-  const hp = await ctx.newPage(); await hp.goto('about:blank'); await hp.addScriptTag({ path: path.resolve('spritewright.js') });
-  ok(await hp.evaluate(() => { const a = document.createElement('div'), b = document.createElement('div'); document.body.append(a, b); window.Spritewright.mount(a, { feedback: false }); window.Spritewright.mount(b, { feedback: 'me/game' }); return a.querySelector('.pf-feedback').hidden && !b.querySelector('.pf-feedback').hidden; }), 'feedback: false hides the button, a repository keeps it');
-  await hp.close();
+  await fp.screenshot({ path: path.join(os.tmpdir(), 'pf-feedback-sent.png') });
+  await fp.evaluate(() => { const a = document.createElement('div'); document.body.append(a); window.Spritewright.mount(a, { feedback: false, authBase: 'https://auth.test' }); window.__fbOff = a.querySelector('.pf-feedback').hidden; });
+  ok(await fp.evaluate(() => window.__fbOff), 'feedback: false hides the button');
+  await fctx.close();
 }
 
 section('mobile');
