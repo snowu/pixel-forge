@@ -177,6 +177,13 @@ section('selection: magic wand, lasso, add and subtract');
   await wp.mouse.move(wat(5, 5).x, wat(5, 5).y); await wp.mouse.down(); await wp.mouse.move(wat(4, 5).x, wat(4, 5).y, { steps: 2 }); await wp.mouse.up(); await wp.keyboard.press('Enter');
   const moved = await wp.evaluate(() => [...document.getElementById('app').__pf.current.px]);
   ok(moved[5 * 8 + 4] === B && moved[5 * 8 + 5] === B && moved[6 * 8 + 5] === R && moved[1 * 8 + 1] === R, 'dragging inside moves just the selection');
+  // a dither gradient inside a wand selection fills just those pixels, not the selection's box
+  await wp.keyboard.press('Escape'); await wp.keyboard.press('w'); await wp.mouse.click(wat(1, 1).x, wat(1, 1).y);
+  const gBefore = await wp.evaluate(() => [...document.getElementById('app').__pf.current.px]);
+  await wp.keyboard.press('j'); await wp.mouse.move(wat(1, 1).x, wat(1, 1).y); await wp.mouse.down(); await wp.mouse.move(wat(2, 2).x, wat(2, 2).y, { steps: 3 }); await wp.mouse.up();
+  const gAfter = await wp.evaluate(() => [...document.getElementById('app').__pf.current.px]);
+  const changed = gAfter.map((v, i) => (v !== gBefore[i] ? i : -1)).filter((i) => i >= 0);
+  ok(changed.length > 0 && !changed.includes(2 * 8 + 2), 'a dither gradient inside a wand selection leaves the rest of its box alone: ' + changed.join(','));
   ok(werr.length === 0, 'no page errors ' + werr.join('|'));
   await sctx2.close();
 }
