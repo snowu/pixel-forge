@@ -936,7 +936,9 @@
     const url = (path) => 'project/' + path.split('/').map(encodeURIComponent).join('/');
     const history = async (path) => { const r = await fetch('api/history?path=' + encodeURIComponent(path)); return r.ok ? r.json() : []; };
     const readAt = async (path, sha) => { const r = await fetch(`api/file-at?path=${encodeURIComponent(path)}&sha=${sha}`); if (!r.ok) throw new Error('not in that commit'); return new Uint8Array(await r.arrayBuffer()); };
-    return { kind: 'server', thumbs: true, history, readAt, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, indexed: !!mf.indexed, maxColors: mf.maxColors || null, repo: mf.repo || null, palette: mf.palette || null,
+    /** The file as committed on the checked-out branch: { status: 'ok', bytes } | { status: 'new' } (not committed yet) | { status: 'none' } (no git). */
+    const branchVersion = async (path) => { const r = await fetch(`api/file-at?path=${encodeURIComponent(path)}&sha=HEAD`); return r.ok ? { status: 'ok', bytes: new Uint8Array(await r.arrayBuffer()) } : { status: r.status === 404 ? 'new' : 'none' }; };
+    return { kind: 'server', thumbs: true, history, readAt, branchVersion, note: 'Saving writes straight to the project folder.', sprites: (mf.sprites || []).map((x) => ({ ...x })), hidden: mf.hidden || [], background: mf.background || null, groups: mf.groups || null, alpha: mf.alpha || null, tileGrid: mf.tileGrid || null, indexed: !!mf.indexed, maxColors: mf.maxColors || null, repo: mf.repo || null, palette: mf.palette || null,
       async read(path) { const r = await fetch(url(path)); if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return new Uint8Array(await r.arrayBuffer()); },
       async write(path, bytes) { const r = await fetch(url(path), { method: 'PUT', headers: { 'x-spritewright': token || '', 'content-type': 'image/png' }, body: bytes }); if (!r.ok) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); },
       async remove(path) { const r = await fetch(url(path), { method: 'DELETE', headers: { 'x-spritewright': token || '' } }); if (!r.ok && r.status !== 404) throw new Error('server said ' + r.status + ' ' + (await r.text()).slice(0, 80)); } };
@@ -1444,7 +1446,7 @@
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['lasso', 'Lasso select', 'Q', 'select'], ['wand', 'Magic wand: select by colour', 'W', 'select'], ['shade', 'Shade: lighter, right click darker', 'D'], ['gradient', 'Dither gradient: drag from the primary to the secondary colour', 'J']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
   const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S Q W', 'select a rectangle · lasso · magic wand (Shift adds, Alt subtracts; drag inside to move)'], ['D J', 'shade · dither gradient'], ['[ ]', 'brush size (pencil, eraser, shade, and the line / outline shapes)'], ['Z', 'switch between pencil and eraser'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
-    ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['P', 'pixel check: stray pixels, doubled corners, near-duplicate colours'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save (to the project folder when it can be written; edits are kept in this browser either way)'], ['Ctrl+Shift+S', 'download this sprite as a PNG'], ['Ctrl+Alt+C', 'canvas size'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
+    ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['P', 'pixel check: stray pixels, doubled corners, near-duplicate colours'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\ · Shift+\\', 'changes against the branch (dims the rest) · show the branch version while held · the last save while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save (to the project folder when it can be written; edits are kept in this browser either way)'], ['Ctrl+Shift+S', 'download this sprite as a PNG'], ['Ctrl+Alt+C', 'canvas size'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
   /* What shows behind transparent pixels. No single background suits all art (dark details vanish on the dark checker, pale
      ones on the light one), so like Aseprite, Pixelorama and Piskel the editor offers a few and remembers the choice.
      "project" is the game's own background colour from spritewright.config.json ("background": "#1a1426"). */
@@ -2003,10 +2005,23 @@
       return null;
     }
     function layersSent(d, f) { if (!f) return; if (f.delete) { S.layerFiles.delete(f.path); d.hadLayers = false; } else { S.layerFiles.add(f.path); d.hadLayers = true; } }
+    /* "Original" (hold \, the changes view, Revert) is the sprite as committed on the branch: what a commit or pull request
+       compares against. GitHub projects load that version anyway; the local server is asked for it each time a sprite is opened,
+       so it follows new commits and survives reloads. A folder in the browser cannot read git: its original is the file as loaded. */
+    async function branchBase(d) {
+      if (d.local || !S.src || !S.src.branchVersion) return;
+      const src = S.src; let v; try { v = await src.branchVersion(d.path); } catch { return; }
+      if (S.src !== src || v.status === 'none') return;
+      let img = null; if (v.status === 'ok') { try { img = await decodePng(new Blob([v.bytes], { type: 'image/png' })); } catch { return; } }
+      const was = d.base, now = img || { w: d.w, h: d.h, px: new Uint32Array(d.w * d.h) }; // not committed yet: every pixel is new
+      if (!(img && was.w === now.w && was.h === now.h && countDiff(was.px, now.px) === 0)) d.base = { w: now.w, h: now.h, px: now.px, sig: '' };
+      d.baseFrom = img ? 'branch' : 'new';
+      if (d === doc()) { status(); render(); keepSoon(); }
+    }
     async function openSprite(path) {
       if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; S.sheetK = 0; }
       if (!(await loadDoc(path))) return;
-      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit();
+      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); branchBase(d);
       // Opening a sprite reveals its folder, so navigating back to it never
       // leaves you looking at a shut door. An explicit fold still hides it.
       const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
@@ -2381,7 +2396,7 @@
       const d = doc(); g.clearRect(0, 0, view.width, view.height); g.imageSmoothingEnabled = false;
       if (!d) { const cv = $('.pf-ctx-cv'); cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); ctxHits = []; $('.pf-ctx-note').textContent = ''; return; } // nothing open: no context left over from the last project
       // holding \ shows the image as it was when this session opened it (what a pull request compares against)
-      const shown = S.peek ? { w: d.base.w, h: d.base.h, img: new ImageData(new Uint8ClampedArray(d.base.px.buffer.slice(0)), d.base.w, d.base.h) } : { w: d.w, h: d.h, img: d.imageData() };
+      const ref = S.peek === 'saved' ? d.saved : d.base, shown = S.peek ? { w: ref.w, h: ref.h, img: new ImageData(new Uint8ClampedArray(ref.px.buffer.slice(0)), ref.w, ref.h) } : { w: d.w, h: d.h, img: d.imageData() };
       const z = S.zoom, W = shown.w * z, H = shown.h * z;
       offscreen.width = shown.w; offscreen.height = shown.h; offscreen.getContext('2d').putImageData(shown.img, 0, 0);
       if (S.tile) { /* the eight neighbours, dimmed, so seams show */
@@ -2411,7 +2426,7 @@
         if (z >= 3 && cells.length < 20000) { g.strokeStyle = '#e08cff'; g.lineWidth = Math.max(1, Math.floor(z / 8)); for (const i of cells) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1); g.lineWidth = 1; }
       }
       if (S.ctx) drawContext(d);
-      if (S.peek) { g.fillStyle = 'rgba(224,140,255,.9)'; g.font = `${Math.round(12 * (window.devicePixelRatio || 1))}px ${getComputedStyle(root).getPropertyValue('--pf-mono') || 'monospace'}`; g.fillText('BEFORE', S.ox, S.oy - 8); }
+      if (S.peek) { g.fillStyle = 'rgba(224,140,255,.9)'; g.font = `${Math.round(12 * (window.devicePixelRatio || 1))}px ${getComputedStyle(root).getPropertyValue('--pf-mono') || 'monospace'}`; g.fillText(peekLabel(d), S.ox, S.oy - 8); }
       const fl = S.float;
       if (fl) { const t = document.createElement('canvas'); t.width = fl.w; t.height = fl.h; t.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(fl.px.buffer.slice(0)), fl.w, fl.h), 0, 0); g.drawImage(t, S.ox + fl.x * z, S.oy + fl.y * z, fl.w * z, fl.h * z); }
       if (overlay) { g.globalAlpha = 0.9; for (const [x, y] of overlay.pts) { g.fillStyle = isClear(overlay.value) ? 'rgba(255,255,255,.35)' : toHex(overlay.value); g.fillRect(S.ox + x * z, S.oy + y * z, z, z); } g.globalAlpha = 1; }
@@ -2520,7 +2535,7 @@
       const d = doc();
       const where = !d ? '' : savesOut(d) ? (d.unsaved ? ' · <span class="pf-bad">unsaved</span>' + (keeping() && isKept(d) ? ' (kept in this browser meanwhile)' : '') : d.changed ? ' · saved, not yet in a PR' : '')
         : needsKeep(d) ? (!keeping() ? ' · <span class="pf-bad">not kept: download it before closing</span>' : isKept(d) ? ' · <span class="pf-ok">kept in this browser</span>' + (d.changed && S.src && S.src.kind === 'github' ? ', not in a PR yet' : '') : ' · saving…') : '';
-      setHtml($('.pf-s-name'), d ? `<b>${esc(d.path)}</b>${where}${d.changed ? ` · <span class="pf-s-peek" title="Press and hold (or hold \\) to see the original">${d.changedPixels()} px changed · hold \\ for before</span>` : ''}` : 'No sprite open');
+      setHtml($('.pf-s-name'), d ? `<b>${esc(d.path)}</b>${where}${d.changed ? ` · <span class="pf-s-peek" title="Press and hold (or hold \\) to see it as it is on the branch; Shift+\\ shows the last save">${d.changedPixels()} px changed · hold \\ for before</span>` : ''}` : 'No sprite open');
       setHtml($('.pf-s-info'), d ? `<button type="button" class="pf-s-size" title="Canvas size (Ctrl+Alt+C)">${d.w}×${d.h}</button> · zoom ${S.zoom}×` : '');
       const nt = $('.pf-s-note'); if (nt.textContent !== (S.notice || '')) { nt.textContent = S.notice || ''; nt.title = S.notice || ''; }
       $('.pf-zl').textContent = S.zoom + '×'; $('.pf-s-sel').textContent = S.sel ? `selection ${S.sel.w}×${S.sel.h}${S.float ? ' · floating' : ''}` : '';
@@ -3383,8 +3398,10 @@
     $$('.pf-ctx-scale button').forEach((b) => (b.onclick = () => { S.ctxScale = +b.dataset.scale; segOn('.pf-ctx-scale', b); render(); }));
     try { if (localStorage.getItem('pf:ctx') === '1') { S.ctx = true; $('.pf-context').classList.add('on'); $('.pf-ctx').hidden = false; } } catch { /* off */ }
     $('.pf-changes').onclick = (e) => { S.changes = !S.changes; e.currentTarget.classList.toggle('on', S.changes); render(); };
+    /** What the held view shows: \ the original (the branch version where it is known), Shift+\ the last save. */
+    const peekLabel = (d) => (S.peek === 'saved' ? 'LAST SAVE' : d.baseFrom === 'new' ? 'BRANCH: NOT COMMITTED YET' : d.baseFrom === 'branch' || (S.src && S.src.kind === 'github') ? 'ON THE BRANCH' : 'AS OPENED');
     const peek = (on) => { if (S.peek === on || !doc()) return; S.peek = on; render(); };
-    $('.pf-status').addEventListener('pointerdown', (e) => { if (e.target.closest('.pf-s-peek')) { e.preventDefault(); peek(true); } });
+    $('.pf-status').addEventListener('pointerdown', (e) => { if (e.target.closest('.pf-s-peek')) { e.preventDefault(); peek('base'); } });
     const peekOff = () => peek(false); window.addEventListener('pointerup', peekOff);
     $('.pf-swap').onclick = () => { [S.color, S.color2] = [S.color2, S.color]; renderColors(); swatches(); }; // only the colours: Z is the pencil / eraser switch
     /* The colour popover opens from the swatch under the tools, next to where you draw. */
@@ -3783,12 +3800,12 @@
         const t = TOOLS.find((x) => x[2].toLowerCase() === k); if (t) setTool(t[0]);
         else if (k === 'm') $('.pf-mx').click(); else if (k === '+' || k === '=') $('.pf-zin').click(); else if (k === '-') $('.pf-zout').click(); else if (k === '0') $('.pf-fit').click(); else if (k === '#') $('.pf-grid').click();
         else if (k === 'x') $('.pf-swap').click(); else if (k === 'z') setTool(S.tool === 'erase' ? 'pen' : 'erase'); else if (k === '[') setSize(S.size - 1); else if (k === ']') setSize(S.size + 1);
-        else if (k === 'k') cycleBg(); else if (k === 'y') $('.pf-vision').click(); else if (k === 'p') $('.pf-lint').click(); else if (k === 'h') toggleRef(); else if (k === 'c') $('.pf-changes').click(); else if (k === 'v') $('.pf-context').click(); else if (e.key === '\\') { e.preventDefault(); peek(true); } else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
+        else if (k === 'k') cycleBg(); else if (k === 'y') $('.pf-vision').click(); else if (k === 'p') $('.pf-lint').click(); else if (k === 'h') toggleRef(); else if (k === 'c') $('.pf-changes').click(); else if (k === 'v') $('.pf-context').click(); else if (e.code === 'Backslash' || e.key === '\\' || e.key === '|') { e.preventDefault(); peek(e.shiftKey ? 'saved' : 'base'); } else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
         else if (k === 't') $('.pf-tile').click(); else if (k === 'n') $('.pf-onion').click(); else if (e.key === '?') $('.pf-help').click();
         else if (k === ' ') { space = true; e.preventDefault(); }
       }
     }
-    const keyup = (e) => { if (e.key === ' ') space = false; if (e.key === '\\') peek(false); };
+    const keyup = (e) => { if (e.key === ' ') space = false; if (e.code === 'Backslash' || e.key === '\\' || e.key === '|') peek(false); };
     let pasteSoon = 0;
     async function onPaste(e) {
       if (!root.isConnected || root.querySelector('dialog[open]') || !doc()) return;

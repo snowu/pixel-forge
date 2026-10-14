@@ -1589,6 +1589,34 @@ section('layers: draw on a layer, save writes the flat PNG and name.layers.png, 
   await lp.close(); await s4.close();
 }
 
+section('the original is the branch version: hold \\ shows what is committed, Shift+\\ the last save, through reloads');
+{
+  const r5 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-branch-')), g = (...a) => spawnSync('git', ['-C', r5, ...a], { encoding: 'utf8' });
+  const solid = (c) => fromRows(['cccc', 'cccc', 'cccc', 'cccc'], { c }).png;
+  fs.writeFileSync(path.join(r5, 'gem.png'), solid([255, 0, 0]));
+  g('init', '-q'); g('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.'); g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'red gem');
+  fs.writeFileSync(path.join(r5, 'gem.png'), solid([0, 255, 0])); // saved green, never committed
+  fs.writeFileSync(path.join(r5, 'fresh.png'), solid([0, 0, 255])); // not committed at all
+  const s5 = createServer({ root: r5, port: 0 }), b5 = await s5.listen(), bp = await ctx.newPage(); const berr = []; bp.on('pageerror', (e) => berr.push(e.message));
+  const A = (fn, arg) => bp.evaluate(fn, arg), cur = () => A(() => { const a = document.getElementById('app').__pf, d = a.current, S = a.state; return { base: d.base.px[0], saved: d.saved.px[0], now: d.flat()[0], changed: d.changed, from: d.baseFrom || null, peek: S.peek }; });
+  const RED = 0xff0000ff >>> 0, GREEN = 0xff00ff00 >>> 0;
+  await bp.goto(b5 + '?auth=off'); await bp.waitForSelector('.pf-item'); await A(() => document.getElementById('app').__pf.open('gem.png'));
+  await until(async () => (await cur()).from === 'branch');
+  { const c = await cur(); ok(c.base === RED && c.now === GREEN && c.saved === GREEN && c.changed, 'a sprite saved but not committed opens against the committed version: ' + JSON.stringify(c)); }
+  await bp.reload(); await bp.waitForSelector('.pf-item'); await A(() => document.getElementById('app').__pf.open('gem.png')); await until(async () => (await cur()).from === 'branch');
+  ok((await cur()).base === RED, 'and still after a reload (the original no longer drifts to the last save)');
+  await bp.keyboard.down('\\'); ok((await cur()).peek === 'base', 'hold \\ shows the branch version'); await bp.keyboard.up('\\'); ok(!(await cur()).peek, 'and lets go');
+  await bp.keyboard.down('Shift'); await bp.keyboard.down('Backslash'); ok((await cur()).peek === 'saved', 'Shift+\\ shows the last save');
+  await bp.keyboard.up('Backslash'); await bp.keyboard.up('Shift'); ok(!(await cur()).peek, 'and lets go');
+  g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'green gem');
+  await A(() => document.getElementById('app').__pf.open('fresh.png')); await A(() => document.getElementById('app').__pf.open('gem.png')); await until(async () => !(await cur()).changed);
+  ok((await cur()).base === GREEN && !(await cur()).changed, 'after a commit, opening the sprite again follows the branch: nothing changed');
+  await A(() => document.getElementById('app').__pf.open('fresh.png')); await until(async () => (await cur()).from === 'new');
+  { const c = await cur(); ok(c.from === 'new' && c.base === 0 && c.changed, 'a sprite not committed yet counts as all new: ' + JSON.stringify(c)); }
+  ok(berr.length === 0, 'no page errors ' + berr.join('|'));
+  await bp.close(); await s5.close();
+}
+
 ok(errors.length === 0, 'no page errors ' + JSON.stringify(errors.slice(0, 3)));
 await browser.close(); await srv.close();
 console.log(`\n${pass} passed, ${fail} failed`);

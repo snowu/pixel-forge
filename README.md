@@ -125,7 +125,7 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
 ## Reviewing your work
 
 - **Context** (`V`): a strip under the canvas shows the sprite at game scale (1×–4×), standing next to up to 8 other sprites, redrawn live as you draw; click one of them to open it. Use it to check size, silhouette and contrast the way a player sees them. With `groups` in the project config, the neighbours are the sprites it is actually seen with (the enemies of the same floor, the other blades and the blade held in first person…), on the group's background; the picker in the strip switches between the groups that hold the sprite (or its family) and **Same folder**. Without groups, it shows sprites from the same folder, nearest by name.
-- **Changes** (`C`): dims every pixel you have not touched and outlines the ones that differ from the image as you opened it. Hold `\` (or press and hold the "px changed" note in the status bar) to see the original. The pull request dialog shows each sprite before → after.
+- **Changes** (`C`): dims every pixel you have not touched and outlines the ones that differ from the original: the sprite as committed on the branch, which is what a commit or pull request compares against. Hold `\` (or press and hold the "px changed" note in the status bar) to see that version, and `Shift+\` to see your last save. With the local server the branch version is read from git each time a sprite is opened, so it survives reloads and follows new commits; a sprite not committed yet counts as all new. A folder opened in the browser cannot read git, so there the original is the file as it was opened. The pull request dialog shows each sprite before → after.
 
 ## More checks while you draw
 
