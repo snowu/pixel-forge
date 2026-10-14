@@ -634,7 +634,10 @@
       }
       return o.repo && o.baseSha && o.commit ? `**${f.path}**\n\nBefore | After\n--- | ---\n<img src="${raw(o.repo, o.baseSha, (o.prefix || '') + f.path)}" width="128"> | <img src="${raw(o.headRepo || o.repo, o.commit, (o.prefix || '') + f.path)}" width="128">` : '';
     }).filter(Boolean).join('\n\n');
-    return `${o.description ? o.description + '\n\n' : ''}| Sprite | Size | Pixels changed |\n| --- | --- | --- |\n${rows}\n${imgs ? '\n' + imgs + '\n' : ''}\n_Proposed with spritewright. GitHub shows PNG changes in the "Files changed" tab with 2-up, swipe and onion-skin views._`;
+    // review notes pinned to pixels: [{ path, items: [{ x, y, text }] }]
+    const notes = (o.notes || []).filter((n) => n.items && n.items.some((it) => String(it.text || '').trim()));
+    const notesMd = notes.length ? '\n### Notes\n\n' + notes.map((n) => `**${n.path}**\n\n` + n.items.filter((it) => String(it.text || '').trim()).map((it, i) => `${i + 1}. (${it.x}, ${it.y}) ${String(it.text).trim().replace(/\n+/g, ' ')}`).join('\n')).join('\n\n') + '\n' : '';
+    return `${o.description ? o.description + '\n\n' : ''}| Sprite | Size | Pixels changed |\n| --- | --- | --- |\n${rows}\n${imgs ? '\n' + imgs + '\n' : ''}${notesMd}\n_Proposed with spritewright. GitHub shows PNG changes in the "Files changed" tab with 2-up, swipe and onion-skin views._`;
   }
 
 
@@ -1165,6 +1168,9 @@
 .pf-ramp{display:flex;flex-direction:column;gap:6px}.pf-ramp[hidden]{display:none}.pf .pf-ramp .pf-sw button{width:34px;height:24px}
 .pf-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .pf-ccount{font-weight:400;letter-spacing:0;text-transform:none;color:var(--pf-muted);margin-left:4px}.pf-ccount.over{color:var(--pf-bad)}
+.pf-notes-n{font-weight:400;letter-spacing:0;text-transform:none;color:var(--pf-muted);margin-left:4px}
+.pf-note-list{display:flex;flex-direction:column;gap:4px}.pf-note-item{display:flex;gap:6px;align-items:center}.pf-note-item b{flex:none;min-width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;background:var(--pf-accent2);color:var(--pf-on);font-size:11px}
+.pf .pf-note-item input{flex:1;min-width:0;min-height:26px;padding:3px 6px}.pf .pf-note-item button{min-height:26px;padding:0 7px}.pf-note-add.on{background:rgba(224,140,255,.18)!important;color:var(--pf-accent2)!important}
 /* Loading a project: a pixel spinner in the sprite list, eight squares round a ring lighting up in turn (steps, no smoothing). */
 .pf-loading{display:flex;flex-direction:column;align-items:center;gap:14px;padding:36px 12px;text-align:center;color:var(--pf-muted)}.pf-loading b{color:var(--pf-ink);font-weight:400;word-break:break-all}
 .pf-spin{display:grid;grid-template-columns:repeat(3,9px);grid-template-rows:repeat(3,9px);gap:2px}
@@ -1568,6 +1574,9 @@
           <div class="pf-row pf-sheet-row"><label>frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label></div>
           <div class="pf-row"><label>fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button><button class="pf-sheet-out" title="Download the animation as one sprite sheet PNG with a JSON of its frames and timings (Aseprite json-array format, read by most engines)">Sheet + JSON</button></div>
           <canvas class="pf-p2"></canvas></div>
+        <div class="pf-panel pf-notes"><h4>Notes <span class="pf-notes-n"></span></h4><div class="pf-note-list"></div>
+          <div class="pf-row"><button class="pf-note-add" title="Pin a note to a pixel: click here, then on the canvas">+ note</button></div>
+          <div class="pf-note">Pinned to a pixel. They go into the description of your next pull request, then clear.</div></div>
         <div class="pf-panel pf-refpanel"><h4>Reference</h4>
           <div class="pf-row"><button class="pf-ref-load" title="Any image: concept art, a photo, a screenshot of the game">Image…</button><select class="pf-ref-sprite" aria-label="Or a sprite from this project"><option value="">or a sprite…</option></select><input type="file" class="pf-ref-file" accept="image/*" hidden></div>
           <div class="pf-ref-on" hidden><div class="pf-note pf-ref-name"></div>
@@ -1868,7 +1877,7 @@
       // leaves you looking at a shut door. An explicit fold still hides it.
       const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
       if (folded && folded.has(dir)) { folded.delete(dir); saveFolded(); }
-      renderList(); renderColors(); status(); render(); drawPreview(); renderFamily(); resetHistory();
+      S.placingNote = false; renderList(); renderColors(); status(); render(); drawPreview(); renderFamily(); resetHistory(); renderNotes();
     }
     /** Add an image that is not in the project list. inProject = Save should write it to that path (needs a source that can write). */
     function addLocal(name, w, h, px, inProject, isNew) {
@@ -2294,6 +2303,12 @@
         g.lineWidth = 1; const tag = $('.pf-lint-tag'), parts = [[L.stray.length, 'stray', '#ffb000'], [L.doubles.length, 'doubled corner', '#ff5ac8'], [L.near.length, 'near-duplicate colour', '#4fd8ff']].filter((p) => p[0]);
         tag.innerHTML = parts.length ? parts.map(([n, what, col]) => `<span style="color:${col}"><i></i>${n} ${what}${n > 1 ? 's' : ''}</span>`).join('') : '<span class="ok">no stray pixels, doubled corners or near-duplicate colours</span>';
       }
+      const pins = notesOf(d);
+      if (pins.length) { // numbered pins, centred on their pixel
+        const r = Math.max(7, Math.min(12, z * 0.45)); g.font = `700 ${Math.round(r * 1.1)}px ${getComputedStyle(root).getPropertyValue('--pf-mono') || 'monospace'}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        pins.forEach((n, i) => { const cx = S.ox + (n.x + .5) * z, cy = S.oy + (n.y + .5) * z; g.fillStyle = '#e08cff'; g.strokeStyle = '#12081f'; g.lineWidth = 2; g.beginPath(); g.rect(cx - r, cy - r, r * 2, r * 2); g.fill(); g.stroke(); g.fillStyle = '#12081f'; g.fillText(String(i + 1), cx, cy + 1); });
+        g.textAlign = 'start'; g.textBaseline = 'alphabetic'; g.lineWidth = 1;
+      }
       if (S.sel) { /* marching ants, without the marching: round the rectangle, or along the edges of a masked selection */
         const r = S.sel; g.beginPath();
         if (!r.mask) g.rect(S.ox + r.x * z + .5, S.oy + r.y * z + .5, r.w * z - 1, r.h * z - 1);
@@ -2498,6 +2513,7 @@
       if (e.button === 1 || space || (e.button === 0 && e.shiftKey && e.altKey)) { pan = { x: e.clientX, y: e.clientY, ox: S.ox, oy: S.oy }; return; }
       const c = toCell(e), right = e.button === 2, inb = !!cell(d, c.x, c.y);
       let tool = S.tool;
+      if (S.placingNote) { if (inb) addNote(d, c.x, c.y); return; } // + note: this click pins it here, and draws nothing
       if (e.altKey && !isSelTool(tool)) tool = 'pick';
       if (tool === 'pick') { pickAt(d, c, right); return; }
       if (isSelTool(tool)) {
@@ -2742,12 +2758,13 @@
       try {
         const token = (S.auth.token && !typed ? await authToken() : typed) || '';
         if (!token) throw new Error(authBase ? 'Sign in with GitHub first.' : 'Paste a GitHub token first.');
-        const { files, previews } = await filesAndPreviews(changed), cfgOut = pendingConfig();
+        const { files, previews } = await filesAndPreviews(changed), cfgOut = pendingConfig(), sentNotes = allNotes();
         const prefix = (S.meta.repo && S.meta.repo.prefix) || '', desc = [$('.pf-pr-desc').value.trim(), cfgOut && configNote(cfgOut)].filter(Boolean).join('\n\n');
         const res = await createPullRequest({ token, repo, base: $('.pf-pr-base').value.trim() || undefined, prefix, title, apiBase: O.apiBase, files: files.map((f) => ({ path: f.path, blob: f.blob })).concat(cfgOut ? [configFile(cfgOut)] : []), previews, branch: 'art/' + slug(title) + '-' + Date.now().toString(36),
-          body: (ctx) => prBody({ files, repo, prefix, description: desc, baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha, previewDir: ctx.previewDir }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
+          body: (ctx) => prBody({ files, repo, prefix, description: desc, notes: sentNotes, baseSha: ctx.baseSha, commit: ctx.commit, headRepo: ctx.headRepo, previewSha: ctx.previewSha, previewDir: ctx.previewDir }), onProgress: (m) => { log.textContent += m + '\n'; log.scrollTop = log.scrollHeight; } });
         log.innerHTML = `${esc(log.textContent)}Done${res.forked ? ' (from your fork)' : ''}: <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">${esc(res.url)}</a>`;
         markPushed(changed); // the work now lives in the pull request
+        if (sentNotes.length) clearSentNotes(sentNotes);
         if (cfgOut) writeFolders(S.src, { ...cfgOut, sent: true });
         keepSoon(); status(); renderList();
       } catch (e) { log.textContent += '\n' + e.message; if (/rejected the (sign-in|token)/.test(e.message) && S.auth.token) signOut(); } finally { go.disabled = false; }
@@ -2855,10 +2872,10 @@
       const gh = S.meta.repo || {};
       if (btn) btn.disabled = true;
       try {
-        const files = lp.branch === branch ? lp.files : [];
+        const files = lp.branch === branch ? lp.files : [], sentNotes = allNotes();
         const res = await openPull({ token, repo: gh.slug, branch, headOwner: work.headOwner || undefined, base: work.base || gh.base || undefined, title: $('.pf-commit-msg').value.trim() || lp.message || branch,
-          body: prBody({ files, description: '', repo: gh.slug, baseSha: lp.baseSha || undefined, commit: lp.commit || undefined, headRepo: work.headRepo || undefined, prefix: gh.prefix || '' }), apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
-        S.work = { ...work, branch, pr: { number: res.number, url: res.url } }; saveWork();
+          body: prBody({ files, notes: sentNotes, description: '', repo: gh.slug, baseSha: lp.baseSha || undefined, commit: lp.commit || undefined, headRepo: work.headRepo || undefined, prefix: gh.prefix || '' }), apiBase: O.apiBase, onProgress: (m) => { note.textContent = m; } });
+        S.work = { ...work, branch, pr: { number: res.number, url: res.url } }; saveWork(); if (sentNotes.length) clearSentNotes(sentNotes);
         note.innerHTML = `Pull request <a href="${esc(res.url)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">#${res.number}</a> opened for ${esc(branch)}.`;
       } catch (e) { note.textContent = e.message; } finally { if (btn) btn.disabled = false; }
     }
@@ -3290,6 +3307,22 @@
       lintMemo = { d, w: d.w, px: d.px.slice(), res: lintPixels(d.px, d.w, d.h) }; return lintMemo.res;
     }
     $('.pf-lint').onclick = (e) => { S.lint = !S.lint; e.currentTarget.classList.toggle('on', S.lint); $('.pf-lint-tag').hidden = !S.lint; render(); };
+    /* ---------- review notes: pinned to a pixel of a sprite, kept in this browser, sent with the next pull request ---------- */
+    const notesKey = (path) => 'pf:notes:' + ((S.meta && S.meta.repo && S.meta.repo.slug) || (S.src && (S.src.name || S.src.kind)) || '') + ':' + path;
+    function notesOf(d) { if (!d) return []; try { return JSON.parse(localStorage.getItem(notesKey(d.path)) || '[]'); } catch { return []; } }
+    function setNotes(path, list) { try { if (list.length) localStorage.setItem(notesKey(path), JSON.stringify(list)); else localStorage.removeItem(notesKey(path)); } catch { /* this visit */ } }
+    /** Every sprite of this project with notes: [{ path, items }]. */
+    function allNotes() { const out = []; for (const sp of S.sprites) { try { const items = JSON.parse(localStorage.getItem(notesKey(sp.path)) || '[]'); if (items.length) out.push({ path: sp.path, items }); } catch { /* skip */ } } return out; }
+    function clearSentNotes(list) { for (const n of list) setNotes(n.path, []); renderNotes(); render(); }
+    function addNote(d, x, y) { const list = notesOf(d); list.push({ x, y, text: '' }); setNotes(d.path, list); S.placingNote = false; renderNotes(); render(); const ins = $$('.pf-note-item input'); if (ins.length) ins[ins.length - 1].focus(); }
+    function renderNotes() {
+      const d = doc(), list = notesOf(d); $('.pf-note-add').classList.toggle('on', !!S.placingNote); $('.pf-note-add').disabled = !d;
+      $('.pf-notes-n').textContent = list.length ? '· ' + list.length : '';
+      $('.pf-note-list').innerHTML = list.map((n, i) => `<div class="pf-note-item"><b>${i + 1}</b><input type="text" data-i="${i}" value="${esc(n.text)}" placeholder="what to look at (${n.x}, ${n.y})" aria-label="Note ${i + 1}"><button type="button" class="pf-note-del" data-i="${i}" title="Remove this note">✕</button></div>`).join('');
+    }
+    $('.pf-note-add').onclick = () => { S.placingNote = !S.placingNote; renderNotes(); if (S.placingNote) note('Click the pixel the note is about.'); };
+    $('.pf-note-list').addEventListener('input', (e) => { const i = e.target.dataset.i; if (i == null) return; const d = doc(), list = notesOf(d); if (!list[i]) return; list[i].text = e.target.value; setNotes(d.path, list); });
+    $('.pf-note-list').addEventListener('click', (e) => { const b = e.target.closest('.pf-note-del'); if (!b) return; const d = doc(), list = notesOf(d); list.splice(+b.dataset.i, 1); setNotes(d.path, list); renderNotes(); render(); });
     $('.pf-grid').onclick = (e) => { S.grid = !S.grid; e.currentTarget.classList.toggle('on', S.grid); render(); };
     /* Tile grid: 0 (off) or a size in pixels (sprite sheets already show their frames). The project's config sets the default
        ("tileGrid": 16); a choice made here is remembered per project. */

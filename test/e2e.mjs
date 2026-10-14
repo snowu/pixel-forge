@@ -255,6 +255,25 @@ section('indexed palette mode');
   await ictx.close();
 }
 
+section('review notes');
+{
+  const nctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
+  const np = await nctx.newPage(); const nerr = []; np.on('pageerror', (e) => nerr.push(e.message));
+  await np.goto(base + '?auth=off'); await np.waitForSelector('.pf-item'); await np.locator('.pf-item', { hasText: 'slime.png' }).click(); await np.waitForTimeout(250);
+  const before = await np.evaluate(() => [...document.getElementById('app').__pf.current.px]);
+  await np.keyboard.press('b'); await np.locator('.pf-note-add').click();
+  ok(await np.locator('.pf-note-add.on').count() === 1, '+ note waits for a click on the canvas');
+  const b = await np.locator('.pf-view').boundingBox(), st = await np.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { ox: S.ox, oy: S.oy, z: S.zoom, k: v.width / v.getBoundingClientRect().width }; });
+  await np.mouse.click(b.x + (st.ox + 5.5 * st.z) / st.k, b.y + (st.oy + 6.5 * st.z) / st.k);
+  ok(JSON.stringify(await np.evaluate(() => [...document.getElementById('app').__pf.current.px])) === JSON.stringify(before), 'that click pins the note and draws nothing');
+  ok(await np.locator('.pf-note-item').count() === 1 && /\(5, 6\)/.test(await np.locator('.pf-note-item input').getAttribute('placeholder')), 'the note is at that pixel, ready to type');
+  await np.locator('.pf-note-item input').fill('too dark here'); await np.reload(); await np.waitForSelector('.pf-item'); await np.locator('.pf-item', { hasText: 'slime.png' }).click(); await np.waitForTimeout(250);
+  ok((await np.locator('.pf-note-item input').inputValue()) === 'too dark here', 'notes are kept in this browser');
+  await np.locator('.pf-note-del').click(); ok(await np.locator('.pf-note-item').count() === 0, '✕ removes one');
+  ok(nerr.length === 0, 'no page errors ' + nerr.join('|'));
+  await nctx.close();
+}
+
 section('more tools: brush size, dither, ellipse, shading, selection, tile, outline, ramps');
 {
   const C = (await import('../spritewright.js'), globalThis.Spritewright.core);
@@ -553,6 +572,9 @@ await ctx.route('https://api.github.com/**', async (route) => {
 });
 await page.locator('.pf-item', { hasText: 'slime.png' }).click(); await page.waitForTimeout(200);
 ok(!(await page.locator('.pf-prbtn').isDisabled()), 'Propose PR is enabled because sprites changed this session');
+await page.locator('.pf-note-add').click();
+{ const b = await page.locator('.pf-view').boundingBox(); const st = await page.evaluate(() => { const S = document.getElementById('app').__pf.state, v = document.querySelector('.pf-view'); return { ox: S.ox, oy: S.oy, z: S.zoom, k: v.width / v.getBoundingClientRect().width }; }); await page.mouse.click(b.x + (st.ox + 3.5 * st.z) / st.k, b.y + (st.oy + 2.5 * st.z) / st.k); }
+await page.locator('.pf-note-item input').fill('left eye: one pixel lower?');
 await page.locator('.pf-prbtn').click(); await page.waitForSelector('.pf-dlg-pr[open]');
 ok((await page.locator('.pf-pr-repo').inputValue()) === 'me/game', 'the repository is filled in from the project');
 const changedNames = await page.locator('.pf-chg > span').allInnerTexts(); ok(changedNames.length === 2 && changedNames.some((t) => t.includes('slime.png')) && changedNames.some((t) => t.includes('gem.png')), 'the dialog lists exactly the changed sprites (' + changedNames.map((t) => t.split('\n')[0]).join(', ') + ')');
@@ -572,6 +594,8 @@ ok(blobs.length === 6 && tree.tree.map((t) => t.path).sort().join() === 'art/ite
 const slimeBlob = decodePng(Buffer.from(blobs[tree.tree.findIndex((t) => t.path === 'art/slime.png')].body.content, 'base64'));
 ok(slimeBlob.w === 16 && slimeBlob.rgba[0] === 255 && slimeBlob.rgba[3] === 255, 'the committed PNG contains the edit');
 const prCall = calls.find((c) => c.p === '/repos/me/game/pulls'); ok(prCall.body.title === 'Improve slime' && /Redder eyes/.test(prCall.body.body) && /pixels changed/i.test(prCall.body.body) && /raw\.githubusercontent\.com\/me\/game\/c1\/\d-after\.png" width="256"/.test(prCall.body.body) && prCall.body.head.startsWith('art/improve-slime-') && prCall.body.base === 'main', 'PR title, body (description + table) and branch are right');
+ok(/### Notes\n\n\*\*[^*]+\*\*\n\n1\. \(3, 2\) left eye: one pixel lower\?/.test(prCall.body.body), 'a note pinned to a pixel goes into the pull request description');
+ok(await page.locator('.pf-note-item').count() === 0, 'and clears once it is sent');
 await page.locator('.pf-dlg-pr button[value=cancel]').click();
 ok(await page.locator('.pf-prbtn').isDisabled(), 'after the PR, nothing is pending any more');
 ok(await page.evaluate(() => sessionStorage.getItem('pf:token')) !== null && (await page.evaluate(() => localStorage.getItem('pf:token'))) === null, 'the token is kept for the tab only unless "remember" is ticked');

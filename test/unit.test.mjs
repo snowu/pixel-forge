@@ -854,3 +854,10 @@ test('sheetEdit / packSheet / sheetJson / holdFrame: reorder, copy and delete fr
   assert.deepEqual(j.frames.map((f) => [f.filename, f.frame.x, f.duration]), [['a_0', 0, 100], ['a_1', 2, 250]]); assert.deepEqual(j.meta.size, { w: 5, h: 4 });
   assert.deepEqual([0, 1, 2, 3, 4, 5].map((t) => C.holdFrame(t, [1, 2], 3)), [0, 1, 1, 2, 0, 1], 'frame 2 holds for two ticks');
 });
+
+/* ---------- review notes in the pull request ---------- */
+test('prBody: review notes become a Notes section, empty ones left out', () => {
+  const body = PF.prBody({ files: [{ path: 'art/a.png', w: 8, h: 8, pixels: 3 }], notes: [{ path: 'art/a.png', items: [{ x: 2, y: 5, text: 'eye is 1px too high' }, { x: 0, y: 0, text: '  ' }] }, { path: 'art/b.png', items: [{ x: 1, y: 1, text: 'needs\nan outline' }] }] });
+  assert.match(body, /### Notes\n\n\*\*art\/a\.png\*\*\n\n1\. \(2, 5\) eye is 1px too high\n\n\*\*art\/b\.png\*\*\n\n1\. \(1, 1\) needs an outline\n/);
+  assert.doesNotMatch(PF.prBody({ files: [{ path: 'a.png', w: 1, h: 1, pixels: 1 }], notes: [{ path: 'a.png', items: [{ x: 0, y: 0, text: '' }] }] }), /Notes/, 'no section for blank notes');
+});
