@@ -298,6 +298,49 @@
   }
   /** Combine whole-image masks: 'add', 'sub' (a without b), or replace. */
   const combineMasks = (a, b, op) => (op === 'add' ? a.map((v, i) => v | b[i]) : op === 'sub' ? a.map((v, i) => (v && !b[i] ? 1 : 0)) : b);
+  /* Pixel lint: the mistakes pixel-art critique points out first, found mechanically and kept conservative (a false alarm
+     teaches people to ignore the overlay).
+       stray   dust: an opaque pixel alone on a clear background, or a hole: a clear pixel with all 8 neighbours one colour.
+               Specks of one colour inside another are left alone (texture grain, highlights)
+       double  the extra corner of a one-pixel line: of its four direct neighbours exactly two share its colour, one beside and one above or below,
+               so the line would still join diagonally without it (what "clean lines" removes while drawing). Only inside a thin
+               1:1 staircase (an arm turns back the other way), when neither arm runs on straight, and when none of the three
+               is part of a solid 2x2 of that colour, so box corners, shading regions and thick lines are left alone
+       near    two colours so close they are probably one colour by accident; the rarer one's pixels are marked */
+  function lintPixels(px, w, h) {
+    const stray = [], doubles = [], at = (x, y) => (x >= 0 && y >= 0 && x < w && y < h ? px[y * w + x] : undefined);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const v = px[y * w + x], counts = new Map(); let same = 0, n = 0;
+      const sameAt = (dx, dy) => { const u = at(x + dx, y + dy); return u !== undefined && samePxL(u, v); };
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue; const u = at(x + dx, y + dy) ?? 0; n++; // past the edge counts as clear, like the sprite's surroundings
+        if (samePxL(u, v)) same++; else { const k = isClear(u) ? 0 : u; counts.set(k, (counts.get(k) || 0) + 1); }
+      }
+      // dust (an opaque pixel alone on clear) or a hole (a clear pixel inside one colour); specks of one colour inside another
+      // are left alone, they are usually texture or a highlight on purpose
+      if (!same && Math.max(0, ...counts.values()) === 8 && (isClear(v) || counts.has(0))) { stray.push(y * w + x); continue; }
+      if (!isClear(v) && sameAt(-1, 0) + sameAt(1, 0) + sameAt(0, -1) + sameAt(0, 1) === 2) {
+        const hx = sameAt(-1, 0) ? -1 : sameAt(1, 0) ? 1 : 0, vy = sameAt(0, -1) ? -1 : sameAt(0, 1) ? 1 : 0;
+        // a corner that runs on straight both ways is a real 90° corner (a box outline); a step in a jagged line is not
+        // part of a solid 2x2 of its colour = a region, not a line
+        const block = (bx, by) => [[0, 0], [1, 0], [0, 1], [1, 1]].some(([ox, oy]) => [[0, 0], [1, 0], [0, 1], [1, 1]].every(([qx, qy]) => { const u = at(bx - ox + qx, by - oy + qy); return u !== undefined && samePxL(u, v); }));
+        const thin = same <= 4 && !block(x, y) && !block(x + hx, y) && !block(x, y + vy), stair = sameAt(hx, -vy) || sameAt(-hx, vy), straight = sameAt(2 * hx, 0) || sameAt(0, 2 * vy);
+        if (hx && vy && !sameAt(hx, vy) && thin && stair && !straight) doubles.push(y * w + x);
+      }
+    }
+    const tally = new Map(); for (const v of px) if (!isClear(v)) tally.set(v, (tally.get(v) || 0) + 1);
+    const near = [], nearPx = [];
+    if (tally.size <= 256) {
+      const cols = [...tally.keys()];
+      for (let i = 0; i < cols.length; i++) for (let j = i + 1; j < cols.length; j++) {
+        const a = unpack(cols[i]), b = unpack(cols[j]), dist = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]);
+        if (dist <= 10) { const [keep, odd] = tally.get(cols[i]) >= tally.get(cols[j]) ? [cols[i], cols[j]] : [cols[j], cols[i]]; near.push({ keep, odd, n: tally.get(odd) }); }
+      }
+      const odd = new Set(near.map((x) => x.odd)); px.forEach((v, i) => { if (odd.has(v)) nearPx.push(i); });
+    }
+    return { stray, doubles, near, nearPx };
+  }
+  const samePxL = (a, b) => a === b || (isClear(a) && isClear(b));
   /** Normalise a drag between two cells into a rectangle clipped to the image (null when it misses the image). */
   function rectBetween(a, b, w, h) {
     const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y)), x1 = Math.min(w - 1, Math.max(a.x, b.x)), y1 = Math.min(h - 1, Math.max(a.y, b.y));
@@ -984,6 +1027,7 @@
 .pf-ctx-bar{display:flex;gap:10px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--pf-line)}.pf .pf-ctx-bar .pf-seg button{min-height:24px;padding:1px 8px}.pf .pf-ctx-bar .pf-ctx-group{width:auto;max-width:260px;min-height:24px;padding:1px 6px;flex:0 1 auto;min-width:0;text-overflow:ellipsis}.pf-ctx-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .pf-ctx-cv{display:block;width:100%;height:150px;image-rendering:pixelated}
 .pf-fam-tools{margin-left:auto;display:inline-flex;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11.5px}
+.pf-lint-tag{position:absolute;right:14px;top:12px;display:flex;gap:10px;font-size:11px;padding:3px 8px;background:rgba(14,9,24,.88);border:1px solid var(--pf-line2);color:var(--pf-ink);pointer-events:none}.pf-lint-tag i{display:inline-block;width:9px;height:9px;margin-right:5px;border:2px solid currentColor;vertical-align:-1px}.pf-lint-tag .ok{color:var(--pf-good)}
 .pf-vision-tag{position:absolute;left:14px;top:12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;background:var(--pf-accent2);color:var(--pf-on);font-weight:700;pointer-events:none}
 .pf[data-vision="grey"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:grayscale(1)}
 .pf[data-vision="protan"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:url(#pf-vision-protan)}
@@ -1198,6 +1242,7 @@
     tile: '<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/>',
     changes: '<rect x="3.5" y="3.5" width="17" height="17"/><path d="M12 3.5v17"/><path d="M5.5 9.5h4M7.5 7.5v4"/><path d="M14.5 9.5h4"/><path d="M14.5 15.5h4" stroke-dasharray="1 1.6"/>',
     context: '<rect x="3.5" y="13.5" width="5" height="6"/><rect x="9.5" y="7.5" width="5" height="12" fill="currentColor"/><rect x="15.5" y="11.5" width="5" height="8"/><path d="M2 20.5h20"/>',
+    lint: '<path d="M4 6h4v4H4z" fill="currentColor" stroke="none"/><path d="M12 7h8M12 15h8M4 15l2 2 3-4"/>',
     vision: '<path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/><path d="M12 9v6" />',
     onion: '<rect x="3.5" y="8.5" width="10" height="11" stroke-dasharray="2 2"/><rect x="10.5" y="4.5" width="10" height="11"/>',
     mx: '<path d="M12 3v18" stroke-dasharray="1.5 2.5"/><path d="M9 7.5L4.5 12 9 16.5z"/><path d="M15 7.5l4.5 4.5-4.5 4.5z"/>',
@@ -1232,7 +1277,7 @@
   const TOOLS = [['pen', 'Pencil', 'B'], ['erase', 'Eraser', 'E'], ['fill', 'Fill', 'G'], ['pick', 'Colour picker', 'I'], ['line', 'Line', 'L'], ['rect', 'Rectangle', 'R'], ['rectf', 'Filled rectangle', 'F', 'rect'], ['ellipse', 'Ellipse', 'O'], ['ellipsef', 'Filled ellipse', 'U', 'ellipse'], ['select', 'Select and move', 'S'], ['lasso', 'Lasso select', 'Q', 'select'], ['wand', 'Magic wand: select by colour', 'W', 'select'], ['shade', 'Shade: lighter, right click darker', 'D'], ['gradient', 'Dither gradient: drag from the primary to the secondary colour', 'J']];
   const railOf = (t) => { const x = TOOLS.find((k) => k[0] === t); return (x && x[3]) || t; };
   const KEYS = [['B E G I', 'pencil · eraser · fill · colour picker'], ['L R F O U', 'line · rectangle · filled rect · ellipse · filled ellipse'], ['S Q W', 'select a rectangle · lasso · magic wand (Shift adds, Alt subtracts; drag inside to move)'], ['D J', 'shade · dither gradient'], ['[ ]', 'brush size (pencil, eraser, shade, and the line / outline shapes)'], ['X', 'swap primary / secondary colour'], ['Alt+click', 'pick a colour with any tool'], ['right click', 'paint with the secondary colour (clear = erase)'], ['Shift', 'square / circle / 45° lines; with the pencil, click to draw a line from the last point'],
-    ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save (to the project folder when it can be written; edits are kept in this browser either way)'], ['Ctrl+Shift+S', 'download this sprite as a PNG'], ['Ctrl+Alt+C', 'canvas size'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
+    ['M', 'mirror left-right'], ['V', 'context: the sprite at game scale next to others from its folder'], ['H', 'show / hide the reference image'], ['P', 'pixel check: stray pixels, doubled corners, near-duplicate colours'], ['Y', 'vision check: values (greyscale), protanopia, deuteranopia, tritanopia'], ['C · hold \\', 'changes since opening (dims the rest) · show the original while held'], ['T · N · # · K', 'tile preview · onion skin · grid · background (dark / light checker, black, white, custom, the project\'s)'], ['Ctrl+C X V', 'copy · cut · paste (images from other apps too)'], ['Ctrl+A · Del · Esc · Enter', 'select all · delete · drop · apply selection'], ['arrows', 'nudge the selection (Shift: 8 px)'], ['Ctrl+Z · Ctrl+Y', 'undo · redo'], ['Ctrl+S', 'save (to the project folder when it can be written; edits are kept in this browser either way)'], ['Ctrl+Shift+S', 'download this sprite as a PNG'], ['Ctrl+Alt+C', 'canvas size'], ['wheel · + − 0', 'zoom · fit'], ['space+drag · middle mouse', 'pan'], ['?', 'this list']];
   /* What shows behind transparent pixels. No single background suits all art (dark details vanish on the dark checker, pale
      ones on the light one), so like Aseprite, Pixelorama and Piskel the editor offers a few and remembers the choice.
      "project" is the game's own background colour from spritewright.config.json ("background": "#1a1426"). */
@@ -1417,7 +1462,7 @@
           <span class="pf-grp"><button class="pf-undo" title="Undo (Ctrl+Z)">${icon('undo')}<span>Undo</span></button><button class="pf-redo" title="Redo (Ctrl+Y)">${icon('redo')}<span>Redo</span></button></span>
           <span class="pf-grp"><button class="pf-zout" title="Zoom out (-)">−</button><span class="pf-zl" title="Zoom">1×</span><button class="pf-zin" title="Zoom in (+)">+</button><button class="pf-fit" title="Fit to window (0)">Fit</button></span>
           <span class="pf-grp pf-grp-fs"><button class="pf-fs-go" title="Fullscreen: canvas and tools only, menus slide in from the sides">${icon('fullscreen')}<span>Fullscreen</span></button></span>
-          <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tgrid" title="Tile grid: a stronger line every 8, 16, 32 or 64 pixels (the ▾ picks the size)">${icon('tilegrid')}<span>Tiles</span></button><button class="pf-grid-more" title="Tile grid size" aria-haspopup="menu" aria-label="Tile grid size">▾</button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
+          <span class="pf-grp pf-grp-view"><button class="pf-grid on" title="Pixel grid (#)">${icon('grid')}<span>Grid</span></button><button class="pf-tgrid" title="Tile grid: a stronger line every 8, 16, 32 or 64 pixels (the ▾ picks the size)">${icon('tilegrid')}<span>Tiles</span></button><button class="pf-grid-more" title="Tile grid size" aria-haspopup="menu" aria-label="Tile grid size">▾</button><button class="pf-tile" title="Tile preview: see the sprite repeated, and draw across the edges (T)">${icon('tile')}<span>Tile</span></button><button class="pf-bg" title="Background behind transparent pixels (K cycles)" aria-haspopup="menu"><span class="pf-bg-sw"></span><span>Background</span></button><button class="pf-context" title="Context: the sprite at game scale on the project background, next to others from its folder, live as you draw (V)">${icon('context')}<span>Context</span></button><button class="pf-changes" title="Changes: dim what you have not touched and outline the pixels that differ from the original (C). Hold \\ to see the original.">${icon('changes')}<span>Changes</span></button><button class="pf-lint" title="Pixel check: marks stray pixels, doubled corners in lines and near-duplicate colours (P)">${icon('lint')}<span>Check</span></button><button class="pf-vision" title="Vision check: values (greyscale) and colour-blind simulations (Y)">${icon('vision')}<span>Vision</span></button><button class="pf-onion" title="Onion skin: show the previous animation frame faintly under the current one (N)">${icon('onion')}<span>Onion</span></button></span>
           <span class="pf-grp pf-grp-end"><button class="pf-feedback" title="Send feedback or report a bug, with a screenshot of the editor, as a GitHub issue">${icon('feedback')}<span>Feedback</span></button><button class="pf-help" title="Keyboard shortcuts (?)">?</button><button class="pf-save primary" title="Save (Ctrl+S)">Save</button><button class="pf-download" title="Download this sprite as a PNG (scaled up if you like), or every changed sprite as a .zip" aria-haspopup="menu">${icon('download')}<span>Download</span></button><button class="pf-prbtn" title="Open a GitHub pull request with the changed sprites">Propose PR</button></span>
         </div>
         <div class="pf-opts">
@@ -1437,7 +1482,7 @@
         <div class="pf-work">
           <nav class="pf-rail" aria-label="Tools"><span class="pf-tools"></span>
             <span class="pf-swatch" title="Primary (left click) and secondary (right click) colours. X swaps them."><button class="pf-prim" aria-label="Primary colour"></button><button class="pf-sec" aria-label="Secondary colour"></button><button class="pf-swap" title="Swap colours (X)">⇄</button></span></nav>
-          <div class="pf-stage"><canvas class="pf-view" aria-label="Sprite canvas"></canvas><span class="pf-vision-tag" hidden></span></div>
+          <div class="pf-stage"><canvas class="pf-view" aria-label="Sprite canvas"></canvas><span class="pf-vision-tag" hidden></span><span class="pf-lint-tag" hidden></span></div>
         </div>
         <div class="pf-ctx" hidden><div class="pf-ctx-bar"><span class="pf-ol">in context</span><select class="pf-ctx-group" title="What to compare against: a group from the project's config, or the sprites in the same folder"></select><span class="pf-seg pf-ctx-scale">${[1, 2, 3, 4].map((n) => `<button data-scale="${n}"${n === 2 ? ' class="on"' : ''}>${n}×</button>`).join('')}</span><span class="pf-note pf-ctx-note"></span></div><canvas class="pf-ctx-cv" aria-label="The sprite in context"></canvas></div>
         <div class="pf-fsbar" aria-label="Fullscreen controls"><button class="pf-fs-undo" title="Undo">${icon('undo')}</button><button class="pf-fs-redo" title="Redo">${icon('redo')}</button><button class="pf-fs-fit" title="Fit to screen">Fit</button><button class="pf-fs-exit" title="Leave fullscreen">${icon('exitfull')}</button></div>
@@ -2160,6 +2205,12 @@
       g.strokeStyle = 'rgba(224,140,255,.75)';
       if (S.mx) { g.beginPath(); g.moveTo(S.ox + W / 2, S.oy); g.lineTo(S.ox + W / 2, S.oy + H); g.stroke(); }
       if (S.my) { g.beginPath(); g.moveTo(S.ox, S.oy + H / 2); g.lineTo(S.ox + W, S.oy + H / 2); g.stroke(); }
+      if (S.lint) { // pixel check: a coloured box round each finding (filled when the pixels are too small to box)
+        const L = lintCache(d), kinds = [['stray', L.stray, '#ffb000'], ['doubles', L.doubles, '#ff5ac8'], ['near', L.nearPx, '#4fd8ff']];
+        for (const [, list, col] of kinds) { g.strokeStyle = col; g.fillStyle = col; g.lineWidth = Math.max(1, Math.floor(z / 6)); for (const i of list.slice(0, 4000)) { const x = S.ox + (i % d.w) * z, y = S.oy + ((i / d.w) | 0) * z; if (z >= 5) g.strokeRect(x + g.lineWidth / 2, y + g.lineWidth / 2, z - g.lineWidth, z - g.lineWidth); else g.fillRect(x, y, z, z); } }
+        g.lineWidth = 1; const tag = $('.pf-lint-tag'), parts = [[L.stray.length, 'stray', '#ffb000'], [L.doubles.length, 'doubled corner', '#ff5ac8'], [L.near.length, 'near-duplicate colour', '#4fd8ff']].filter((p) => p[0]);
+        tag.innerHTML = parts.length ? parts.map(([n, what, col]) => `<span style="color:${col}"><i></i>${n} ${what}${n > 1 ? 's' : ''}</span>`).join('') : '<span class="ok">no stray pixels, doubled corners or near-duplicate colours</span>';
+      }
       if (S.sel) { /* marching ants, without the marching: round the rectangle, or along the edges of a masked selection */
         const r = S.sel; g.beginPath();
         if (!r.mask) g.rect(S.ox + r.x * z + .5, S.oy + r.y * z + .5, r.w * z - 1, r.h * z - 1);
@@ -3087,6 +3138,13 @@
     document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fsReal && fsOn()) { fsReal = false; fsSet(false); } }); // left with the back gesture or Esc
     window.addEventListener('resize', () => { if (fsOn()) fsRail(); });
     $$('.pf-selmode button').forEach((b) => (b.onclick = () => setTool(b.dataset.t)));
+    /* pixel check: recomputed only when the pixels changed since the last check, not on every redraw while panning or zooming */
+    let lintMemo = null;
+    function lintCache(d) {
+      if (lintMemo && lintMemo.d === d && lintMemo.px.length === d.px.length && lintMemo.w === d.w && countDiff(lintMemo.px, d.px) === 0) return lintMemo.res;
+      lintMemo = { d, w: d.w, px: d.px.slice(), res: lintPixels(d.px, d.w, d.h) }; return lintMemo.res;
+    }
+    $('.pf-lint').onclick = (e) => { S.lint = !S.lint; e.currentTarget.classList.toggle('on', S.lint); $('.pf-lint-tag').hidden = !S.lint; render(); };
     $('.pf-grid').onclick = (e) => { S.grid = !S.grid; e.currentTarget.classList.toggle('on', S.grid); render(); };
     /* Tile grid: 0 (off) or a size in pixels (sprite sheets already show their frames). The project's config sets the default
        ("tileGrid": 16); a choice made here is remembered per project. */
@@ -3308,7 +3366,7 @@
         const t = TOOLS.find((x) => x[2].toLowerCase() === k); if (t) setTool(t[0]);
         else if (k === 'm') $('.pf-mx').click(); else if (k === '+' || k === '=') $('.pf-zin').click(); else if (k === '-') $('.pf-zout').click(); else if (k === '0') $('.pf-fit').click(); else if (k === '#') $('.pf-grid').click();
         else if (k === 'x') $('.pf-swap').click(); else if (k === '[') setSize(S.size - 1); else if (k === ']') setSize(S.size + 1);
-        else if (k === 'k') cycleBg(); else if (k === 'y') $('.pf-vision').click(); else if (k === 'h') toggleRef(); else if (k === 'c') $('.pf-changes').click(); else if (k === 'v') $('.pf-context').click(); else if (e.key === '\\') { e.preventDefault(); peek(true); } else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
+        else if (k === 'k') cycleBg(); else if (k === 'y') $('.pf-vision').click(); else if (k === 'p') $('.pf-lint').click(); else if (k === 'h') toggleRef(); else if (k === 'c') $('.pf-changes').click(); else if (k === 'v') $('.pf-context').click(); else if (e.key === '\\') { e.preventDefault(); peek(true); } else if (k === ',') stepMember(-1); else if (k === '.') stepMember(1);
         else if (k === 't') $('.pf-tile').click(); else if (k === 'n') $('.pf-onion').click(); else if (e.key === '?') $('.pf-help').click();
         else if (k === ' ') { space = true; e.preventDefault(); }
       }
@@ -3337,5 +3395,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, Doc } };
 });

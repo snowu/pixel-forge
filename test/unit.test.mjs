@@ -800,3 +800,22 @@ test('selection masks: rect ↔ mask, lasso polygons, add and subtract', () => {
   assert.equal(C.combineMasks(r, b, 'sub').reduce((a, v) => a + v, 0), 5, 'subtract');
   assert.equal(C.combineMasks(r, b, null), b, 'replace');
 });
+
+/* ---------- pixel check ---------- */
+test('lintPixels: stray pixels, doubled corners in 1px lines, near-duplicate colours, and no false alarms on clean art', () => {
+  const W = 9, H = 9, A = 0xff202020 >>> 0, F = 0xff8080ff >>> 0, P = (rows) => Uint32Array.from(rows.join('').split('').map((c) => (c === '#' ? A : c === 'f' ? F : 0)));
+  const clean = P(['.........', '.#######.', '.#fffff#.', '.#fffff#.', '.#fffff#.', '.#fffff#.', '.#fffff#.', '.#######.', '.........']);
+  const ok0 = C.lintPixels(clean, W, H); assert.deepEqual([ok0.stray.length, ok0.doubles.length, ok0.near.length], [0, 0, 0], 'a clean outlined block has no findings');
+  const speck = clean.slice(); speck[4 * W + 4] = A; // a speck of another colour in a fill: texture or a highlight, left alone
+  assert.deepEqual(C.lintPixels(speck, W, H).stray, []);
+  const hole = clean.slice(); hole[4 * W + 4] = 0; // a hole in the fill
+  assert.deepEqual(C.lintPixels(hole, W, H).stray, [4 * W + 4]);
+  const dust = new Uint32Array(W * H); dust[0] = A; dust[5 * W + 6] = A; // dust on a clear background, in the corner too
+  assert.deepEqual(C.lintPixels(dust, W, H).stray.sort((a, b) => a - b), [0, 5 * W + 6]);
+  const line = P(['.........', '.#.......', '.##......', '..##.....', '...##....', '....#....', '.........', '.........', '.........']); // a staircase drawn with doubles
+  const d = C.lintPixels(line, W, H).doubles; assert.ok(d.length >= 3, 'the doubled corners of a jagged line: ' + d);
+  const thin = P(['.........', '.#.......', '..#......', '...#.....', '....#....', '.........', '.........', '.........', '.........']);
+  assert.equal(C.lintPixels(thin, W, H).doubles.length, 0, 'a clean diagonal has none');
+  const near = clean.slice(); near[3 * W + 3] = (F - 3) >>> 0; // one pixel of a colour 3 off the fill (red 0xfc instead of 0xff)
+  const L = C.lintPixels(near, W, H); assert.equal(L.near.length, 1); assert.deepEqual(L.nearPx, [3 * W + 3], 'the rarer of the two is marked');
+});
