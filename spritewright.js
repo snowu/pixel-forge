@@ -1482,8 +1482,8 @@
         <div class="pf-row pf-fb-link"><a class="pf-btn primary pf-fb-go" target="_blank" rel="noopener">Open on GitHub</a><button type="button" class="pf-fb-copy" disabled>Copy screenshot</button><button type="button" class="pf-fb-save" disabled>Save screenshot</button></div>
         <div class="pf-note pf-fb-note" aria-live="polite"></div></form></dialog>
       <dialog class="pf-dlg-folders"><form method="dialog" class="pf-form">
-        <div class="pf-dlg-head"><h4>Which folders hold your art?</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
-        <div class="pf-note">Only these show up in the list. Docs, screenshots and test folders start unticked.</div>
+        <div class="pf-dlg-head"><h4 class="pf-af-title">Which folders hold your art?</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <div class="pf-note pf-af-intro">Only these show up in the list. Docs, screenshots and test folders start unticked.</div>
         <div class="pf-af-list"></div>
         <div class="pf-note pf-af-save"></div>
         <div class="pf-row"><button type="button" class="primary pf-af-go">Use these folders</button><button type="button" class="pf-af-all">Show everything</button></div></form></dialog>
@@ -1513,7 +1513,7 @@
     /** Opening a project: the sprite list becomes a pixel spinner with the current step, until useSource lists the new sprites. */
     const loaderHtml = () => `<div class="pf-loading" role="status" aria-live="polite"><span class="pf-spin" aria-hidden="true">${'<i></i>'.repeat(8)}</span><b>${esc(S.loading.label)}</b><span class="pf-loading-step">${esc(S.loading.step)}</span></div>`;
     let loadSeq = 0;
-    function showLoading(label) { S.loading = { label, step: 'Connecting…' }; $('.pf-list').innerHTML = loaderHtml(); }
+    function showLoading(label) { S.loading = { label, step: 'Connecting…' }; $('.pf-list').innerHTML = loaderHtml(); renderSetup(); }
     function loadingStep(t) { if (!S.loading) return; S.loading.step = t; const el = $('.pf-loading-step'); if (el) el.textContent = t; else $('.pf-list').innerHTML = loaderHtml(); }
     function hideLoading() { if (!S.loading) return; S.loading = null; renderList(); }
 
@@ -1617,7 +1617,8 @@
       const src = S.src; if (!src || src.kind !== 'github' || !src.all) return;
       const folders = artFolders(src.all.map((x) => x.path)), now = new Set(S.sprites.map((x) => x.path.split('/').slice(0, -1).slice(0, 2).join('/')));
       const first = !src.hasConfig && !readFolders(src);
-      $('.pf-af-all').hidden = !folders.length;
+      $('.pf-af-all').hidden = $('.pf-af-intro').hidden = !folders.length;
+      $('.pf-af-title').textContent = folders.length ? 'Which folders hold your art?' : 'Where does the art go?'; $('.pf-af-go').textContent = folders.length ? 'Use these folders' : 'Use this folder';
       if (!folders.length) { // a repository with no art yet: say where it will go
         const was = (readFolders(src) || {}).picked || (src.config && src.config.dirs) || [];
         $('.pf-af-list').innerHTML = `<div class="pf-note">No PNG files in this repository yet. Which folder should its art go in? New sprites start there.</div><input type="text" class="pf-af-dir" list="pf-af-dirs" value="${esc(was[0] || 'art')}" aria-label="Art folder" autocomplete="off"><datalist id="pf-af-dirs">${(src.dirs || []).map((d) => `<option value="${esc(d)}">`).join('')}</datalist>`;
