@@ -10,8 +10,9 @@
 //                                                        so the page keeps people signed in without another popup. Only for ALLOWED_ORIGINS.
 //   POST /feedback  {kind, what, details, screenshot}  -> the editor's Feedback button, for people signed in with GitHub (Authorization:
 //                                                        Bearer <their token>, checked against GitHub). The screenshot (a base64 PNG) is
-//                                                        committed to the FEEDBACK_BRANCH of FEEDBACK_REPO and the issue opened there with it
-//                                                        shown inline, both with FEEDBACK_TOKEN, which never leaves the Worker.
+//                                                        committed to the FEEDBACK_BRANCH of FEEDBACK_REPO with FEEDBACK_TOKEN, which never
+//                                                        leaves the Worker. The issue is opened there with the reporter's own token, so it is
+//                                                        theirs (needs the app's Issues: write); if GitHub refuses, FEEDBACK_TOKEN opens it.
 //   GET  /health
 //
 // Config (wrangler.toml / secrets):
@@ -126,7 +127,7 @@ export function feedbackTitle(text, kind = 'bug', n = 10, max = 100) {
   return t.length > max ? t.slice(0, max - 1) + '…' : t;
 }
 export function feedbackBody({ what, details, image, login }) {
-  return [what, '', image ? `![Screenshot](${image})` : '_No screenshot._', '', '<details><summary>Details</summary>', '', details || '_none_', '', '</details>', '', '---', `Sent from the spritewright editor by @${login}.`].join('\n');
+  return [what, '', image ? `![Screenshot](${image})` : '_No screenshot._', '', '<details><summary>Details</summary>', '', details || '_none_', '', '</details>', '', '---', login ? `Sent from the spritewright editor by @${login}.` : 'Sent from the spritewright editor.'].join('\n');
 }
 
 /** Signed-in people only: the token they sign in with is checked against GitHub, so every report has a real account behind it. */
@@ -176,10 +177,17 @@ async function feedback(request, env, doFetch, now) {
       if (!put.ok) return fail(put, 'store the screenshot');
       image = `https://raw.githubusercontent.com/${repo}/${(await put.json()).commit.sha}/${file}`;
     }
-    const issue = await gh(`/repos/${repo}/issues`, tok, { method: 'POST', body: JSON.stringify({ title: feedbackTitle(what, kind), body: feedbackBody({ what, details, image, login }), labels: ['feedback'] }) });
+    // The issue is the reporter's own when their sign-in may open one (the GitHub App has Issues: write and is installed on FEEDBACK_REPO);
+    // otherwise the service opens it for them. GitHub drops labels set by people without triage access, so the service adds the label after.
+    const title = feedbackTitle(what, kind);
+    let by = 'user', issue = await gh(`/repos/${repo}/issues`, userToken[1], { method: 'POST', body: JSON.stringify({ title, body: feedbackBody({ what, details, image }) }) });
+    if ([401, 403, 404, 410].includes(issue.status)) {
+      by = 'service'; issue = await gh(`/repos/${repo}/issues`, tok, { method: 'POST', body: JSON.stringify({ title, body: feedbackBody({ what, details, image, login }), labels: ['feedback'] }) });
+    }
     if (!issue.ok) return fail(issue, 'open the issue');
     const made = await issue.json();
-    return json({ number: made.number, url: made.html_url });
+    if (by === 'user') { try { await gh(`/repos/${repo}/issues/${made.number}/labels`, tok, { method: 'POST', body: JSON.stringify({ labels: ['feedback'] }) }); } catch { /* the issue is there; the label is a nicety */ } }
+    return json({ number: made.number, url: made.html_url, by });
   } catch { return json({ error: 'Could not reach GitHub. Try again.' }, 502); }
 }
 

@@ -97,13 +97,15 @@ const FB_ENV = { ...env, FEEDBACK_TOKEN: 'github_pat_feedback', FEEDBACK_REPO: '
 const PNG = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(40, 7)]);
 const fbReq = (body, { token = 'ghu_reporter', origin = 'https://snowu.github.io', method = 'POST' } = {}) => new Request('https://auth.example/feedback', { method, headers: { origin, 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: method === 'POST' ? JSON.stringify(body) : undefined });
 /** A fake GitHub: who is signed in, a missing screenshot branch the first time, and what was written. */
-function fakeGithub({ user = 'reporter', branch = false } = {}) {
+function fakeGithub({ user = 'reporter', branch = false, userIssues = true } = {}) {
   const calls = [];
   const fetchMock = async (url, init = {}) => {
     const p = new URL(url).pathname, method = init.method || 'GET', auth = init.headers.authorization, body = init.body ? JSON.parse(init.body) : null; calls.push({ p, method, auth, body });
     const res = (status, o) => ({ ok: status < 300, status, json: async () => o });
     if (p === '/user') return auth === 'Bearer ghu_reporter' ? res(200, { login: user }) : res(401, { message: 'Bad credentials' });
+    if (auth === 'Bearer ghu_reporter' && p === '/repos/snowu/spritewright/issues' && method === 'POST') return userIssues ? res(201, { number: 41, html_url: 'https://github.com/snowu/spritewright/issues/41' }) : res(403, { message: 'Resource not accessible by integration' });
     if (auth !== 'Bearer github_pat_feedback') return res(403, { message: 'wrong token' });
+    if (/^\/repos\/snowu\/spritewright\/issues\/\d+\/labels$/.test(p) && method === 'POST') return res(200, []);
     if (p === '/repos/snowu/spritewright/git/ref/heads/feedback-screenshots') return branch ? res(200, { object: { sha: 's0' } }) : res(404, { message: 'Not Found' });
     if (p === '/repos/snowu/spritewright') return res(200, { default_branch: 'main' });
     if (p === '/repos/snowu/spritewright/git/ref/heads/main') return res(200, { object: { sha: 'm1' } });
@@ -115,24 +117,38 @@ function fakeGithub({ user = 'reporter', branch = false } = {}) {
   return { calls, fetchMock };
 }
 
-test('feedback: a signed-in person\'s report becomes an issue with the screenshot stored in the repository and shown inline', async () => {
+test('feedback: a signed-in person\'s report becomes their own issue, with the screenshot stored in the repository and shown inline', async () => {
   const gh = fakeGithub(), now = Date.UTC(2026, 9, 14, 12, 30, 5);
   const r = await handle(fbReq({ kind: 'idea', what: '  Onion skin for numbered files please  ', details: '| | |\n|---|---|\n| Sprite | 16×16 |', screenshot: PNG.toString('base64') }), FB_ENV, gh.fetchMock, now);
-  assert.equal(r.status, 200); assert.deepEqual(await r.json(), { number: 42, url: 'https://github.com/snowu/spritewright/issues/42' });
+  assert.equal(r.status, 200); assert.deepEqual(await r.json(), { number: 41, url: 'https://github.com/snowu/spritewright/issues/41', by: 'user' });
   assert.equal(r.headers.get('access-control-allow-origin'), 'https://snowu.github.io');
   assert.deepEqual(gh.calls.find((c) => c.p === '/repos/snowu/spritewright/git/refs').body, { ref: 'refs/heads/feedback-screenshots', sha: 'm1' }, 'the screenshot branch is made from the default branch the first time');
   const put = gh.calls.find((c) => c.method === 'PUT');
   assert.match(put.p, /^\/repos\/snowu\/spritewright\/contents\/feedback\/2026-10\/2026-10-14-12-30-05-reporter-[0-9a-f]{8}\.png$/);
   assert.equal(put.body.branch, 'feedback-screenshots'); assert.deepEqual(Buffer.from(put.body.content, 'base64'), PNG);
-  const issue = gh.calls.find((c) => c.p.endsWith('/issues')).body;
-  assert.equal(issue.title, 'Idea: Onion skin for numbered files please'); assert.deepEqual(issue.labels, ['feedback']);
+  assert.equal(put.auth, 'Bearer github_pat_feedback', 'the screenshot is stored with the service\'s token');
+  const opened = gh.calls.filter((c) => c.p.endsWith('/issues'));
+  assert.equal(opened.length, 1); assert.equal(opened[0].auth, 'Bearer ghu_reporter', 'the issue is opened as the reporter');
+  const issue = opened[0].body;
+  assert.equal(issue.title, 'Idea: Onion skin for numbered files please');
   assert.match(issue.body, /^Onion skin for numbered files please\n\n!\[Screenshot\]\(https:\/\/raw\.githubusercontent\.com\/snowu\/spritewright\/c9\/feedback\/2026-10\/[^)]+\.png\)/);
-  assert.match(issue.body, /\| Sprite \| 16×16 \|[\s\S]*Sent from the spritewright editor by @reporter\.$/);
-  assert.ok(gh.calls.filter((c) => c.p !== '/user').every((c) => c.auth === 'Bearer github_pat_feedback'), 'the repository is written with the service\'s token, never the reporter\'s');
+  assert.match(issue.body, /\| Sprite \| 16×16 \|[\s\S]*Sent from the spritewright editor\.$/);
+  const label = gh.calls.find((c) => c.p === '/repos/snowu/spritewright/issues/41/labels');
+  assert.equal(label.auth, 'Bearer github_pat_feedback'); assert.deepEqual(label.body, { labels: ['feedback'] }, 'the service labels it');
   const again = fakeGithub({ branch: true });
   assert.equal((await handle(fbReq({ kind: 'bug', what: 'no picture' }), FB_ENV, again.fetchMock)).status, 200);
   assert.ok(!again.calls.some((c) => c.method === 'PUT' || c.p.endsWith('/git/refs')), 'no screenshot, nothing stored');
   assert.match(again.calls.find((c) => c.p.endsWith('/issues')).body.body, /_No screenshot\._/);
+});
+
+test('feedback: when GitHub will not let the reporter open it, the service opens the issue for them and names them', async () => {
+  const gh = fakeGithub({ branch: true, userIssues: false });
+  const r = await handle(fbReq({ kind: 'bug', what: 'Fill leaks' }), FB_ENV, gh.fetchMock);
+  assert.equal(r.status, 200); assert.deepEqual(await r.json(), { number: 42, url: 'https://github.com/snowu/spritewright/issues/42', by: 'service' });
+  const [mine, theirs] = gh.calls.filter((c) => c.p.endsWith('/issues'));
+  assert.equal(mine.auth, 'Bearer ghu_reporter'); assert.equal(theirs.auth, 'Bearer github_pat_feedback');
+  assert.deepEqual(theirs.body.labels, ['feedback']); assert.match(theirs.body.body, /Sent from the spritewright editor by @reporter\.$/);
+  assert.ok(!gh.calls.some((c) => c.p.endsWith('/labels')), 'labelled when opened');
 });
 
 test('feedback: only signed-in GitHub accounts, from allowed pages, with a real PNG', async () => {

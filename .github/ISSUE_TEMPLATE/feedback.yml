@@ -1,0 +1,21 @@
+name: Feedback from the editor
+description: Opened by the Feedback button in spritewright. The editor fills in the details; you add what happened and paste the screenshot.
+labels: ["feedback", "needs-triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: A bug (what you saw, and what you expected instead), an idea, or anything else.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: The editor copied one to your clipboard. Click here and paste it (Ctrl+V / ⌘V). If that did not work, attach the saved image instead.
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Filled in by the editor. Please leave it as is. It tells us what you had open and which browser you use.
