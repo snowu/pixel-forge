@@ -190,6 +190,28 @@ section('selection: magic wand, lasso, add and subtract');
   await sctx2.close();
 }
 
+section('pixel check');
+{
+  const lctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'dark' });
+  const lp = await lctx.newPage(); const lerr = []; lp.on('pageerror', (e) => lerr.push(e.message));
+  await lp.goto(base + '?auth=off'); await lp.waitForSelector('.pf-item');
+  await lp.locator('.pf-new').click(); await lp.locator('.pf-nw').fill('12'); await lp.locator('.pf-nh').fill('12'); await lp.locator('.pf-nn').fill('lint.png'); await lp.locator('.pf-new-ok').click(); await lp.waitForTimeout(300);
+  const K = 0xff202020 >>> 0, F = 0xff8080ff >>> 0;
+  await lp.evaluate(([K, F]) => { const a = document.getElementById('app').__pf, d = a.current; d.snapshot();
+    d.px[0] = K; // dust
+    for (const [x, y] of [[2, 3], [2, 4], [3, 4], [3, 5], [4, 5], [4, 6]]) d.px[y * 12 + x] = K; // a jagged diagonal
+    d.px[10 * 12 + 10] = F; d.px[10 * 12 + 11] = (F - 3) >>> 0; // two colours 3 apart
+  }, [K, F]);
+  await lp.keyboard.press('p'); await lp.waitForTimeout(150);
+  const tag = await lp.locator('.pf-lint-tag').innerText();
+  ok(await lp.locator('.pf-lint.on').count() === 1 && /1 stray/.test(tag) && /doubled corner/.test(tag) && /1 near-duplicate colour/.test(tag), 'P turns on the pixel check, which names what it found: ' + tag.replace(/\n/g, ' '));
+  await lp.evaluate(() => { const d = document.getElementById('app').__pf.current; d.px.fill(0); }); await lp.keyboard.press('b'); await lp.waitForTimeout(100);
+  ok(/no stray pixels/.test(await lp.locator('.pf-lint-tag').innerText()), 'and says so when there is nothing');
+  await lp.keyboard.press('p'); ok(await lp.locator('.pf-lint-tag').isHidden(), 'P again hides it');
+  ok(lerr.length === 0, 'no page errors ' + lerr.join('|'));
+  await lctx.close();
+}
+
 section('more tools: brush size, dither, ellipse, shading, selection, tile, outline, ramps');
 {
   const C = (await import('../spritewright.js'), globalThis.Spritewright.core);

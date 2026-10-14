@@ -121,6 +121,7 @@ Typing in the filter switches to a flat list of matching files. Without a `sprit
 
 ## More checks while you draw
 
+- **Check** (`P`): marks **stray pixels** (dust on a clear background, holes in a fill), **doubled corners** in one-pixel lines (the extra L pixel that makes a diagonal look jagged) and **near-duplicate colours** (two colours a few values apart, probably one by accident; the rarer one is marked). It is deliberately conservative: specks inside a texture, box corners, shading regions and thick lines are left alone.
 - **Vision** (`Y`): see the art by value alone (greyscale), or as players with protanopia, deuteranopia or tritanopia see it. Useful for colour-coded gameplay (enemies, pickups, hazards). A label on the canvas says which view is on.
 - **Reference** panel: an image (concept art, a screenshot) or another sprite from the project, under or over your pixels, 1:1 or fitted, with opacity; `H` shows and hides it. It is never saved.
 - **History** panel (GitHub repositories and the local server): earlier versions of the open sprite from git, with thumbnails; pick one and **Restore** it as an edit you can undo.
