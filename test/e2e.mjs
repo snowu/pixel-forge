@@ -13,8 +13,12 @@ const chromium = pw.chromium || pw.default.chromium;
 const launch = process.env.PF_LAUNCH_HELPER ? (await import(process.env.PF_LAUNCH_HELPER)).launch : () => chromium.launch();
 
 let pass = 0, fail = 0;
-const ok = (c, m) => { if (c) { pass++; console.log('  PASS', m); } else { fail++; console.log('  FAIL', m); } };
-const section = (t) => console.log('\n' + t);
+// Watchdog: some awaits (page.evaluate, input on a stuck page) have no timeout of their own, so one hung step could hold CI for
+// hours. Two quiet minutes in a row fail the run instead, naming where it stopped.
+let lastSection = '', lastCheck = '', watchdog = null;
+const kick = () => { clearTimeout(watchdog); watchdog = setTimeout(() => { console.log(`\n  FAIL stuck for 2 minutes in "${lastSection}" after "${lastCheck}"`); process.exit(1); }, 120000); watchdog.unref(); };
+const ok = (c, m) => { kick(); lastCheck = m; if (c) { pass++; console.log('  PASS', m); } else { fail++; console.log('  FAIL', m); } };
+const section = (t) => { kick(); lastSection = t; lastCheck = '(start)'; console.log('\n' + t); };
 
 /* ---- a throwaway project ---- */
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-e2e-'));
