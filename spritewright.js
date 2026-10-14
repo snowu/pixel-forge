@@ -1179,7 +1179,7 @@
 .pf-v-preview{display:flex;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-v-preview canvas{image-rendering:pixelated;height:72px}
 .pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}
 /* Right column: every section folds away by its title (remembered), with a chevron at the right. */
-.pf-right{scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:var(--pf-line2) transparent;scrollbar-gutter:stable}
+.pf-right{scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:var(--pf-line2) transparent}
 .pf-right>.pf-panel>h4,.pf-hist summary h4{display:flex;align-items:baseline;white-space:nowrap;gap:0;cursor:pointer;user-select:none;-webkit-user-select:none;margin:0}
 .pf-right>.pf-panel>h4::before,.pf-hist summary h4::before{white-space:pre}.pf-right>.pf-panel>h4>span{overflow:hidden;text-overflow:ellipsis}
 .pf-right>.pf-panel>h4::after,.pf-hist summary h4::after{content:"";margin-left:auto;align-self:center;flex:none;width:6px;height:6px;border-right:1.5px solid var(--pf-faint);border-bottom:1.5px solid var(--pf-faint);transform:translateY(-2px) rotate(45deg);transition:transform .15s ease}
@@ -1669,6 +1669,8 @@
           <canvas class="pf-p1" title="The whole sheet"></canvas>
           <div class="pf-row pf-anim-row"><label class="pf-sheet-row" title="Frame size: smaller than the image makes it a sprite sheet">frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label><label class="pf-fps-l">fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
           <div class="pf-row"><button class="pf-gif" title="Download the animation (or this image) as a looping GIF, to share in chat or a pull request">GIF…</button><button class="pf-sheet-out" title="Download the animation as one sprite sheet PNG with a JSON of its frames and timings (Aseprite json-array format, read by most engines)">Sheet + JSON</button></div></div>
+        <div class="pf-panel pf-imgpanel"><h4>Image</h4><div class="pf-imgtools">${IMAGE_TOOLS.map(([cls, ic, name, tip, extra]) => `<button class="${cls}" aria-label="${name}" data-tip="${esc(name + ': ' + tip)}" title="${esc(name)}"${extra || ''}>${icon(ic)}</button>`).join('')}</div>
+          <div class="pf-note pf-imgtip" aria-live="polite">Point at a button to see what it does</div></div>
         <div class="pf-panel pf-notes"><h4>Notes <span class="pf-notes-n"></span></h4><div class="pf-note-list"></div>
           <div class="pf-row"><button class="pf-note-add" title="Pin a note to a pixel: click here, then on the canvas">+ note</button></div>
           <div class="pf-note pf-notes-tip">Pinned to a pixel; they go in your next pull request.</div></div>
@@ -1679,8 +1681,6 @@
             <div class="pf-row"><span class="pf-seg pf-ref-place"><button data-place="under" class="on" title="Behind your pixels">under</button><button data-place="over" title="On top of your pixels">over</button></span><span class="pf-seg pf-ref-fit"><button data-fit="pixels" class="on" title="One image pixel per sprite pixel, from the top-left">1:1</button><button data-fit="fit" title="Scaled to fit the canvas">fit</button></span></div>
             <div class="pf-row"><button class="pf-ref-toggle" title="Show or hide the reference (H)">hide</button><button class="pf-ref-clear">remove</button></div></div></div>
         <details class="pf-panel pf-hist" hidden><summary><h4>History</h4></summary><div class="pf-hist-list"></div><div class="pf-row pf-hist-act" hidden><button class="primary pf-hist-restore">Restore this version</button><span class="pf-note pf-hist-sel"></span></div></details>
-        <div class="pf-panel pf-imgpanel"><h4>Image</h4><div class="pf-imgtools">${IMAGE_TOOLS.map(([cls, ic, name, tip, extra]) => `<button class="${cls}" aria-label="${name}" data-tip="${esc(name + ': ' + tip)}" title="${esc(name)}"${extra || ''}>${icon(ic)}</button>`).join('')}</div>
-          <div class="pf-note pf-imgtip" aria-live="polite">Point at a button to see what it does</div></div>
       </aside>
       <div class="pf-fs-scrim"></div><button class="pf-fs-h pf-fs-hl" aria-label="Sprites" aria-expanded="false">›</button><button class="pf-fs-h pf-fs-hr" aria-label="Colours, options and actions" aria-expanded="false">‹</button>
       <dialog class="pf-dlg-pr"><form method="dialog" class="pf-form"><h4>Propose changes as a pull request</h4><div class="pf-chg-list"></div>
@@ -2836,7 +2836,7 @@
       if (!d) { p1.width = p1.height = p2.width = p2.height = 0; return; } // nothing open: no picture left over from the last project
       drawPx(p1, d, d.w <= 32 ? 2 : 1);
       const sheet = frameSize(d), fam = famFor(d);
-      const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h), anim = flip || isSheet(d); p1.hidden = !isSheet(d); $('.pf-sheet-row').hidden = flip; $('.pf-fps-l').hidden = $('.pf-play').hidden = !anim; $('.pf-sheet-out').hidden = !anim;
+      const flip = !!fam && !(sheet.w < d.w || sheet.h < d.h), anim = flip || isSheet(d); $('.pf-prev > h4').textContent = anim ? 'Animation' : 'Preview'; p1.hidden = !isSheet(d); $('.pf-sheet-row').hidden = flip; $('.pf-fps-l').hidden = $('.pf-play').hidden = !anim; $('.pf-sheet-out').hidden = !anim;
       if (flip) { // flipbook through the family's images
         const i = S.anim.timer ? holdFrame(S.anim.t, holdsOf(d), fam.members.length) : fam.members.indexOf(d.path), img = memberImage(fam.members[i]);
         $$('.pf-fam-m:not(.pf-sheet-m)').forEach((b, k) => b.classList.toggle('playing', !!S.anim.timer && k === i));
