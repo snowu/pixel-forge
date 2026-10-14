@@ -1007,6 +1007,8 @@
 .pf-brmenu{min-width:210px;max-width:290px}
 .pf-brmenu .pf-note{white-space:normal}
 .pf-c-mine{display:flex;flex-direction:column;gap:6px}.pf-c-mine[hidden]{display:none}.pf-c-repolist{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
+.pf-c-start{display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:10px;border:1px dashed var(--pf-line2)}.pf-c-start b{color:var(--pf-ink)}
+.pf a.pf-c-install{display:inline-flex;align-items:center;min-height:30px;padding:4px 10px;border:1px solid var(--pf-accent);background:var(--pf-accent);color:var(--pf-on);font-weight:700;text-decoration:none}.pf a.pf-c-install:hover{background:#cba8ff}.pf a.pf-c-install:focus-visible{outline:1px solid var(--pf-accent);outline-offset:1px}
 .pf .pf-c-pick{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%}.pf-c-pick b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pf-tokenbox summary{cursor:pointer;color:var(--pf-muted);font-size:12.5px}.pf-tokenbox>label,.pf-tokenbox>.pf-note{display:block;margin-top:8px}.pf-tokenbox[hidden]{display:none}
 .pf dialog{background:var(--pf-panel);color:var(--pf-ink);border:1px solid var(--pf-line2);box-shadow:0 0 0 1px rgba(185,140,255,.15),0 20px 60px rgba(0,0,0,.6),0 0 40px rgba(185,140,255,.10);padding:18px;width:min(560px,94vw);max-height:92vh;overflow:auto}
@@ -1350,19 +1352,27 @@
       if (!on) { S.repos = null; $('#pf-repos').innerHTML = ''; }
     }
     const installUrl = () => (O.githubApp ? `https://github.com/apps/${encodeURIComponent(O.githubApp)}/installations/select_target` : '');
+    const NEW_REPO_URL = 'https://github.com/new?name=pixel-art&description=Sprites+edited+with+spritewright';
     function renderRepos() {
       const list = $('.pf-c-repolist'), add = $('.pf-c-addrepo'), repos = S.repos || [], link = installUrl();
+      // First visit: nothing installed yet. Say what to do next, not just that the list is empty.
+      const start = link ? `<div class="pf-c-start"><b>Choose which repositories spritewright may open.</b><span class="pf-note">GitHub asks you to pick them once (all of them, or just your game). Only those can be opened here, and private ones stay private. Come back to this tab when done: the list fills in by itself.</span><a class="pf-c-install" href="${esc(link)}" target="_blank" rel="noopener">Pick repositories on GitHub</a><span class="pf-note">No repository for your art yet? <a href="${NEW_REPO_URL}" target="_blank" rel="noopener" style="color:var(--pf-accent)">Create one on GitHub</a>, then pick it.</span></div>` : '<div class="pf-note">No repositories yet.</div>';
       list.innerHTML = S.repos == null ? '<div class="pf-note">Loading your repositories…</div>' : repos.length
         ? repos.map((r) => `<button type="button" class="pf-c-pick${S.src && S.src.kind === 'github' && S.src.repo.slug === r.name ? ' on' : ''}" data-repo="${esc(r.name)}" data-branch="${esc(r.branch || '')}"><b>${esc(r.name)}</b><span class="pf-note">${S.src && S.src.kind === 'github' && S.src.repo.slug === r.name ? 'open now · ' : ''}${r.private ? 'private · ' : ''}${r.push ? 'pull requests' : 'read only'}</span></button>`).join('')
-        : '<div class="pf-note">No repositories yet.</div>';
+        : start;
       $('#pf-repos').innerHTML = repos.map((r) => `<option value="${esc(r.name)}">`).join('');
-      add.innerHTML = link ? `Missing a repository? <a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">Install the app on it</a>, then reopen this.` : '';
+      add.innerHTML = link && repos.length ? `Missing a repository? <a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--pf-accent)">Add it on GitHub</a>: the list updates when you come back.` : '';
     }
-    async function loadRepos() {
-      if (!S.auth.token) return; S.repos = null; renderRepos();
-      try { S.repos = await listRepos(await authToken(), { apiBase: O.apiBase, details: true }); } catch { S.repos = []; }
-      renderRepos();
+    /** quiet: refresh in place (coming back from GitHub), without flashing "Loading…" over the list. */
+    let reposLoading = false;
+    async function loadRepos(quiet) {
+      if (!S.auth.token || (quiet && reposLoading)) return; reposLoading = true; if (!quiet) { S.repos = null; renderRepos(); }
+      try { S.repos = await listRepos(await authToken(), { apiBase: O.apiBase, details: true }); } catch { if (!quiet) S.repos = []; }
+      reposLoading = false; renderRepos();
     }
+    // Back from github.com (picking repositories for the app happens in another tab): show what was just added.
+    const reposOnReturn = () => { if (S.auth.token && $('.pf-dlg-connect').open) loadRepos(true); };
+    window.addEventListener('focus', reposOnReturn);
     async function doSignIn(msgEl) {
       const say = (t) => (msgEl ? (msgEl.textContent = t) : note(t));
       try {
@@ -1470,6 +1480,19 @@
         setCommitBranch(branch);
       } catch (e) { note(e.message); }
     }
+    /** A link that opens this repository and branch in the editor, to send to someone. The hosted editor when this page is local. */
+    function projectLink() {
+      const src = S.src, here = location.protocol.startsWith('http') && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+      const u = new URL(O.shareBase || (here ? location.origin + location.pathname : 'https://snowu.github.io/spritewright/'));
+      u.search = ''; u.hash = ''; u.searchParams.set('repo', src.repo.slug);
+      if (src.branch && src.branch !== (S.meta.repo && S.meta.repo.defaultBranch)) u.searchParams.set('branch', src.branch);
+      return u.toString();
+    }
+    async function copyProjectLink() {
+      const link = projectLink();
+      try { await navigator.clipboard.writeText(link); note('Link copied: it opens ' + S.src.repo.slug + ' in spritewright. ' + link); }
+      catch { note('Copy this link to share the project: ' + link); }
+    }
     async function openBranchMenu() {
       closeBrMenu();
       const gh = S.meta.repo || {}, cur = S.src && S.src.branch;
@@ -1480,6 +1503,7 @@
       menu.onclick = async (e) => {
         const other = e.target.closest('.pf-br-other');
         if (other) { closeBrMenu(); return openConnect(); }
+        if (e.target.closest('.pf-br-share')) { closeBrMenu(); return copyProjectLink(); }
         const t = e.target.closest('[data-branch]');
         if (!t || t.disabled) return;
         closeBrMenu(); switchBranch(t.dataset.branch);
@@ -1489,10 +1513,10 @@
         const names = token ? await listBranches({ token, repo: gh.slug, apiBase: O.apiBase }) : [];
         const all = names.includes(cur) ? names : [cur, ...names];
         menu.innerHTML = all.map((n) => `<button role="menuitemradio" data-branch="${esc(n)}"${n === cur ? ' class="on" disabled aria-checked="true"' : ''}>⎇ ${esc(n)}</button>`).join('') +
-          `<button type="button" class="pf-br-other">Open another project…</button>` +
+          `<button type="button" class="pf-br-share" title="A link that opens this repository in spritewright, to send to someone">Copy link to this project</button><button type="button" class="pf-br-other">Open another project…</button>` +
           (token ? '' : '<div class="pf-note" style="padding:4px 9px">Sign in to list every branch.</div>');
       } catch {
-        menu.innerHTML = `<button role="menuitemradio" data-branch="${esc(cur)}" class="on" disabled>⎇ ${esc(cur)}</button><button type="button" class="pf-br-other">Open another project…</button>`;
+        menu.innerHTML = `<button role="menuitemradio" data-branch="${esc(cur)}" class="on" disabled>⎇ ${esc(cur)}</button><button type="button" class="pf-br-share" title="A link that opens this repository in spritewright, to send to someone">Copy link to this project</button><button type="button" class="pf-br-other">Open another project…</button>`;
       }
     }
     const brOutside = (e) => { const m = root.querySelector('.pf-brmenu'); if (m && !m.contains(e.target) && !e.target.closest('.pf-source')) closeBrMenu(); };
@@ -2764,7 +2788,7 @@
 
     const ctrl = {
       get docs() { return S.docs; }, get current() { return doc(); }, open: openSprite, save, setColor, setColor2, setTool, undo, redo, selectAll, state: S,
-      dispose() { document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); document.removeEventListener('pointerdown', brOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); document.removeEventListener('visibilitychange', hideFlush); document.removeEventListener('pointerdown', dlOutside); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
+      dispose() { window.removeEventListener('focus', reposOnReturn); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup); document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', bgOutside); document.removeEventListener('pointerdown', brOutside); window.removeEventListener('pointerup', peekOff); window.removeEventListener('beforeunload', leaveGuard); document.removeEventListener('visibilitychange', hideFlush); document.removeEventListener('pointerdown', dlOutside); if (ro) ro.disconnect(); clearInterval(S.anim.timer); host.innerHTML = ''; delete host.__pf; },
     };
     host.__pf = ctrl;
     return ctrl;
