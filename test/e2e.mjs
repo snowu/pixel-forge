@@ -1630,6 +1630,58 @@ section('apply edit with layers: each layer goes into the layer of the same name
   await lp.close(); await s5.close();
 }
 
+section('linked layers: one drawing shared by the frames of an animation');
+{
+  await import('../spritewright.js'); const SW = globalThis.Spritewright;
+  const r6 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-link-')); fs.mkdirSync(path.join(r6, 'chars'));
+  const KC = { k: [20, 16, 30], s: [240, 200, 160], b: [60, 90, 200], w: [140, 90, 40] }, cOf = (ch) => (ch === '.' ? 0 : SW.core.pack(...KC[ch]));
+  const STAND = ['............', '...kkkk.....', '...kssk.....', '...kssk.....', '...kkkk..w..', '..kbbbbk.w..', '..kbbbbk.w..', '..kbbbbk.w..', '...kkkk..w..', '...k..k.....', '...k..k.....', '...kk.kk....'];
+  const STEP = ['...kkkk.....', '...kssk.....', '...kssk.....', '...kkkk.....', '..kbbbbk....', '..kbbbbk.w..', '..kbbbbk.w..', '...kkkk..w..', '....kk...w..', '....k.k..w..', '...k...k....', '..kk...kk...']; // the weapon one row lower
+  const layer = (rs, cs) => Uint32Array.from(rs.join(''), (ch) => (cs.includes(ch) ? cOf(ch) : 0)), LAY = [['body', 'ksb'], ['weapon', 'w']];
+  for (const [name, rs, layered] of [['orc_0', STAND, true], ['orc_1', STEP, true], ['orc_2', STAND, false]]) {
+    fs.writeFileSync(path.join(r6, `chars/${name}.png`), fromRows(rs, KC).png);
+    if (layered) { const pk = SW.core.packLayers(LAY.map(([n, cs]) => ({ name: n, px: layer(rs, cs) })), 12, 12); fs.writeFileSync(path.join(r6, `chars/${name}.layers.png`), await SW.png.encode(pk.w, pk.h, pk.px, 1, pk.text)); }
+  }
+  const s6 = createServer({ root: r6, port: 0 }), b6 = await s6.listen(), lp = await ctx.newPage(), lerr = []; lp.on('pageerror', (e) => lerr.push(e.message));
+  lp.on('dialog', (dlg) => dlg.accept());
+  const A = (fn, arg) => lp.evaluate(fn, arg), open = async (p) => { await A((p) => document.getElementById('app').__pf.open(p), p); await lp.waitForTimeout(250); };
+  const pickLayer = async (name) => { const i = await lp.evaluate((n) => [...document.querySelectorAll('.pf-ly')].findIndex((r) => r.querySelector('input').value === n), name); await lp.locator('.pf-ly').nth(i).click(); await lp.waitForTimeout(80); return i; };
+  const draw = async (x, y) => { const b = await lp.locator('.pf-view').boundingBox(), v = await lp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; }); await lp.mouse.click(b.x + (v.ox + (x + 0.5) * v.z) / v.k, b.y + (v.oy + (y + 0.5) * v.z) / v.k); await lp.waitForTimeout(150); };
+  const weapon = (p) => A((p) => { const d = document.getElementById('app').__pf.docs.get(p), l = d.layers.find((x) => x.name === 'weapon'); return l ? { link: l.link || null, px: [...l.px], flat: [...d.flat()], n: d.layers.length } : null; }, p);
+  const RED = SW.core.pack(230, 30, 40), W = cOf('w');
+  await lp.goto(b6 + '?auth=off'); await lp.waitForSelector('.pf-item'); await open('chars/orc_0.png');
+  const wi = await pickLayer('weapon');
+  await lp.locator('.pf-ly').nth(wi).locator('.pf-ly-link').click(); await lp.waitForTimeout(400);
+  let o0 = await weapon('chars/orc_0.png'), o1 = await weapon('chars/orc_1.png'), o2 = await weapon('chars/orc_2.png');
+  ok(JSON.stringify(o0.link) === '{"id":"weapon","x":0,"y":0}' && JSON.stringify(o1.link) === '{"id":"weapon","x":0,"y":1}', 'linking finds where the weapon sits in each frame: one row lower in orc_1 ' + JSON.stringify([o0.link, o1.link]));
+  ok(o2 && o2.n === 2 && o2.link.y === 0 && o2.px[4 * 12 + 9] === W && JSON.stringify(o2.flat) === JSON.stringify([...layer(STAND, 'ksbw')]), 'a frame without layers gets a weapon layer, lifted out of its picture: it looks the same');
+  ok(await lp.locator('.pf-ly-linkrow').isVisible() && (await lp.locator('.pf-ly-linkat').innerText()) === '0, 0', 'the linked layer shows where its copy sits in this frame');
+  await hexIn(lp, '#e61e28'); await lp.keyboard.press('b'); await draw(9, 2); // a blade tip above the shaft
+  o1 = await weapon('chars/orc_1.png'); o2 = await weapon('chars/orc_2.png');
+  ok(o1.px[3 * 12 + 9] === RED && o2.px[2 * 12 + 9] === RED && o2.flat[2 * 12 + 9] === RED, 'drawing on it in one frame draws it in the others, at their offsets');
+  ok(/linked layer carried over: weapon → 2 frames/.test(await lp.locator('.pf-s-note').innerText()), 'the status line says so: ' + await lp.locator('.pf-s-note').innerText());
+  await lp.keyboard.press('Control+z'); await lp.waitForTimeout(250);
+  ok((await weapon('chars/orc_1.png')).px[3 * 12 + 9] === 0, 'undo in that frame takes it back from the others too');
+  await lp.keyboard.press('Control+y'); await lp.waitForTimeout(250);
+  // move one frame's copy: only that frame changes, and later edits follow the new offset
+  await open('chars/orc_1.png'); await pickLayer('weapon');
+  await lp.locator('.pf-ly-nudge button[data-nudge="0,-1"]').click(); await lp.waitForTimeout(250);
+  o0 = await weapon('chars/orc_0.png'); o1 = await weapon('chars/orc_1.png');
+  ok(o1.link.y === 0 && o1.px[2 * 12 + 9] === RED && o0.px[2 * 12 + 9] === RED && o0.px[1 * 12 + 9] === 0, 'moving this frame’s copy up moves it here only ' + JSON.stringify([o1.link, o1.px[2 * 12 + 9], o1.px[3 * 12 + 9], o0.px[2 * 12 + 9], o0.px[1 * 12 + 9], RED]));
+  await draw(9, 9); // a pommel, below the shaft in orc_1
+  ok((await weapon('chars/orc_0.png')).px[9 * 12 + 9] === RED, 'and an edit after that lands at the same spot in the others');
+  // Save writes the linked frames with it; a reload keeps the link
+  await lp.keyboard.press('Control+s'); await lp.waitForTimeout(600);
+  ok(/and the linked frames orc_0.png, orc_2.png/.test(await lp.locator('.pf-s-note').innerText()), 'Save writes the linked frames too: ' + await lp.locator('.pf-s-note').innerText());
+  ok(fs.existsSync(path.join(r6, 'chars/orc_2.layers.png')) && decodePng(fs.readFileSync(path.join(r6, 'chars/orc_2.png'))).rgba[(2 * 12 + 9) * 4] === 230, 'orc_2 is written with its new layers file, and its PNG shows the blade tip ' + JSON.stringify([fs.existsSync(path.join(r6, 'chars/orc_2.layers.png')), [...decodePng(fs.readFileSync(path.join(r6, 'chars/orc_2.png'))).rgba.slice((2 * 12 + 9) * 4, (2 * 12 + 9) * 4 + 4)]]));
+  await lp.reload(); await lp.waitForSelector('.pf-item'); await open('chars/orc_2.png');
+  ok(JSON.stringify((await weapon('chars/orc_2.png')).link) === '{"id":"weapon","x":0,"y":0}', 'after a reload the layer is still linked');
+  const wi2 = await pickLayer('weapon'); await lp.locator('.pf-ly').nth(wi2).locator('.pf-ly-link').click(); await lp.waitForTimeout(400);
+  ok(!(await weapon('chars/orc_2.png')).link && !(await weapon('chars/orc_0.png')).link && !(await weapon('chars/orc_1.png')).link, 'unlinking frees every frame, each keeping its copy');
+  ok(lerr.length === 0, 'no page errors ' + lerr.join('|'));
+  await lp.close(); await s6.close();
+}
+
 section('lossless saves (semi-transparent pixels must survive exactly)');
 {
   const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-e2e-alpha-')); const w = 16, h = 16, rgba = Buffer.alloc(w * h * 4);

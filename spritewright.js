@@ -505,11 +505,14 @@
      Layers. A sprite can be drawn in layers (line art, colour, shading); the game only ever sees them flattened, in the
      sprite's own PNG. The layers go next to it in name.layers.png: the layers stacked top to bottom (the first is the bottom
      layer) and their names, visibility and opacity in a tEXt chunk, so they travel with the PNG through git and pull requests.
+     A linked layer (link: { id, x, y }) is one drawing shared by the frames of an animation: every frame keeps its own copy, at
+     its own offset (x, y), and an edit to it in one frame is made in the others, moved by the difference of their offsets.
      ===================================================================================================== */
   const LAYERS_KEY = 'spritewright-layers';
   const layersPath = (path) => path.replace(/(\.png)?$/i, '.layers.png');
   const isLayersFile = (path) => /\.layers\.png$/i.test(path);
-  const layerOf = (l) => ({ name: l.name, visible: l.visible !== false, opacity: l.opacity == null ? 100 : Math.max(0, Math.min(100, Math.round(l.opacity))), px: l.px });
+  const linkOf = (k) => (k && typeof k.id === 'string' && k.id ? { id: k.id, x: Math.round(+k.x || 0), y: Math.round(+k.y || 0) } : null);
+  const layerOf = (l) => { const o = { name: l.name, visible: l.visible !== false, opacity: l.opacity == null ? 100 : Math.max(0, Math.min(100, Math.round(l.opacity))), px: l.px }, k = linkOf(l.link); if (k) o.link = k; return o; };
   /** The layers drawn bottom to top (hidden ones skipped, opacity applied) into one image: straight-alpha "normal" blending. */
   function flattenLayers(layers, n) {
     const out = new Uint32Array(n);
@@ -529,7 +532,7 @@
   /** Layers to the sidecar image: one w×h band per layer, bottom layer first, and what the bands are in the text. */
   function packLayers(layers, w, h) {
     const px = new Uint32Array(w * h * layers.length); layers.forEach((l, k) => px.set(l.px, k * w * h));
-    const meta = { version: 1, layers: layers.map((l) => ({ name: l.name, ...(l.visible === false ? { visible: false } : {}), ...(l.opacity != null && l.opacity !== 100 ? { opacity: l.opacity } : {}) })) };
+    const meta = { version: 1, layers: layers.map((l) => ({ name: l.name, ...(l.visible === false ? { visible: false } : {}), ...(l.opacity != null && l.opacity !== 100 ? { opacity: l.opacity } : {}), ...(linkOf(l.link) ? { link: linkOf(l.link) } : {}) })) };
     return { w, h: h * layers.length, px, text: { [LAYERS_KEY]: JSON.stringify(meta).replace(/[\u0080-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) } };
   }
   /** The sidecar image back to layers of w×h, or null when it is not one (no text, or bands that do not fit). */
@@ -537,16 +540,36 @@
     let meta; try { meta = JSON.parse((img.text || {})[LAYERS_KEY]); } catch { return null; }
     const list = meta && Array.isArray(meta.layers) ? meta.layers : null;
     if (!list || !list.length || img.w !== w || img.h !== h * list.length) return null;
-    return list.map((l, k) => layerOf({ name: String(l.name || 'Layer ' + (k + 1)), visible: l.visible, opacity: l.opacity, px: img.px.slice(k * w * h, (k + 1) * w * h) }));
+    return list.map((l, k) => layerOf({ name: String(l.name || 'Layer ' + (k + 1)), visible: l.visible, opacity: l.opacity, link: l.link, px: img.px.slice(k * w * h, (k + 1) * w * h) }));
   }
   /** A short fingerprint of layers (names, visibility, opacity and pixels), to tell whether they changed. */
   function layersSig(layers) {
     if (layers.length < 2) return '';
     let hsh = 0x811c9dc5; const mixIn = (v) => { hsh = Math.imul(hsh ^ v, 0x01000193) >>> 0; };
-    for (const l of layers) { for (const c of l.name) mixIn(c.charCodeAt(0)); mixIn(l.visible === false ? 1 : 2); mixIn(l.opacity == null ? 100 : l.opacity); for (let i = 0; i < l.px.length; i++) mixIn(l.px[i]); }
+    for (const l of layers) { for (const c of l.name) mixIn(c.charCodeAt(0)); mixIn(l.visible === false ? 1 : 2); mixIn(l.opacity == null ? 100 : l.opacity); if (l.link) { for (const c of l.link.id) mixIn(c.charCodeAt(0)); mixIn(l.link.x + 1e4); mixIn(l.link.y + 1e4); } for (let i = 0; i < l.px.length; i++) mixIn(l.px[i]); }
     return layers.length + ':' + hsh.toString(36);
   }
   const copyLayers = (layers) => layers.map((l) => ({ ...l, px: l.px.slice() }));
+  /** An edit to a linked layer carried to another frame's copy: the pixels that changed (before → after), moved by (dx, dy).
+      Only those pixels are written, so what the other copy has beyond this frame's edges is kept. Returns how many changed. */
+  function linkCarry(before, after, target, w, h, dx, dy) {
+    let n = 0;
+    for (let i = 0; i < w * h; i++) {
+      if (before[i] === after[i]) continue; const x = (i % w) + dx, y = ((i / w) | 0) + dy;
+      if (x < 0 || y < 0 || x >= w || y >= h || target[y * w + x] === after[i]) continue; target[y * w + x] = after[i]; n++;
+    }
+    return n;
+  }
+  /** Where a drawing sits in another image, within ±reach: the shift at which its opaque pixels agree with `img` most. */
+  function findShift(px, img, w, h, reach = 4) {
+    let best = { x: 0, y: 0, s: -1 };
+    for (let dy = -reach; dy <= reach; dy++) for (let dx = -reach; dx <= reach; dx++) {
+      let a = 0, n = 0;
+      for (let i = 0; i < w * h; i++) { if (isClear(px[i])) continue; n++; const x = (i % w) + dx, y = ((i / w) | 0) + dy; if (x >= 0 && y >= 0 && x < w && y < h && samePx(px[i], img[y * w + x])) a++; }
+      const s = n ? a / n : 0; if (s > best.s + 1e-9 || (Math.abs(s - best.s) <= 1e-9 && Math.abs(dx) + Math.abs(dy) < Math.abs(best.x) + Math.abs(best.y))) best = { x: dx, y: dy, s };
+    }
+    return best;
+  }
 
   /* =====================================================================================================
      A document is one image being edited, with undo history.
@@ -1356,7 +1379,9 @@
 .pf-ccount{font-weight:400;letter-spacing:0;text-transform:none;color:var(--pf-muted);margin-left:4px}.pf-ccount.over{color:var(--pf-bad)}
 .pf-ly-list{display:flex;flex-direction:column;gap:2px}.pf-ly{display:flex;gap:6px;align-items:center;padding:2px;border:1px solid transparent;cursor:pointer}.pf-ly.on{border-color:var(--pf-accent);background:rgba(224,140,255,.10)}
 .pf .pf-ly canvas{flex:none;width:28px;height:28px;image-rendering:pixelated;background:repeating-conic-gradient(#3a2d55 0 25%,#1c1530 0 50%) 0 0/8px 8px}.pf .pf-ly input{flex:1;min-width:0;min-height:26px;padding:3px 6px}.pf .pf-ly .pf-ly-eye{min-height:26px;width:28px;padding:0;flex:none}.pf .pf-ly.off canvas,.pf .pf-ly.off input{opacity:.45}
-.pf-ly-tip[hidden],.pf-ly-oprow[hidden]{display:none}
+.pf-ly-tip[hidden],.pf-ly-oprow[hidden],.pf-ly-linkrow[hidden]{display:none}
+.pf .pf-ly .pf-ly-link{min-height:26px;width:28px;padding:0;flex:none;justify-content:center;color:var(--pf-faint)}.pf .pf-ly .pf-ly-link.on{color:var(--pf-accent);border-color:var(--pf-accent)}.pf .pf-ly .pf-ly-link .pf-ic{width:15px;height:15px}
+.pf-ly-linkrow{align-items:center}.pf-ly-nudge{display:inline-flex;gap:2px;margin-left:auto}.pf .pf-ly-nudge button{min-height:24px;padding:1px 7px}
 .pf-notes-n{font-weight:400;letter-spacing:0;text-transform:none;color:var(--pf-muted);margin-left:4px}
 .pf-note-list{display:flex;flex-direction:column;gap:4px}.pf-note-item{display:flex;gap:6px;align-items:center}.pf-note-item b{flex:none;min-width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;background:var(--pf-accent2);color:var(--pf-on);font-size:11px}
 .pf .pf-note-item input{flex:1;min-width:0;min-height:26px;padding:3px 6px}.pf .pf-note-item button{min-height:26px;padding:0 7px}.pf-note-add.on{background:rgba(224,140,255,.18)!important;color:var(--pf-accent2)!important}
@@ -1479,6 +1504,7 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   /* Interface icons: simple 24-unit line drawings (currentColor, so they follow the theme). */
   const ICONS = {
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     feedback: '<path d="M4 5h16v11h-9l-4.5 3.5V16H4z"/><path d="M8 9h8"/><path d="M8 12h5"/>',
     pen: '<path d="M4 20l1.2-4.2L16.4 4.6a2.1 2.1 0 0 1 3 3L8.2 18.8z"/><path d="M14.4 6.6l3 3"/>',
     erase: '<path d="M9 20h11"/><path d="M5.7 15.3l8.8-8.8a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 19H8.4l-2.7-2.7a1 1 0 0 1 0-1z"/><path d="M9.6 11.4l5 5"/>',
@@ -1752,6 +1778,7 @@
         <div class="pf-panel pf-layers"><h4>Layers <span class="pf-notes-n pf-ly-n"></span></h4><div class="pf-ly-list" role="listbox" aria-label="Layers, top first"></div>
           <div class="pf-row"><button class="pf-ly-add" title="A new empty layer above this one">+ layer</button><button class="pf-ly-dup" title="A copy of this layer, above it">Copy</button><button class="pf-ly-up" title="Move this layer up">▲</button><button class="pf-ly-down" title="Move this layer down">▼</button><button class="pf-ly-merge" title="Merge this layer into the one below">Merge ↓</button><button class="pf-ly-del" title="Delete this layer">✕</button></div>
           <div class="pf-row pf-ly-oprow" hidden><label>opacity <input type="range" class="pf-ly-op" min="0" max="100" value="100" aria-label="Layer opacity"></label><span class="pf-note pf-ly-opv"></span></div>
+          <div class="pf-row pf-ly-linkrow" hidden><span class="pf-note">linked · here at <b class="pf-ly-linkat"></b></span><span class="pf-ly-nudge"><button type="button" data-nudge="-1,0" title="Move this frame's copy left (the other frames stay)">◀</button><button type="button" data-nudge="0,-1" title="Move this frame's copy up">▲</button><button type="button" data-nudge="0,1" title="Move this frame's copy down">▼</button><button type="button" data-nudge="1,0" title="Move this frame's copy right">▶</button></span></div>
           <div class="pf-note pf-ly-tip">Saved flat, with the layers in <code class="pf-ly-file"></code>.</div></div>
         <div class="pf-panel"><h4>Palette</h4><div class="pf-pal-wrap"><div class="pf-sw pf-pal-colors"></div><div class="pf-note pf-pal-empty">No palette yet: load one, or add colours.</div></div>
           <div class="pf-sub">In this image<span class="pf-ccount"></span></div><div class="pf-sw pf-img-colors"></div><div class="pf-note pf-off"></div>
@@ -2119,7 +2146,7 @@
     async function openSprite(path) {
       if (path !== S.cur) { commitFloat(); S.sel = null; S.lastPt = null; S.sheetK = 0; }
       if (!(await loadDoc(path))) return;
-      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); branchBase(d);
+      S.cur = path; S.touched = false; const d = doc(); loadFrames(d); fit(); branchBase(d); linkBase(d);
       // Opening a sprite reveals its folder, so navigating back to it never
       // leaves you looking at a shut door. An explicit fold still hides it.
       const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
@@ -2665,7 +2692,7 @@
     }
     $('.pf-tools').innerHTML = TOOLS.filter((x) => !x[3]).map(([k, n, key]) => `<button data-t="${k}" title="${n} (${key})" aria-label="${n}">${icon(k)}</button>`).join('');
     $('.pf-keys').innerHTML = KEYS.map(([k, v]) => `<div class="pf-key"><kbd>${esc(k)}</kbd><span>${esc(v)}</span></div>`).join('');
-    const changedUi = () => { keepSoon(); renderColors(); status(); renderListSoon(); drawPreview(); render(); renderFamilySoon(); renderLayersSoon(); };
+    const changedUi = () => { keepSoon(); renderColors(); status(); renderListSoon(); drawPreview(); render(); renderFamilySoon(); renderLayersSoon(); syncLinksSoon(); };
     let lyTimer = 0; const renderLayersSoon = () => { clearTimeout(lyTimer); lyTimer = setTimeout(renderLayers, 120); };
     let famTimer = 0; const renderFamilySoon = () => { clearTimeout(famTimer); famTimer = setTimeout(renderFamily, 150); };
     let listTimer = 0; const renderListSoon = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 120); };
@@ -2880,16 +2907,23 @@
     }
     /* Save: writes to the project when it can be written (local server, folder, the page's save hook). Everything else stays in
        this browser, kept as you draw (Save only makes that immediate): Download and Propose PR are how sprites leave it. */
+    /** Write one sprite (and its layers file) out of the browser. Returns how many stray-alpha pixels were snapped first. */
+    async function writeOut(d) {
+      const snapped = tidyAlpha(d), blob = await pngOf(d);
+      if (O.save) await O.save(d, blob); else {
+        await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
+        const lf = await layerFile(d); if (lf && lf.delete && S.src.remove) await S.src.remove(lf.path); else if (lf && !lf.delete) await S.src.write(lf.path, lf.blob); if (lf && (!lf.delete || S.src.remove)) layersSent(d, lf);
+      }
+      d.markSaved(); d.onDisk = true; return snapped;
+    }
     async function save() {
       const d = doc(); if (!d) return; commitFloat();
       try {
         if (savesOut(d)) {
-          const snapped = tidyAlpha(d), blob = await pngOf(d);
-          if (O.save) await O.save(d, blob); else {
-            await S.src.write(d.path, new Uint8Array(await blob.arrayBuffer()));
-            const lf = await layerFile(d); if (lf && lf.delete && S.src.remove) await S.src.remove(lf.path); else if (lf && !lf.delete) await S.src.write(lf.path, lf.blob); if (lf && (!lf.delete || S.src.remove)) layersSent(d, lf);
-          }
-          d.markSaved(); d.onDisk = true; note('saved ' + d.path + (snapped ? ` · ${snapped} stray-alpha pixel${snapped > 1 ? 's' : ''} snapped to the project's alpha rule (undo brings them back)` : ''));
+          const snapped = await writeOut(d), ids = new Set(d.layers.filter((l) => l.link).map((l) => l.link.id)), also = [];
+          if (ids.size) await linkBusy; // the frames a linked layer changed are part of this edit: they are saved with it
+          for (const x of S.docs.values()) if (x !== d && savesOut(x) && x.unsaved && x.layers.some((l) => l.link && ids.has(l.link.id)) && famFor(d) && famFor(d).members.includes(x.path)) { await writeOut(x); also.push(fileName(x)); }
+          note('saved ' + d.path + (also.length ? ` and the linked frame${also.length > 1 ? 's' : ''} ${also.join(', ')}` : '') + (snapped ? ` · ${snapped} stray-alpha pixel${snapped > 1 ? 's' : ''} snapped to the project's alpha rule (undo brings them back)` : ''));
         } else {
           await flushDrafts(); if (!keeping()) note('This browser cannot keep edits: use Download.'); // otherwise the status bar already says "kept in this browser"
         }
@@ -3693,7 +3727,8 @@
       $('.pf-ly-n').textContent = n > 1 ? '· ' + n : ''; $('.pf-ly-del').disabled = n < 2; $('.pf-ly-merge').disabled = a === 0; $('.pf-ly-down').disabled = a === 0; $('.pf-ly-up').disabled = a === n - 1;
       $('.pf-ly-oprow').hidden = n < 2; for (const c of ['.pf-ly-up', '.pf-ly-down', '.pf-ly-merge', '.pf-ly-del']) $(c).hidden = n < 2; $('.pf-ly-op').value = d.layer.opacity; $('.pf-ly-opv').textContent = d.layer.opacity + '%';
       $('.pf-ly-tip').hidden = n < 2; $('.pf-ly-file').textContent = layersPath(fileName(d));
-      list.innerHTML = n < 2 ? '' : d.layers.map((l, k) => [l, k]).reverse().map(([l, k]) => `<div class="pf-ly${k === a ? ' on' : ''}${l.visible ? '' : ' off'}" data-k="${k}" role="option" aria-selected="${k === a}"><button type="button" class="pf-ly-eye" data-k="${k}" aria-pressed="${l.visible}" title="${l.visible ? 'Hide' : 'Show'} this layer">${l.visible ? '◉' : '○'}</button><canvas data-k="${k}"></canvas><input type="text" data-k="${k}" value="${esc(l.name)}" aria-label="Layer name"></div>`).join('');
+      list.innerHTML = n < 2 ? '' : d.layers.map((l, k) => [l, k]).reverse().map(([l, k]) => `<div class="pf-ly${k === a ? ' on' : ''}${l.visible ? '' : ' off'}" data-k="${k}" role="option" aria-selected="${k === a}"><button type="button" class="pf-ly-eye" data-k="${k}" aria-pressed="${l.visible}" title="${l.visible ? 'Hide' : 'Show'} this layer">${l.visible ? '◉' : '○'}</button><canvas data-k="${k}"></canvas><input type="text" data-k="${k}" value="${esc(l.name)}" aria-label="Layer name"><button type="button" class="pf-ly-link${l.link ? ' on' : ''}" data-k="${k}" aria-pressed="${!!l.link}" title="${l.link ? 'Linked: one drawing shared by every frame of the animation. Click to unlink (each frame keeps its copy)' : 'Link this layer across the frames of the animation: draw it once, every frame follows'}"${l.link || famFor(d) ? '' : ' hidden'}>${icon('link')}</button></div>`).join('');
+      const lk = d.layer.link; $('.pf-ly-linkrow').hidden = !lk || n < 2; if (lk) $('.pf-ly-linkat').textContent = `${lk.x}, ${lk.y}`;
       $$('.pf-ly canvas').forEach((c) => { const l = d.layers[+c.dataset.k]; drawPx(c, { w: d.w, h: d.h, imageData: () => new ImageData(new Uint8ClampedArray(l.px.buffer.slice(0)), d.w, d.h) }); });
     }
     /** A change to the layers (not their pixels): one undo step. */
@@ -3708,6 +3743,7 @@
     $('.pf-ly-del').onclick = () => { const d = doc(); if (!d || d.layers.length < 2) return; const name = d.layer.name; layerEdit((x) => { x.layers.splice(x.active, 1); x.active = Math.max(0, x.active - 1); }); note(`deleted ${name} (Ctrl+Z brings it back)`); };
     $('.pf-ly-list').addEventListener('click', (e) => {
       const d = doc(), row = e.target.closest('.pf-ly'); if (!d || !row) return; const k = +row.dataset.k;
+      if (e.target.closest('.pf-ly-link')) return d.layers[k].link ? unlinkLayer(d, k) : linkLayer(d, k);
       if (e.target.closest('.pf-ly-eye')) return layerEdit((x) => { x.layers[k].visible = !x.layers[k].visible; });
       if (k !== d.active) { commitFloat(); S.sel = null; d.active = k; keepSoon(); renderLayers(); render(); }
     });
@@ -3715,6 +3751,69 @@
     { let session = false;
       $('.pf-ly-op').oninput = (e) => { const d = doc(); if (!d) return; if (!session) { d.snapshot(); session = true; } d.layer.opacity = +e.target.value; $('.pf-ly-opv').textContent = d.layer.opacity + '%'; keepSoon(); status(); render(); drawPreview(); };
       $('.pf-ly-op').onchange = () => { session = false; changedUi(); }; }
+    /* Linked layers: one drawing (a helm, a weapon) shared by the frames of an animation. Each frame keeps its own copy, at
+       its own offset (layer.link.x, .y); an edit to the copy in one frame is made in the others, moved by the difference of the
+       offsets (linkCarry). `linkWas` holds each linked layer as it was last carried, so only new changes travel, undo included. */
+    const linkWas = new WeakMap(); // doc → Map(id → { px, x, y })
+    const wasOf = (d) => { let m = linkWas.get(d); if (!m) linkWas.set(d, (m = new Map())); return m; };
+    function linkBase(d) { if (!d) return; const m = wasOf(d); for (const l of d.layers) if (l.link && !m.has(l.link.id)) m.set(l.link.id, { px: l.px.slice(), x: l.link.x, y: l.link.y }); }
+    const linked = (x, id) => x.layers.find((l) => l.link && l.link.id === id);
+    async function linkPeers(d) { const fam = famFor(d), out = []; if (!fam) return out; for (const p of fam.members) { if (p === d.path) continue; const x = await loadDoc(p); if (x && x.w === d.w && x.h === d.h) out.push(x); } return out; }
+    let linkBusy = Promise.resolve(), linkTimer = 0;
+    const syncLinksSoon = () => { clearTimeout(linkTimer); linkTimer = setTimeout(() => { const d = doc(); if (d && d.layers.some((l) => l.link)) linkBusy = linkBusy.then(() => syncLinks(d)); }, 0); };
+    async function syncLinks(d) {
+      const m = wasOf(d), changed = [];
+      for (const l of d.layers) {
+        if (!l.link) continue; const id = l.link.id, was = m.get(id);
+        if (!was || was.x !== l.link.x || was.y !== l.link.y) { m.set(id, { px: l.px.slice(), x: l.link.x, y: l.link.y }); continue; } // new here, or this copy was moved: nothing to carry
+        if (was.px.every((v, i) => v === l.px[i])) continue;
+        const after = l.px.slice(); let frames = 0;
+        for (const x of await linkPeers(d)) {
+          const M = linked(x, id); if (!M) continue; linkBase(x);
+          const copy = M.px.slice(), n = linkCarry(was.px, after, copy, d.w, d.h, M.link.x - l.link.x, M.link.y - l.link.y); if (!n) continue;
+          x.snapshot(); M.px = copy; wasOf(x).set(id, { px: copy.slice(), x: M.link.x, y: M.link.y }); frames++;
+        }
+        m.set(id, { px: after, x: l.link.x, y: l.link.y }); if (frames) changed.push(`${l.name} → ${frames} frame${frames > 1 ? 's' : ''}`);
+      }
+      if (changed.length) { renderList(); renderFamily(); drawPreview(); note(`linked layer${changed.length > 1 ? 's' : ''} carried over: ${changed.join(', ')}${savesOut(d) ? ' (Save writes them too)' : ''}`); }
+    }
+    /** Link layer k of d across its frames: the other frames get a copy where it fits them best (their own layer of that name,
+        or their picture), lifted out of the layers under it there. One undo step per image. */
+    async function linkLayer(d, k) {
+      commitFloat(); const L = d.layers[k], peers = await linkPeers(d);
+      if (!peers.length) return note('Linking shares a layer between the frames of an animation (numbered files like walk_0, walk_1) of the same size: this sprite has none.');
+      const id = L.name, plan = peers.map((x) => {
+        const M = x.layers.find((l) => l.name === L.name), sh = findShift(L.px, M ? M.px : x.flat(), d.w, d.h), copy = new Uint32Array(d.w * d.h);
+        linkCarry(new Uint32Array(d.w * d.h), L.px, copy, d.w, d.h, sh.x, sh.y);
+        return { x, M, sh, copy, differs: M ? countDiff(M.px, copy) : 0 };
+      });
+      const odd = plan.filter((q) => q.differs).map((q) => `${fileName(q.x)} (${q.differs} px differ)`);
+      if (!confirm(`Link “${L.name}” across ${plan.length + 1} frames? Draw it in any of them and the others follow.\n\n${plan.filter((q) => !q.M).length ? `Frames without a “${L.name}” layer get one, holding a copy of it where it fits them best.\n` : ''}${odd.length ? `These frames' own “${L.name}” layers become this copy: ${odd.join(', ')}.\n` : ''}\nCtrl+Z undoes it frame by frame.`)) return;
+      d.snapshot(); L.link = { id, x: 0, y: 0 }; wasOf(d).set(id, { px: L.px.slice(), x: 0, y: 0 });
+      for (const q of plan) {
+        const { x, copy, sh } = q, link = { id, x: sh.x, y: sh.y }; x.snapshot();
+        if (q.M) { q.M.px = copy; q.M.link = link; }
+        else {
+          const flat = x.flat(); // lift the drawing out of whatever shows it now, so it is not drawn twice
+          for (let i = 0; i < copy.length; i++) { if (isClear(copy[i]) || !samePx(copy[i], flat[i])) continue; for (let t = x.layers.length - 1; t >= 0; t--) if (x.layers[t].visible !== false && !isClear(x.layers[t].px[i])) { x.layers[t].px[i] = 0; break; } }
+          x.layers.splice(Math.min(k, x.layers.length), 0, layerOf({ name: L.name, px: copy, link }));
+        }
+        wasOf(x).set(id, { px: copy.slice(), x: link.x, y: link.y });
+      }
+      changedUi(); renderList(); note(`“${L.name}” linked across ${plan.length + 1} frames: draw it in one, the others follow`);
+    }
+    async function unlinkLayer(d, k) {
+      commitFloat(); const id = d.layers[k].link.id, name = d.layers[k].name;
+      d.snapshot(); delete d.layers[k].link; wasOf(d).delete(id);
+      for (const x of await linkPeers(d)) { const M = linked(x, id); if (!M) continue; x.snapshot(); delete M.link; wasOf(x).delete(id); }
+      changedUi(); renderList(); note(`“${name}” unlinked: every frame keeps its own copy`);
+    }
+    $('.pf-ly-nudge').onclick = (e) => {
+      const b = e.target.closest('[data-nudge]'), d = doc(); if (!b || !d || !d.layer.link) return; const [dx, dy] = b.dataset.nudge.split(',').map(Number);
+      commitFloat(); S.sel = null; d.snapshot(); const l = d.layer, moved = new Uint32Array(d.w * d.h);
+      linkCarry(new Uint32Array(d.w * d.h), l.px, moved, d.w, d.h, dx, dy); l.px = moved; l.link = { ...l.link, x: l.link.x + dx, y: l.link.y + dy };
+      wasOf(d).set(l.link.id, { px: moved.slice(), x: l.link.x, y: l.link.y }); changedUi();
+    };
     /* Fold the right column's sections by their titles. Notes and Reference start folded; the choice is remembered. */
     const SHUT_KEY = 'pf:shut', panelKey = (p) => ([...p.classList].find((c) => c !== 'pf-panel' && c !== 'pf-shut') || p.querySelector(':scope>h4').textContent.trim().split(/\s/)[0]).replace(/^pf-/, '').toLowerCase();
     let shut; try { shut = new Set(JSON.parse(localStorage.getItem(SHUT_KEY) || 'null') || ['notes', 'refpanel']); } catch { shut = new Set(['notes', 'refpanel']); }
@@ -4018,5 +4117,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { portEdit, portLayers, layerMap, ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { portEdit, portLayers, layerMap, linkCarry, findShift, ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
 });

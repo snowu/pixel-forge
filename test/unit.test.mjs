@@ -970,3 +970,24 @@ test('layerMap: by name first, then by position when the stacks are the same siz
   assert.deepEqual(C.layerMap(['line', 'colour'], ['line', 'paint']), [0, 1]);
   assert.deepEqual(C.layerMap(['line', 'colour', 'x'], ['line', 'paint']), [0, -1, -1]);
 });
+
+/* ---------- linked layers ---------- */
+test('linkCarry: only what changed travels, moved by the offset, and what lies past the edge is skipped', () => {
+  const was = img(['....', '.ww.', '....']), now = img(['...r', '.wr.', '....']), other = img(['.ww.', '....', 'kkkk']);
+  const n = C.linkCarry(was, now, other, 4, 3, 0, -1);
+  assert.equal(n, 1, 'the bottom-right pixel would land off the image');
+  assert.deepEqual(rows(other, 4), ['.wr.', '....', 'kkkk'], 'the red pixel lands a row up; the rest of that frame is untouched');
+});
+test('findShift: where a drawing sits in another image, ties to the smallest move', () => {
+  const helm = img(['......', '.kk...', '.kk...', '......']);
+  assert.deepEqual(C.findShift(helm, img(['......', '......', '..kk..', '..kk..']), 6, 4), { x: 1, y: 1, s: 1 });
+  assert.deepEqual(C.findShift(helm, helm, 6, 4), { x: 0, y: 0, s: 1 });
+});
+test('a linked layer keeps its link through the layers file, and the link counts as a change', () => {
+  const ls = [{ name: 'body', px: img(['kk', 'kk']) }, { name: 'helm', px: img(['r.', '..']), link: { id: 'helm', x: 0, y: -1 } }];
+  const back = C.unpackLayers(C.packLayers(ls, 2, 2), 2, 2);
+  assert.deepEqual(back.map((l) => l.link || null), [null, { id: 'helm', x: 0, y: -1 }]);
+  const plain = ls.map((l) => ({ name: l.name, px: l.px }));
+  assert.notEqual(C.layersSig(ls), C.layersSig(plain));
+  assert.notEqual(C.layersSig(ls), C.layersSig([ls[0], { ...ls[1], link: { id: 'helm', x: 0, y: 0 } }]), 'moving a copy is a change too');
+});
