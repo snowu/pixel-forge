@@ -400,6 +400,57 @@
   }
   /** Which frame plays at tick t when frame i lasts holds[i] ticks. */
   const holdFrame = (t, holds, n) => { const hs = Array.from({ length: n }, (_, i) => Math.max(1, (holds && holds[i]) | 0 || 1)), total = hs.reduce((a, b) => a + b, 0); let r = t % total; for (let i = 0; i < n; i++) { if (r < hs[i]) return i; r -= hs[i]; } return 0; };
+  /** Carry an edit (before → after) over to another frame of the same size, keeping what the edit did not touch.
+      1. Recolours: an old colour every pixel of which became one new colour is swapped everywhere in the target, exactly.
+      2. The rest, pixel by pixel: where does the window of `before` around it sit in the target, within ±reach? Each pixel
+         takes the shift its changed neighbours agree on (ties go to the shift of the whole frame), so a helm that bobs a pixel
+         follows the bob and a weapon that stays put stays put.
+      3. Neighbouring pixels on the same shift form a region, applied all or nothing: a region whose surroundings do not match
+         well enough (a leg in another pose) is skipped whole, never half-applied, and comes back in `todo` to redraw by hand.
+      4. A region whose surroundings match `after` at least as well as `before` is already there (an earlier apply, or drawn by
+         hand): it is left alone, so applying the same edit twice changes nothing.
+      Clear pixels agreeing with clear pixels are no evidence (empty space matches anywhere). */
+  function portEdit(before, after, target, w, h, { reach = 4, radius = 3, pool = 3, min = 0.8 } = {}) {
+    const out = target.slice(), changed = [], todo = [];
+    for (let i = 0; i < w * h; i++) if (!samePx(before[i], after[i])) changed.push(i);
+    const count = new Map(), to = new Map();
+    for (const c of before) if (!isClear(c)) count.set(c, (count.get(c) || 0) + 1);
+    for (const i of changed) { const c = before[i]; if (isClear(c)) continue; const m = to.get(c); if (!m) to.set(c, { c: after[i], n: 1 }); else if (m.c !== after[i]) m.c = null; else m.n++; }
+    const recolours = new Map([...to].filter(([c, m]) => m.c !== null && !isClear(m.c) && m.n === count.get(c) && m.n >= 2).map(([c, m]) => [c, m.c]));
+    for (let i = 0; i < out.length; i++) if (recolours.has(out[i])) out[i] = recolours.get(out[i]);
+    const rest = changed.filter((i) => !recolours.has(before[i])), regions = [];
+    if (!rest.length) return { px: out, recolours, regions, todo, shift: { x: 0, y: 0 } };
+    const at = (px, x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : px[y * w + x]), offs = [];
+    for (let y = -reach; y <= reach; y++) for (let x = -reach; x <= reach; x++) offs.push([x, y]);
+    let shift = null; // the whole frame's best shift
+    for (const [ox, oy] of offs) { let a = 0, n = 0; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = before[y * w + x], q = at(target, x + ox, y + oy); if (isClear(p) && isClear(q)) continue; n++; if (samePx(p, q)) a++; } const s = n ? a / n : 0; if (!shift || s > shift.s) shift = { x: ox, y: oy, s }; }
+    const near = (k) => Math.abs(offs[k][0] - shift.x) + Math.abs(offs[k][1] - shift.y), K = offs.length;
+    // per changed pixel and shift: how much of the window of `before` (and, apart, of `after`) around it agrees with the target there
+    const windows = (src) => { const a = new Float32Array(rest.length * K), n = new Float32Array(rest.length * K);
+      rest.forEach((i, r) => { const x = i % w, y = (i / w) | 0;
+        offs.forEach(([ox, oy], k) => { let m = 0, c = 0;
+          for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) { const p = at(src, x + dx, y + dy), q = at(target, x + dx + ox, y + dy + oy); if (isClear(p) && isClear(q)) continue; c++; if (samePx(p, q)) m++; }
+          a[r * K + k] = m; n[r * K + k] = c; }); });
+      return [a, n]; };
+    const [agree, seen] = windows(before), [agreeAfter, seenAfter] = windows(after), idx = new Map(rest.map((i, r) => [i, r]));
+    const pick = new Int32Array(rest.length), score = new Float32Array(rest.length), A = new Float32Array(K), N = new Float32Array(K);
+    rest.forEach((i, r) => { const x = i % w, y = (i / w) | 0; A.fill(0); N.fill(0);
+      for (let dy = -pool; dy <= pool; dy++) for (let dx = -pool; dx <= pool; dx++) { const j = x + dx < 0 || x + dx >= w ? undefined : idx.get((y + dy) * w + x + dx); if (j !== undefined) for (let k = 0; k < K; k++) { A[k] += agree[j * K + k]; N[k] += seen[j * K + k]; } }
+      let b = 0, bs = -1; for (let k = 0; k < K; k++) { const s = N[k] ? A[k] / N[k] : 0; if (s > bs + 1e-6 || (s > bs - 1e-6 && near(k) < near(b))) { b = k; bs = s; } }
+      pick[r] = b; score[r] = seen[r * K + b] ? agree[r * K + b] / seen[r * K + b] : 0; });
+    const taken = new Uint8Array(rest.length);
+    for (let r0 = 0; r0 < rest.length; r0++) {
+      if (taken[r0]) continue; const reg = [r0]; taken[r0] = 1;
+      for (let t = 0; t < reg.length; t++) { const i = rest[reg[t]], x = i % w, y = (i / w) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const j = x + dx < 0 || x + dx >= w ? undefined : idx.get((y + dy) * w + x + dx); if (j !== undefined && !taken[j] && pick[j] === pick[r0]) { taken[j] = 1; reg.push(j); } } }
+      const [ox, oy] = offs[pick[r0]], pixels = reg.map((j) => rest[j]), dest = pixels.map((i) => { const x = i % w + ox, y = ((i / w) | 0) + oy; return x < 0 || y < 0 || x >= w || y >= h ? -1 : y * w + x; });
+      const R = { pixels, x: ox, y: oy, score: reg.reduce((t, j) => t + score[j], 0) / reg.length }; R.applied = R.score >= min; regions.push(R);
+      let done = 0; for (let k = 0; k < K; k++) { let a = 0, n = 0; for (const j of reg) { a += agreeAfter[j * K + k]; n += seenAfter[j * K + k]; } if (n) done = Math.max(done, a / n); }
+      if (done >= min && done >= reg.reduce((t, j) => t + agree[j * K + pick[j]], 0) / Math.max(1, reg.reduce((t, j) => t + seen[j * K + pick[j]], 0))) { R.applied = false; R.done = true; continue; }
+      dest.forEach((d, k) => { if (d < 0) return; if (R.applied) out[d] = after[pixels[k]]; else todo.push(d); });
+    }
+    return { px: out, recolours, regions, todo, shift: { x: shift.x, y: shift.y } };
+  }
   /** Normalise a drag between two cells into a rectangle clipped to the image (null when it misses the image). */
   function rectBetween(a, b, w, h) {
     const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y)), x1 = Math.min(w - 1, Math.max(a.x, b.x)), y1 = Math.min(h - 1, Math.max(a.y, b.y));
@@ -463,6 +514,7 @@
      A document is one image being edited, with undo history.
      base    = the pixels when this session loaded it (what a pull request is measured against)
      saved   = the pixels at the last save (what "unsaved changes" is measured against)
+     ported  = the flat pixels at the last "apply edit" to other frames (what the next one is measured against); undo and redo forget it
      ===================================================================================================== */
   /* layers  = bottom first; px is the current layer's pixels (what every tool draws on), flat() what the file holds.
      A sprite with one plain layer is exactly its PNG: flat() is px itself. */
@@ -491,7 +543,7 @@
     state() { const layers = copyLayers(this.layers); return { w: this.w, h: this.h, active: this.active, layers, px: layers[this.active].px }; }
     restore(s) { this.w = s.w; this.h = s.h; this.layers = s.layers; this.active = s.active; }
     snapshot() { this.undo.push(this.state()); if (this.undo.length > 100) this.undo.shift(); this.redo.length = 0; }
-    swap(from, to) { to.push(this.state()); this.restore(from.pop()); }
+    swap(from, to) { this.ported = null; to.push(this.state()); this.restore(from.pop()); }
     undoOnce() { if (!this.undo.length) return false; this.swap(this.undo, this.redo); return true; }
     redoOnce() { if (!this.redo.length) return false; this.swap(this.redo, this.undo); return true; }
     same(ref) { return ref.w === this.w && ref.h === this.h && countDiff(ref.px, this.flat()) === 0 && (ref.sig || '') === this.sig(); }
@@ -1168,7 +1220,7 @@
 .pf-ctx-bar{display:flex;gap:10px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--pf-line)}.pf .pf-ctx-bar .pf-seg button{min-height:24px;padding:1px 8px}.pf .pf-ctx-bar .pf-ctx-group{width:auto;max-width:260px;min-height:24px;padding:1px 6px;flex:0 1 auto;min-width:0;text-overflow:ellipsis}.pf-ctx-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .pf-ctx-cv{display:block;width:100%;height:150px;image-rendering:pixelated}
 .pf-fam-m .pf-hold{position:absolute;right:1px;top:1px;font-size:10px;line-height:1;padding:1px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted);cursor:pointer}.pf-fam-m .pf-hold.x{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent)}.pf .pf-fam-m{position:relative}
-.pf-fam-tools{margin-left:auto;display:inline-flex;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11.5px}
+.pf-fam-tools{margin-left:auto;display:inline-flex;flex-wrap:wrap;justify-content:flex-end;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11.5px;white-space:nowrap}
 .pf-lint-tag{position:absolute;right:14px;top:12px;display:flex;gap:10px;font-size:11px;padding:3px 8px;background:rgba(14,9,24,.88);border:1px solid var(--pf-line2);color:var(--pf-ink);pointer-events:none}.pf-lint-tag i{display:inline-block;width:9px;height:9px;margin-right:5px;border:2px solid currentColor;vertical-align:-1px}.pf-lint-tag .ok{color:var(--pf-good)}
 .pf-vision-tag{position:absolute;left:14px;top:12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;background:var(--pf-accent2);color:var(--pf-on);font-weight:700;pointer-events:none}
 .pf[data-vision="grey"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:grayscale(1)}
@@ -1178,6 +1230,7 @@
 .pf .pf-ref-sprite{width:auto;flex:1;min-width:0}.pf-ref-on{display:flex;flex-direction:column;gap:6px}.pf .pf-refpanel .pf-seg button{min-height:26px;padding:2px 8px}
 .pf-v-shift{display:flex;flex-direction:column;gap:4px}.pf-v-shift input[type=range]{flex:1;width:auto}.pf-v-shift b{min-width:3.2em;text-align:right;color:var(--pf-accent)}
 .pf-v-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.pf-v-col{display:flex;align-items:center;gap:4px;font-size:11.5px}.pf-v-col i{width:20px;height:20px;border:1px solid var(--pf-line2);flex:none}.pf-v-col input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--pf-line2);background:none}
+.pf-port-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}.pf-port-f{display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid var(--pf-line);font-size:11.5px}.pf-port-f canvas{image-rendering:pixelated;width:100%;height:auto;background:var(--pf-ckbg)}.pf-port-key{color:var(--pf-warn)}
 .pf-v-preview{display:flex;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-v-preview canvas{image-rendering:pixelated;height:72px}
 .pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}
 /* Right column: every section folds away by its title (remembered), with a chevron at the right. */
@@ -1668,8 +1721,8 @@
           <div class="pf-row pf-quiet"><button class="pf-palload" title="Load a palette file (.hex, one colour per line)">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave" title="Download this palette as a .hex file">Save .hex</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
           <form class="pf-row pf-lospec" hidden><input type="text" class="pf-lospec-name" placeholder="endesga-32, or a lospec.com link" aria-label="Lospec palette name" autocomplete="off" style="flex:1;min-width:0"><button type="submit" class="primary">Load</button></form></div>
         <div class="pf-panel pf-prev"><h4>Animation</h4>
-          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note pf-fam-hint"><kbd>,</kbd> <kbd>.</kbd> previous / next</div></div>
-          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">the ×n badge: how long a frame holds</div></div>
+          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button><button type="button" class="pf-fam-port" title="Apply this edit to the other frames: what stays still in them gets it, parts that moved are left for you to redraw">apply edit…</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note pf-fam-hint"><kbd>,</kbd> <kbd>.</kbd> previous / next</div></div>
+          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button><button type="button" class="pf-sh-port" title="Apply this edit to the other frames: what stays still in them gets it, parts that moved are left for you to redraw">apply edit…</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">the ×n badge: how long a frame holds</div></div>
           <canvas class="pf-p2"></canvas>
           <canvas class="pf-p1" title="The whole sheet"></canvas>
           <div class="pf-row pf-anim-row"><label class="pf-sheet-row" title="Frame size: smaller than the image makes it a sprite sheet">frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label><label class="pf-fps-l">fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
@@ -1765,6 +1818,13 @@
         <div class="pf-af-list"></div>
         <div class="pf-note pf-af-save"></div>
         <div class="pf-row"><button type="button" class="primary pf-af-go">Use these folders</button><button type="button" class="pf-af-all">Show everything</button></div></form></dialog>
+      <dialog class="pf-dlg-port"><form method="dialog" class="pf-form">
+        <div class="pf-dlg-head"><h4>Apply this edit to the other frames</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <div class="pf-note pf-port-what"></div>
+        <label class="pf-note pf-port-allrow" hidden><input type="checkbox" class="pf-port-all"> every change since the original, not only those since the last apply</label>
+        <div class="pf-port-list"></div>
+        <div class="pf-note">Recolours reach every frame. Other changes go where the frame still looks like it did before the edit, following it if it bobs a few pixels; parts in another pose (legs in a walk) are left as they are and outlined in <b class="pf-port-key">orange</b>, to redraw with Onion skin (N).</div>
+        <div class="pf-row"><button type="button" class="primary pf-port-go">Apply</button><button value="cancel">Cancel</button></div></form></dialog>
       <dialog class="pf-dlg-keys"><form method="dialog" class="pf-form"><h4>Keyboard shortcuts</h4><div class="pf-keys"></div><div class="pf-row"><button value="cancel" class="primary">Close</button></div></form></dialog>
       <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><div class="pf-dlg-head"><h4>New sprite</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
         <div class="pf-n-line"><span class="pf-seg pf-n-quick" role="group" aria-label="Common sizes"></span><span class="pf-n-or">or</span><input type="number" class="pf-nw" min="1" max="1024" value="16" aria-label="Width" title="Width"><span class="pf-n-or">×</span><input type="number" class="pf-nh" min="1" max="1024" value="16" aria-label="Height" title="Height"></div>
@@ -2425,6 +2485,11 @@
         g.drawImage(diffCanvas, S.ox, S.oy, W, H);
         if (z >= 3 && cells.length < 20000) { g.strokeStyle = '#e08cff'; g.lineWidth = Math.max(1, Math.floor(z / 8)); for (const i of cells) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1); g.lineWidth = 1; }
       }
+      if (d.todo && d.todo.px === d.px && !S.peek && z >= 3) { /* left to redraw after Apply edit, until drawn over */
+        g.strokeStyle = '#ffb000'; g.lineWidth = Math.max(1, Math.floor(z / 8)); g.setLineDash([Math.max(2, z / 4), Math.max(2, z / 4)]);
+        for (const [i, v] of d.todo.cells) if (d.px[i] === v) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1);
+        g.setLineDash([]); g.lineWidth = 1;
+      }
       if (S.ctx) drawContext(d);
       if (S.peek) { g.fillStyle = 'rgba(224,140,255,.9)'; g.font = `${Math.round(12 * (window.devicePixelRatio || 1))}px ${getComputedStyle(root).getPropertyValue('--pf-mono') || 'monospace'}`; g.fillText(peekLabel(d), S.ox, S.oy - 8); }
       const fl = S.float;
@@ -2842,7 +2907,7 @@
       renderSheet();
       const d = doc(), fam = famOrSingle(d), box = $('.pf-fam:not(.pf-sheet)'); box.hidden = !fam || (fam.members.length < 2 && isSheet(d)); if (box.hidden) return;
       const at = fam.members.indexOf(d.path), one = fam.members.length < 2; $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
-      $('.pf-fam-left').hidden = $('.pf-fam-right').hidden = $('.pf-fam-hint').hidden = one; $('.pf-fam-strip:not(.pf-sheet-strip)').hidden = one;
+      $('.pf-fam-left').hidden = $('.pf-fam-right').hidden = $('.pf-fam-hint').hidden = $('.pf-fam-port').hidden = one; $('.pf-fam-strip:not(.pf-sheet-strip)').hidden = one;
       $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.members.length > 1 ? (fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`) : 'single sprite';
       const strip = $('.pf-fam-strip:not(.pf-sheet-strip)'); strip.innerHTML = '';
       for (const p of fam.members) {
@@ -3288,6 +3353,72 @@
     }
     $('.pf-sh-left').onclick = () => sheetOp('swap', -1); $('.pf-sh-right').onclick = () => sheetOp('swap', 1);
     $('.pf-sh-add').onclick = () => sheetOp('dup'); $('.pf-sh-del').onclick = () => sheetOp('del');
+    /* Apply edit: what changed in this frame, carried over to the other frames (files of a family, or frames of a sheet) by
+       portEdit, on the flattened images. A frame remembers itself as of the last apply (`ported`), so applying again carries only
+       what changed since; a target keeps `todo`, the pixels left to redraw by hand, outlined on the canvas until drawn over.
+       Frames with layers are not written to: one flat result cannot be split back into layers. */
+    let port = null;
+    async function portPlan(d, all) {
+      const orig = d.isNew || d.baseFrom === 'new' ? d.saved : d.base, from = !all && d.ported ? d.ported : orig; // not committed yet: the last save stands in for the original
+      const since = from === d.ported ? 'since the last apply' : from === d.saved ? 'since the last save' : 'since the original (hold \\ to see it)';
+      if (from.w !== d.w || from.h !== d.h) return { why: 'The canvas size changed since then, so the edit cannot be lined up with the other frames.' };
+      const now = d.flat(), fam = famFor(d);
+      if (isSheet(d)) {
+        if (d.layered) return { why: 'Apply edit works on sheets without layers for now: merge the layers first.' };
+        const { f, cols, n: count } = sheetInfo(d), cells = [...Array(count).keys()].map((k) => ({ x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h }));
+        const n = cells.map((r) => countDiff(copyRect(from.px, d.w, d.h, r), copyRect(now, d.w, d.h, r))), k = n[S.sheetK || 0] ? S.sheetK || 0 : n.indexOf(Math.max(...n));
+        if (!n[k]) return { why: `Nothing has changed in this sheet ${since}.` };
+        const r = cells[k];
+        return { w: r.w, h: r.h, src: `frame ${k + 1}`, since, before: copyRect(from.px, d.w, d.h, r), after: copyRect(now, d.w, d.h, r), targets: cells.flatMap((c, j) => (j === k ? [] : [{ label: `frame ${j + 1}`, doc: d, rect: c, px: copyRect(now, d.w, d.h, c) }])) };
+      }
+      if (!fam) return { why: 'This sprite has no other frames: numbered files (walk_0, walk_1…) or a sprite sheet (set the frame size under Animation).' };
+      if (!countDiff(from.px, now)) return { why: `Nothing has changed in ${fileName(d)} ${since}.` };
+      const targets = [], odd = [];
+      for (const p of fam.members) {
+        if (p === d.path) continue; const x = await loadDoc(p); if (!x) continue;
+        if (x.w !== d.w || x.h !== d.h) odd.push(`${memberLabel(fam, p)} (another size)`); else if (x.layered) odd.push(`${memberLabel(fam, p)} (has layers)`); else targets.push({ label: memberLabel(fam, p), doc: x, px: x.px });
+      }
+      if (!targets.length) return { why: `None of the other frames can take the edit: ${odd.join(', ')}.` };
+      return { w: d.w, h: d.h, src: fileName(d), since, odd, before: from.px, after: now.slice(), targets };
+    }
+    async function openPort(all) {
+      const d = doc(); if (!d) return; commitFloat();
+      const plan = await portPlan(d, all); if (plan.why) { if ($('.pf-dlg-port').open) $('.pf-dlg-port').close(); return note(plan.why); }
+      port = { d, ...plan };
+      for (const t of port.targets) { t.res = portEdit(plan.before, plan.after, t.px, plan.w, plan.h); t.n = countDiff(t.res.px, t.px); t.on = t.n > 0; }
+      const n = countDiff(plan.before, plan.after), rc = port.targets[0].res.recolours.size;
+      $('.pf-port-what').textContent = `${n} pixel${n > 1 ? 's' : ''} changed in ${plan.src} ${plan.since}${rc ? ` (${rc} colour${rc > 1 ? 's' : ''} swapped outright)` : ''}. Each frame below shows the result; untick one to leave it alone.${plan.odd && plan.odd.length ? ` Left out: ${plan.odd.join(', ')}.` : ''}`;
+      $('.pf-port-allrow').hidden = !d.ported; $('.pf-port-all').checked = !!all;
+      const box = $('.pf-port-list'); box.innerHTML = '';
+      for (const t of port.targets) {
+        const left = t.res.todo.length, card = el(`<label class="pf-port-f"><canvas></canvas><span><input type="checkbox"${t.on ? ' checked' : ' disabled'}> <b>${esc(t.label)}</b></span><span class="pf-note">${t.n ? `${t.n} px` : 'nothing to change'}${left ? ` · <span class="pf-port-key">${left} to redraw</span>` : ''}</span></label>`);
+        card.querySelector('input').onchange = (e) => { t.on = e.target.checked; };
+        const c = card.querySelector('canvas'), k = Math.max(4, Math.ceil(128 / Math.max(plan.w, plan.h)));
+        drawPx(c, { w: plan.w, h: plan.h, imageData: () => new ImageData(new Uint8ClampedArray(t.res.px.slice().buffer), plan.w, plan.h) }, k);
+        const g2 = c.getContext('2d'); g2.strokeStyle = '#ffb000'; for (const i of t.res.todo) g2.strokeRect((i % plan.w) * k + 0.5, ((i / plan.w) | 0) * k + 0.5, k - 1, k - 1);
+        box.appendChild(card);
+      }
+      if (!$('.pf-dlg-port').open) $('.pf-dlg-port').showModal();
+    }
+    $('.pf-fam-port').onclick = $('.pf-sh-port').onclick = () => openPort(false);
+    $('.pf-port-all').onchange = (e) => openPort(e.target.checked);
+    $('.pf-port-go').onclick = () => {
+      const p = port; if (!p) return; $('.pf-dlg-port').close(); port = null;
+      const picked = p.targets.filter((t) => t.on), todo = new Map(), synced = new Set(); let px = 0, left = 0;
+      for (const t of picked) {
+        const x = t.doc, cells = t.rect ? t.res.todo.map((i) => (t.rect.y + ((i / p.w) | 0)) * x.w + t.rect.x + (i % p.w)) : t.res.todo;
+        if (!todo.has(x)) { // one undo step per image, however many of its frames change
+          const was = x.ported || x.base; x.snapshot(); todo.set(x, []);
+          if (x !== p.d && was.w === x.w && was.h === x.h && !countDiff(was.px, x.flat())) synced.add(x); // a frame with no edits of its own starts its next edit from here
+        }
+        if (t.rect) pasteRect(x.px, x.w, x.h, t.res.px, p.w, p.h, t.rect.x, t.rect.y, true); else x.px = t.res.px;
+        todo.get(x).push(...cells); px += t.n; left += cells.length;
+      }
+      for (const [x, cells] of todo) { x.todo = cells.length ? { px: x.px, cells: new Map(cells.map((i) => [i, x.px[i]])) } : null; if (synced.has(x)) x.ported = { w: x.w, h: x.h, px: x.flat().slice() }; }
+      p.d.ported = { w: p.d.w, h: p.d.h, px: p.d.flat().slice() };
+      changedUi(); renderList();
+      note(picked.length ? `applied to ${picked.length} frame${picked.length > 1 ? 's' : ''}: ${px} pixel${px === 1 ? '' : 's'}${left ? ` · ${left} left to redraw, outlined in orange (Onion skin, N, shows the frame before)` : ''} · Ctrl+Z undoes it frame by frame` : 'no frame picked: nothing changed');
+    };
     /** The animation as one sheet PNG plus a JSON of its frames (Aseprite json-array), zipped. A family is packed into a row. */
     $('.pf-sheet-out').onclick = async () => {
       const d = doc(); if (!d) return; commitFloat(); const fam = famFor(d), ms = Math.round(1000 / Math.max(1, +$('.pf-fps').value || 8)), hs = holdsOf(d);
@@ -3829,5 +3960,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { portEdit, ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
 });
