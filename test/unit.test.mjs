@@ -928,3 +928,45 @@ test('portEdit: nothing is written into a frame that looks nothing like the one 
   const r = C.portEdit(img(STAND), img(EDITED), img(other), 12, 12);
   assert.equal(C.countDiff(r.px, img(other)), 0); assert.ok(r.todo.length > 0);
 });
+// the same figure in layers: line art (k), fill (s, b, r), weapon (w)
+const only = (rs, chars) => img(rs.map((r) => [...r].map((c) => (chars.includes(c) ? c : '.')).join('')));
+const LAY = [['line', 'k'], ['fill', 'sbr'], ['weapon', 'w']], stack = (rs) => LAY.map(([name, cs]) => ({ name, px: only(rs, cs) }));
+const portStack = (b, a, t, opts = {}) => C.portLayers({ w: 12, h: 12, before: img(b), after: img(a), target: img(t), src: stack(b).map((l, k) => ({ before: l.px, after: stack(a)[k].px })), dst: opts.dst || stack(t), map: opts.map || [0, 1, 2] });
+test('portLayers: each changed layer writes into its own layer of the target, at the shift found on the flattened image', () => {
+  const dst = stack(STEP), r = portStack(STAND, EDITED, STEP, { dst });
+  assert.equal(rows(r.layers[1], 12)[1], '....rs......', 'the eye goes into the fill layer, one row up');
+  assert.equal(rows(r.layers[0], 12)[1], '...k..k.....', 'the line art there is untouched');
+  assert.deepEqual(rows(r.layers[0], 12).slice(8), rows(only(STEP, 'k'), 12).slice(8), 'the legs (line art) keep their pose');
+  assert.equal(r.layers[2], dst[2].px, 'an untouched layer is passed through as it is (not copied)');
+  assert.notEqual(r.layers[1], dst[1].px, 'a written one is a copy: the target is left as it was');
+  assert.equal(dst[1].px[1 * 12 + 4], PAL.s);
+});
+test('portLayers: layers are matched by name, wherever they sit in the target; a missing one is reported, its pixels left to redraw', () => {
+  const t = stack(STEP), dst = [t[2], t[0]]; // no fill layer, weapon below line art
+  const r = portStack(STAND, EDITED, STEP, { dst, map: C.layerMap(LAY.map((l) => l[0]), ['weapon', 'line']) });
+  assert.deepEqual([...r.lost], [1], 'the fill layer has nowhere to go');
+  assert.ok(r.todo.includes(1 * 12 + 4), 'so the eye is left to redraw');
+  assert.equal(C.countDiff(r.layers[0], t[2].px), 0, 'the weapon layer is not written into');
+});
+test('portLayers: a change on a hidden layer travels too, and a recolour stays in its own layer', () => {
+  const b = stack(STAND), a = stack(STAND); a[2] = { name: 'weapon', px: only(STAND, 'w').map((c) => (c ? PAL.r : 0)) }; // the weapon turns red
+  const dst = stack(STAND).map((l) => ({ ...l })); dst[1].px = dst[1].px.map((c) => (c === PAL.b ? PAL.w : c)); // the target's fill uses the weapon colour too
+  const r = C.portLayers({ w: 12, h: 12, before: img(STAND), after: img(STAND), target: img(STAND), src: b.map((l, k) => ({ before: l.px, after: a[k].px })), dst, map: [0, 1, 2] });
+  assert.equal(r.recolours[2].size, 1, 'the weapon layer is a recolour');
+  assert.ok(r.layers[2].every((c) => c === 0 || c === PAL.r), 'the weapon is red in the target');
+  assert.ok(r.layers[1].includes(PAL.w), 'and the same brown in the fill layer stays brown');
+  const hid = stack(STAND); hid.push({ name: 'sketch', visible: false, px: new Uint32Array(144) });
+  const sk = new Uint32Array(144); sk[5 * 12 + 4] = PAL.g; // a mark on the hidden sketch layer: the flattened image does not change
+  const r2 = C.portLayers({ w: 12, h: 12, before: img(STAND), after: img(STAND), target: img(STEP), src: [...stack(STAND), hid[3]].map((l, k) => ({ before: l.px, after: k === 3 ? sk : l.px })), dst: [...stack(STEP), { name: 'sketch', visible: false, px: new Uint32Array(144) }], map: [0, 1, 2, 3] });
+  assert.equal(r2.layers[3][4 * 12 + 4], PAL.g, 'the hidden mark lands in the target sketch layer, one row up with the body');
+});
+test('portLayers: a flat edit into a layered frame goes into the layer that shows each pixel', () => {
+  const r = C.portLayers({ w: 12, h: 12, before: img(STAND), after: img(EDITED), target: img(STEP), src: [{ before: img(STAND), after: img(EDITED) }], dst: stack(STEP), map: 'shown' });
+  assert.equal(r.layers[1][1 * 12 + 4], PAL.r, 'the eye replaces skin, so it goes into the fill layer');
+  assert.equal(r.layers[0][1 * 12 + 4], 0);
+});
+test('layerMap: by name first, then by position when the stacks are the same size', () => {
+  assert.deepEqual(C.layerMap(['line', 'fill'], ['fill', 'line']), [1, 0]);
+  assert.deepEqual(C.layerMap(['line', 'colour'], ['line', 'paint']), [0, 1]);
+  assert.deepEqual(C.layerMap(['line', 'colour', 'x'], ['line', 'paint']), [0, -1, -1]);
+});

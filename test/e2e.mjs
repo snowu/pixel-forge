@@ -1598,6 +1598,38 @@ section('apply edit: an edit carried over to the other frames, what moved left t
   await kp.close(); await s3.close();
 }
 
+section('apply edit with layers: each layer goes into the layer of the same name');
+{
+  await import('../spritewright.js'); const SW = globalThis.Spritewright;
+  const r5 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-port-ly-')); fs.mkdirSync(path.join(r5, 'chars'));
+  const KC = { k: [20, 16, 30], s: [240, 200, 160], b: [60, 90, 200], w: [140, 90, 40] }, cOf = (ch) => (ch === '.' ? 0 : SW.core.pack(...KC[ch]));
+  const STAND = ['............', '...kkkk.....', '...kssk.....', '...kssk.....', '...kkkk..w..', '..kbbbbk.w..', '..kbbbbk.w..', '..kbbbbk.w..', '...kkkk..w..', '...k..k.....', '...k..k.....', '...kk.kk....'];
+  const STEP = ['...kkkk.....', '...kssk.....', '...kssk.....', '...kkkk..w..', '..kbbbbk.w..', '..kbbbbk.w..', '..kbbbbk.w..', '...kkkk..w..', '....kk...w..', '....k.k.....', '...k...k....', '..kk...kk...'];
+  const layer = (rs, cs) => Uint32Array.from(rs.join(''), (ch) => (cs.includes(ch) ? cOf(ch) : 0)), LAY = [['line', 'k'], ['fill', 'sb'], ['weapon', 'w']];
+  const write = async (name, rs, layered) => {
+    fs.writeFileSync(path.join(r5, `chars/${name}.png`), fromRows(rs, KC).png);
+    if (layered) { const pk = SW.core.packLayers(LAY.map(([n, cs]) => ({ name: n, px: layer(rs, cs) })), 12, 12); fs.writeFileSync(path.join(r5, `chars/${name}.layers.png`), await SW.png.encode(pk.w, pk.h, pk.px, 1, pk.text)); }
+  };
+  await write('orc_0', STAND, true); await write('orc_1', STEP, true); await write('orc_2', STAND, false);
+  const s5 = createServer({ root: r5, port: 0 }), b5 = await s5.listen(), lp = await ctx.newPage(), lerr = []; lp.on('pageerror', (e) => lerr.push(e.message));
+  const A = (fn, arg) => lp.evaluate(fn, arg);
+  await lp.goto(b5 + '?auth=off'); await lp.waitForSelector('.pf-item'); await A(() => document.getElementById('app').__pf.open('chars/orc_0.png')); await lp.waitForTimeout(300);
+  ok((await A(() => document.getElementById('app').__pf.current.layers.map((l) => l.name).join())) === 'line,fill,weapon', 'orc_0 opens with its three layers');
+  const row = await lp.evaluate(() => [...document.querySelectorAll('.pf-ly')].findIndex((r) => r.querySelector('input').value === 'fill'));
+  await lp.locator('.pf-ly').nth(row).click(); await lp.waitForTimeout(100);
+  ok((await A(() => document.getElementById('app').__pf.current.layer.name)) === 'fill', 'the fill layer is current');
+  await hexIn(lp, '#e61e28'); await lp.keyboard.press('b');
+  { const b = await lp.locator('.pf-view').boundingBox(), v = await lp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; }); await lp.mouse.click(b.x + (v.ox + 4.5 * v.z) / v.k, b.y + (v.oy + 2.5 * v.z) / v.k); }
+  await lp.locator('.pf-fam-port').click(); await lp.waitForSelector('.pf-dlg-port[open]');
+  ok(/Layer by layer: line, fill, weapon/.test(await lp.locator('.pf-port-what').innerText()), 'the dialog says the edit goes layer by layer');
+  await lp.locator('.pf-port-go').click(); await lp.waitForTimeout(200);
+  const RED = SW.core.pack(230, 30, 40), got = await A(() => { const a = document.getElementById('app').__pf, o1 = a.docs.get('chars/orc_1.png'), o2 = a.docs.get('chars/orc_2.png'); return { names: o1.layers.map((l) => l.name), fill: o1.layers[1].px[1 * 12 + 4], line: o1.layers[0].px[1 * 12 + 4], flat2: o2.flat()[2 * 12 + 4], n2: o2.layers.length }; });
+  ok(got.names.join() === 'line,fill,weapon' && got.fill === RED && got.line === 0, 'the eye lands on orc_1’s fill layer, a row up, and its line art layer is untouched: ' + JSON.stringify(got));
+  ok(got.flat2 === RED && got.n2 === 1, 'a frame without layers gets the flattened edit');
+  ok(lerr.length === 0, 'no page errors ' + lerr.join('|'));
+  await lp.close(); await s5.close();
+}
+
 section('lossless saves (semi-transparent pixels must survive exactly)');
 {
   const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-e2e-alpha-')); const w = 16, h = 16, rgba = Buffer.alloc(w * h * 4);

@@ -410,46 +410,84 @@
       4. A region whose surroundings match `after` at least as well as `before` is already there (an earlier apply, or drawn by
          hand): it is left alone, so applying the same edit twice changes nothing.
       Clear pixels agreeing with clear pixels are no evidence (empty space matches anywhere). */
-  function portEdit(before, after, target, w, h, { reach = 4, radius = 3, pool = 3, min = 0.8 } = {}) {
-    const out = target.slice(), changed = [], todo = [];
-    for (let i = 0; i < w * h; i++) if (!samePx(before[i], after[i])) changed.push(i);
-    const count = new Map(), to = new Map();
-    for (const c of before) if (!isClear(c)) count.set(c, (count.get(c) || 0) + 1);
-    for (const i of changed) { const c = before[i]; if (isClear(c)) continue; const m = to.get(c); if (!m) to.set(c, { c: after[i], n: 1 }); else if (m.c !== after[i]) m.c = null; else m.n++; }
-    const recolours = new Map([...to].filter(([c, m]) => m.c !== null && !isClear(m.c) && m.n === count.get(c) && m.n >= 2).map(([c, m]) => [c, m.c]));
-    for (let i = 0; i < out.length; i++) if (recolours.has(out[i])) out[i] = recolours.get(out[i]);
-    const rest = changed.filter((i) => !recolours.has(before[i])), regions = [];
-    if (!rest.length) return { px: out, recolours, regions, todo, shift: { x: 0, y: 0 } };
+  function portEdit(before, after, target, w, h, opts) {
+    const r = portLayers({ w, h, before, after, target, src: [{ before, after }], dst: [{ px: target }], map: [0] }, opts);
+    return { px: r.layers[0], recolours: r.recolours[0], regions: r.regions, todo: r.todo, shift: r.shift };
+  }
+  /** The same, layer by layer. Where things go is worked out on the flattened images (before, after, target: the most to match
+      against); what is written comes from each source layer that changed there, into the target layer `map` gives it:
+        src  [{ before, after }]  the source's layers, each as it was and as it is
+        dst  [{ px, visible }]     the target's layers (left untouched: the result is in `layers`)
+        map  src index → dst index (-1: no such layer, its pixels are left out and reported in `lost`), or 'shown' for a one-layer
+             source: each pixel goes into the target layer that shows it there (the top visible one), else into dst[active].
+      Recolours are found per layer, so one colour recoloured in the cape layer leaves the same colour in another layer alone. */
+  function portLayers({ w, h, before, after, target, src, dst, map, active = 0 }, { reach = 4, radius = 3, pool = 3, min = 0.8 } = {}) {
+    const n = w * h, out = dst.map((l) => l.px), own = new Set(), write = (t) => { if (!own.has(t)) { own.add(t); out[t] = out[t].slice(); } return out[t]; };
+    const shown = map === 'shown', into = (k) => (shown ? -2 : map[k] == null ? -1 : map[k]), todo = [], lost = new Set(), regions = [];
+    // 1. per source layer: what changed, and which of it is a recolour
+    const recolours = [], rest = src.map((l, k) => {
+      const changed = []; for (let i = 0; i < n; i++) if (!samePx(l.before[i], l.after[i])) changed.push(i);
+      const count = new Map(), to = new Map();
+      for (const c of l.before) if (!isClear(c)) count.set(c, (count.get(c) || 0) + 1);
+      for (const i of changed) { const c = l.before[i]; if (isClear(c)) continue; const m = to.get(c); if (!m) to.set(c, { c: l.after[i], n: 1 }); else if (m.c !== l.after[i]) m.c = null; else m.n++; }
+      const rc = new Map([...to].filter(([c, m]) => m.c !== null && !isClear(m.c) && m.n === count.get(c) && m.n >= 2).map(([c, m]) => [c, m.c])); recolours.push(rc);
+      if (rc.size) { const ts = shown ? dst.map((_, t) => t).filter((t) => dst[t].visible !== false) : into(k) >= 0 ? [into(k)] : [];
+        if (!ts.length) lost.add(k); for (const t of ts) { const px = out[t]; let hit = false; for (let i = 0; i < n; i++) if (rc.has(px[i])) { hit = true; break; } if (hit) { const o = write(t); for (let i = 0; i < n; i++) if (rc.has(o[i])) o[i] = rc.get(o[i]); } } }
+      return new Set(changed.filter((i) => !rc.has(l.before[i])));
+    });
+    const all = [...new Set(rest.flatMap((x) => [...x]))].sort((a, b) => a - b);
+    if (!all.length) return { layers: out, recolours, regions, todo, lost, shift: { x: 0, y: 0 } };
+    // 2-4. where each changed pixel goes, on the flattened images
     const at = (px, x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : px[y * w + x]), offs = [];
     for (let y = -reach; y <= reach; y++) for (let x = -reach; x <= reach; x++) offs.push([x, y]);
     let shift = null; // the whole frame's best shift
-    for (const [ox, oy] of offs) { let a = 0, n = 0; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = before[y * w + x], q = at(target, x + ox, y + oy); if (isClear(p) && isClear(q)) continue; n++; if (samePx(p, q)) a++; } const s = n ? a / n : 0; if (!shift || s > shift.s) shift = { x: ox, y: oy, s }; }
+    for (const [ox, oy] of offs) { let a = 0, c = 0; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = before[y * w + x], q = at(target, x + ox, y + oy); if (isClear(p) && isClear(q)) continue; c++; if (samePx(p, q)) a++; } const s = c ? a / c : 0; if (!shift || s > shift.s) shift = { x: ox, y: oy, s }; }
     const near = (k) => Math.abs(offs[k][0] - shift.x) + Math.abs(offs[k][1] - shift.y), K = offs.length;
-    // per changed pixel and shift: how much of the window of `before` (and, apart, of `after`) around it agrees with the target there
-    const windows = (src) => { const a = new Float32Array(rest.length * K), n = new Float32Array(rest.length * K);
-      rest.forEach((i, r) => { const x = i % w, y = (i / w) | 0;
-        offs.forEach(([ox, oy], k) => { let m = 0, c = 0;
-          for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) { const p = at(src, x + dx, y + dy), q = at(target, x + dx + ox, y + dy + oy); if (isClear(p) && isClear(q)) continue; c++; if (samePx(p, q)) m++; }
-          a[r * K + k] = m; n[r * K + k] = c; }); });
-      return [a, n]; };
-    const [agree, seen] = windows(before), [agreeAfter, seenAfter] = windows(after), idx = new Map(rest.map((i, r) => [i, r]));
-    const pick = new Int32Array(rest.length), score = new Float32Array(rest.length), A = new Float32Array(K), N = new Float32Array(K);
-    rest.forEach((i, r) => { const x = i % w, y = (i / w) | 0; A.fill(0); N.fill(0);
+    const windows = (img) => { const a = new Float32Array(all.length * K), c = new Float32Array(all.length * K);
+      all.forEach((i, r) => { const x = i % w, y = (i / w) | 0;
+        offs.forEach(([ox, oy], k) => { let m = 0, v = 0;
+          for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) { const p = at(img, x + dx, y + dy), q = at(target, x + dx + ox, y + dy + oy); if (isClear(p) && isClear(q)) continue; v++; if (samePx(p, q)) m++; }
+          a[r * K + k] = m; c[r * K + k] = v; }); });
+      return [a, c]; };
+    const [agree, seen] = windows(before), [agreeAfter, seenAfter] = windows(after), idx = new Map(all.map((i, r) => [i, r]));
+    const pick = new Int32Array(all.length), score = new Float32Array(all.length), A = new Float32Array(K), N = new Float32Array(K);
+    all.forEach((i, r) => { const x = i % w, y = (i / w) | 0; A.fill(0); N.fill(0);
       for (let dy = -pool; dy <= pool; dy++) for (let dx = -pool; dx <= pool; dx++) { const j = x + dx < 0 || x + dx >= w ? undefined : idx.get((y + dy) * w + x + dx); if (j !== undefined) for (let k = 0; k < K; k++) { A[k] += agree[j * K + k]; N[k] += seen[j * K + k]; } }
       let b = 0, bs = -1; for (let k = 0; k < K; k++) { const s = N[k] ? A[k] / N[k] : 0; if (s > bs + 1e-6 || (s > bs - 1e-6 && near(k) < near(b))) { b = k; bs = s; } }
       pick[r] = b; score[r] = seen[r * K + b] ? agree[r * K + b] / seen[r * K + b] : 0; });
-    const taken = new Uint8Array(rest.length);
-    for (let r0 = 0; r0 < rest.length; r0++) {
+    // the layer a pixel goes into: its source layer's match, or (one-layer source) the target layer that shows it there
+    const shownAt = (d) => { for (let t = dst.length - 1; t >= 0; t--) if (dst[t].visible !== false && !isClear(dst[t].px[d])) return t; return Math.max(0, Math.min(dst.length - 1, active)); };
+    const already = (pixels, dest) => pixels.every((p, q) => dest[q] < 0 || src.every((l, k) => !rest[k].has(p) || (() => { const t = shown ? shownAt(dest[q]) : into(k); return t >= 0 && samePx(out[t][dest[q]], l.after[p]); })()));
+    const visible = (pixels) => pixels.some((p) => !samePx(before[p], after[p]));
+    const taken = new Uint8Array(all.length);
+    for (let r0 = 0; r0 < all.length; r0++) {
       if (taken[r0]) continue; const reg = [r0]; taken[r0] = 1;
-      for (let t = 0; t < reg.length; t++) { const i = rest[reg[t]], x = i % w, y = (i / w) | 0;
+      for (let t = 0; t < reg.length; t++) { const i = all[reg[t]], x = i % w, y = (i / w) | 0;
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const j = x + dx < 0 || x + dx >= w ? undefined : idx.get((y + dy) * w + x + dx); if (j !== undefined && !taken[j] && pick[j] === pick[r0]) { taken[j] = 1; reg.push(j); } } }
-      const [ox, oy] = offs[pick[r0]], pixels = reg.map((j) => rest[j]), dest = pixels.map((i) => { const x = i % w + ox, y = ((i / w) | 0) + oy; return x < 0 || y < 0 || x >= w || y >= h ? -1 : y * w + x; });
+      const [ox, oy] = offs[pick[r0]], pixels = reg.map((j) => all[j]), dest = pixels.map((i) => { const x = i % w + ox, y = ((i / w) | 0) + oy; return x < 0 || y < 0 || x >= w || y >= h ? -1 : y * w + x; });
       const R = { pixels, x: ox, y: oy, score: reg.reduce((t, j) => t + score[j], 0) / reg.length }; R.applied = R.score >= min; regions.push(R);
-      let done = 0; for (let k = 0; k < K; k++) { let a = 0, n = 0; for (const j of reg) { a += agreeAfter[j * K + k]; n += seenAfter[j * K + k]; } if (n) done = Math.max(done, a / n); }
-      if (done >= min && done >= reg.reduce((t, j) => t + agree[j * K + pick[j]], 0) / Math.max(1, reg.reduce((t, j) => t + seen[j * K + pick[j]], 0))) { R.applied = false; R.done = true; continue; }
-      dest.forEach((d, k) => { if (d < 0) return; if (R.applied) out[d] = after[pixels[k]]; else todo.push(d); });
+      let done = 0; for (let k = 0; k < K; k++) { let a = 0, c = 0; for (const j of reg) { a += agreeAfter[j * K + k]; c += seenAfter[j * K + k]; } if (c) done = Math.max(done, a / c); }
+      const matched = reg.reduce((t, j) => t + agree[j * K + pick[j]], 0) / Math.max(1, reg.reduce((t, j) => t + seen[j * K + pick[j]], 0));
+      // already there: its surroundings look edited (a change that shows), or every layer already holds the edited pixels
+      if ((visible(pixels) && done >= min && done >= matched) || (R.applied && already(pixels, dest))) { R.applied = false; R.done = true; continue; }
+      pixels.forEach((p, q) => {
+        const d = dest[q]; if (d < 0) return; if (!R.applied) { todo.push(d); return; }
+        let missing = false;
+        src.forEach((l, k) => {
+          if (!rest[k].has(p)) return;
+          if (shown && isClear(l.after[p])) { dst.forEach((L, t) => { if (L.visible !== false && !isClear(out[t][d])) write(t)[d] = 0; }); return; } // an erased pixel: gone from every layer showing it
+          const t = shown ? shownAt(d) : into(k); if (t < 0) { lost.add(k); missing = true; return; }
+          write(t)[d] = l.after[p];
+        });
+        if (missing) todo.push(d);
+      });
     }
-    return { px: out, recolours, regions, todo, shift: { x: shift.x, y: shift.y } };
+    return { layers: out, recolours, regions, todo, lost, shift: { x: shift.x, y: shift.y } };
+  }
+  /** Which target layer each source layer goes into: the one with its name, else (same number of layers) the one in its place. */
+  function layerMap(from, to) {
+    const used = new Set(), m = from.map((name) => { const t = to.indexOf(name); if (t >= 0 && !used.has(t)) { used.add(t); return t; } return -1; });
+    return from.length === to.length ? m.map((t, k) => (t >= 0 ? t : used.has(k) ? -1 : (used.add(k), k))) : m;
   }
   /** Normalise a drag between two cells into a rectangle clipped to the image (null when it misses the image). */
   function rectBetween(a, b, w, h) {
@@ -514,7 +552,7 @@
      A document is one image being edited, with undo history.
      base    = the pixels when this session loaded it (what a pull request is measured against)
      saved   = the pixels at the last save (what "unsaved changes" is measured against)
-     ported  = the flat pixels at the last "apply edit" to other frames (what the next one is measured against); undo and redo forget it
+     ported  = the state at the last "apply edit" to other frames, layers included (what the next one is measured against); undo and redo forget it
      ===================================================================================================== */
   /* layers  = bottom first; px is the current layer's pixels (what every tool draws on), flat() what the file holds.
      A sprite with one plain layer is exactly its PNG: flat() is px itself. */
@@ -2489,9 +2527,9 @@
         g.drawImage(diffCanvas, S.ox, S.oy, W, H);
         if (z >= 3 && cells.length < 20000) { g.strokeStyle = '#e08cff'; g.lineWidth = Math.max(1, Math.floor(z / 8)); for (const i of cells) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1); g.lineWidth = 1; }
       }
-      if (d.todo && d.todo.px === d.px && !S.peek && z >= 3) { /* left to redraw after Apply edit, until drawn over */
-        g.strokeStyle = '#ffb000'; g.lineWidth = Math.max(1, Math.floor(z / 8)); g.setLineDash([Math.max(2, z / 4), Math.max(2, z / 4)]);
-        for (const [i, v] of d.todo.cells) if (d.px[i] === v) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1);
+      if (d.todo && d.todo.layers === d.layers && !S.peek && z >= 3) { /* left to redraw after Apply edit, until drawn over */
+        g.strokeStyle = '#ffb000'; g.lineWidth = Math.max(1, Math.floor(z / 8)); g.setLineDash([Math.max(2, z / 4), Math.max(2, z / 4)]); const flat = d.flat();
+        for (const [i, v] of d.todo.cells) if (flat[i] === v) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1);
         g.setLineDash([]); g.lineWidth = 1;
       }
       if (S.ctx) drawContext(d);
@@ -3358,48 +3396,64 @@
     $('.pf-sh-left').onclick = () => sheetOp('swap', -1); $('.pf-sh-right').onclick = () => sheetOp('swap', 1);
     $('.pf-sh-add').onclick = () => sheetOp('dup'); $('.pf-sh-del').onclick = () => sheetOp('del');
     /* Apply edit: what changed in this frame, carried over to the other frames (files of a family, or frames of a sheet) by
-       portEdit, on the flattened images. A frame remembers itself as of the last apply (`ported`), so applying again carries only
-       what changed since; a target keeps `todo`, the pixels left to redraw by hand, outlined on the canvas until drawn over.
-       Frames with layers are not written to: one flat result cannot be split back into layers. */
+       portLayers: where things go is found on the flattened images, what is written goes layer by layer (matched by name), so a
+       pixel drawn on the shading layer lands on the target's shading layer. A frame remembers itself as of the last apply
+       (`ported`, layers included), so applying again carries only what changed since; a target keeps `todo`, the pixels left to
+       redraw by hand, outlined on the canvas until drawn over. */
     let port = null;
+    /** The source as it was (ref) and is, cut by `cut`: per layer when ref kept the layers, else one flat layer (names: null,
+        layers made or merged since then). A one-layer sprite is one layer either way. */
+    function portSource(d, ref, cut) {
+      const now = cut(d.flat()), before = cut(ref.px), flat = [{ before, after: now }];
+      if (!d.layered) return { names: [d.layers[0].name], layers: flat, before, after: now };
+      if (!ref.layers) return { names: null, layers: flat, before, after: now };
+      const names = d.layers.map((l) => l.name), m = layerMap(names, ref.layers.map((l) => l.name));
+      return { names, layers: d.layers.map((l, k) => ({ before: m[k] >= 0 ? cut(ref.layers[m[k]].px) : new Uint32Array(now.length), after: cut(l.px) })), before, after: now };
+    }
+    /** How the source goes into a target's layers: layer to layer by name, the flat picture into a one-layer target, or (no layer
+        names to go by) each pixel into the layer that shows it. */
+    const portInto = (src, dst) => (dst.length === 1 ? { src: [{ before: src.before, after: src.after }], map: [0] } : src.names && src.names.length > 1 ? { src: src.layers, map: layerMap(src.names, dst.map((l) => l.name)) } : { src: [{ before: src.before, after: src.after }], map: 'shown' });
     async function portPlan(d, all) {
       const orig = d.isNew || d.baseFrom === 'new' ? d.saved : d.base, from = !all && d.ported ? d.ported : orig; // not committed yet: the last save stands in for the original
       const since = from === d.ported ? 'since the last apply' : from === d.saved ? 'since the last save' : 'since the original (hold \\ to see it)';
       if (from.w !== d.w || from.h !== d.h) return { why: 'The canvas size changed since then, so the edit cannot be lined up with the other frames.' };
-      const now = d.flat(), fam = famFor(d);
+      const fam = famFor(d), whole = (px) => px;
       if (isSheet(d)) {
-        if (d.layered) return { why: 'Apply edit works on sheets without layers for now: merge the layers first.' };
-        const { f, cols, n: count } = sheetInfo(d), cells = [...Array(count).keys()].map((k) => ({ x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h }));
-        const n = cells.map((r) => countDiff(copyRect(from.px, d.w, d.h, r), copyRect(now, d.w, d.h, r))), k = n[S.sheetK || 0] ? S.sheetK || 0 : n.indexOf(Math.max(...n));
+        const { f, cols, n: count } = sheetInfo(d), cells = [...Array(count).keys()].map((k) => ({ x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h })), cutAt = (r) => (px) => copyRect(px, d.w, d.h, r);
+        const n = cells.map((r) => { const s = portSource(d, from, cutAt(r)); return s.layers.reduce((t, l) => t + countDiff(l.before, l.after), 0); }), k = n[S.sheetK || 0] ? S.sheetK || 0 : n.indexOf(Math.max(...n));
         if (!n[k]) return { why: `Nothing has changed in this sheet ${since}.` };
-        const r = cells[k];
-        return { w: r.w, h: r.h, src: `frame ${k + 1}`, since, before: copyRect(from.px, d.w, d.h, r), after: copyRect(now, d.w, d.h, r), targets: cells.flatMap((c, j) => (j === k ? [] : [{ label: `frame ${j + 1}`, doc: d, rect: c, px: copyRect(now, d.w, d.h, c) }])) };
+        const r = cells[k], src = portSource(d, from, cutAt(r));
+        return { w: r.w, h: r.h, label: `frame ${k + 1}`, since, src, targets: cells.flatMap((c, j) => (j === k ? [] : [{ label: `frame ${j + 1}`, doc: d, rect: c, dst: d.layers.map((l) => ({ ...l, px: cutAt(c)(l.px) })) }])) };
       }
       if (!fam) return { why: 'This sprite has no other frames: numbered files (walk_0, walk_1…) or a sprite sheet (set the frame size under Animation).' };
-      if (!countDiff(from.px, now)) return { why: `Nothing has changed in ${fileName(d)} ${since}.` };
+      const src = portSource(d, from, whole);
+      if (!src.layers.some((l) => countDiff(l.before, l.after))) return { why: `Nothing has changed in ${fileName(d)} ${since}.` };
       const targets = [], odd = [];
-      for (const p of fam.members) {
-        if (p === d.path) continue; const x = await loadDoc(p); if (!x) continue;
-        if (x.w !== d.w || x.h !== d.h) odd.push(`${memberLabel(fam, p)} (another size)`); else if (x.layered) odd.push(`${memberLabel(fam, p)} (has layers)`); else targets.push({ label: memberLabel(fam, p), doc: x, px: x.px });
-      }
-      if (!targets.length) return { why: `None of the other frames can take the edit: ${odd.join(', ')}.` };
-      return { w: d.w, h: d.h, src: fileName(d), since, odd, before: from.px, after: now.slice(), targets };
+      for (const p of fam.members) { if (p === d.path) continue; const x = await loadDoc(p); if (!x) continue; if (x.w !== d.w || x.h !== d.h) odd.push(memberLabel(fam, p)); else targets.push({ label: memberLabel(fam, p), doc: x, dst: x.layers }); }
+      if (!targets.length) return { why: `The other frames are a different size from ${fileName(d)}.` };
+      return { w: d.w, h: d.h, label: fileName(d), since, src, odd, targets };
     }
     async function openPort(all) {
       const d = doc(); if (!d) return; commitFloat();
       const plan = await portPlan(d, all); if (plan.why) { if ($('.pf-dlg-port').open) $('.pf-dlg-port').close(); return note(plan.why); }
-      port = { d, ...plan };
-      for (const t of port.targets) { t.res = portEdit(plan.before, plan.after, t.px, plan.w, plan.h); t.n = countDiff(t.res.px, t.px); t.on = t.n > 0; }
-      const n = countDiff(plan.before, plan.after), rc = port.targets[0].res.recolours.size;
-      $('.pf-port-what').textContent = `${n} pixel${n > 1 ? 's' : ''} changed in ${plan.src} ${plan.since}${rc ? ` (${rc} colour${rc > 1 ? 's' : ''} swapped outright)` : ''}. Each frame below shows the result; untick one to leave it alone.${plan.odd && plan.odd.length ? ` Left out: ${plan.odd.join(', ')}.` : ''}`;
+      port = { d, ...plan }; const { w, h, src } = plan;
+      for (const t of port.targets) {
+        const how = portInto(src, t.dst), tgt = flattenLayers(t.dst, w * h);
+        t.res = portLayers({ w, h, before: src.before, after: src.after, target: tgt, src: how.src, dst: t.dst, map: how.map, active: t.doc.active }); t.map = how.map;
+        t.n = t.res.layers.reduce((a, px, i) => a + countDiff(px, t.dst[i].px), 0); t.on = t.n > 0;
+        t.lost = [...t.res.lost].map((k) => (how.src === src.layers ? src.names[k] : 'this layer'));
+      }
+      const n = countDiff(src.before, src.after) || src.layers.reduce((a, l) => a + countDiff(l.before, l.after), 0), rc = port.targets[0].res.recolours.reduce((a, m) => a + m.size, 0);
+      const byLayer = src.names && src.names.length > 1 ? ` Layer by layer: ${src.names.join(', ')}.` : d.layered ? ' The layers were made or merged since then, so each pixel goes into the layer that shows it.' : '';
+      $('.pf-port-what').textContent = `${n} pixel${n > 1 ? 's' : ''} changed in ${plan.label} ${plan.since}${rc ? ` (${rc} colour${rc > 1 ? 's' : ''} swapped outright)` : ''}.${byLayer} Each frame below shows the result; untick one to leave it alone.${plan.odd && plan.odd.length ? ` Left out, another size: ${plan.odd.join(', ')}.` : ''}`;
       $('.pf-port-allrow').hidden = !d.ported; $('.pf-port-all').checked = !!all;
       const box = $('.pf-port-list'); box.innerHTML = '';
       for (const t of port.targets) {
-        const left = t.res.todo.length, card = el(`<label class="pf-port-f"><canvas></canvas><span><input type="checkbox"${t.on ? ' checked' : ' disabled'}> <b>${esc(t.label)}</b></span><span class="pf-note">${t.n ? `${t.n} px` : 'nothing to change'}${left ? ` · <span class="pf-port-key">${left} to redraw</span>` : ''}</span></label>`);
+        const left = t.res.todo.length, card = el(`<label class="pf-port-f"><canvas></canvas><span><input type="checkbox"${t.on ? ' checked' : ' disabled'}> <b>${esc(t.label)}</b></span><span class="pf-note">${t.n ? `${t.n} px` : 'nothing to change'}${left ? ` · <span class="pf-port-key">${left} to redraw</span>` : ''}${t.lost.length ? ` · no ${t.lost.map((x) => `“${esc(x)}”`).join(', ')} layer` : ''}</span></label>`);
         card.querySelector('input').onchange = (e) => { t.on = e.target.checked; };
-        const c = card.querySelector('canvas'), k = Math.max(4, Math.ceil(128 / Math.max(plan.w, plan.h)));
-        drawPx(c, { w: plan.w, h: plan.h, imageData: () => new ImageData(new Uint8ClampedArray(t.res.px.slice().buffer), plan.w, plan.h) }, k);
-        const g2 = c.getContext('2d'); g2.strokeStyle = '#ffb000'; for (const i of t.res.todo) g2.strokeRect((i % plan.w) * k + 0.5, ((i / plan.w) | 0) * k + 0.5, k - 1, k - 1);
+        const c = card.querySelector('canvas'), k = Math.max(4, Math.ceil(128 / Math.max(w, h))), img = flattenLayers(t.dst.map((l, i) => ({ ...l, px: t.res.layers[i] })), w * h);
+        drawPx(c, { w, h, imageData: () => new ImageData(new Uint8ClampedArray(img.buffer), w, h) }, k);
+        const g2 = c.getContext('2d'); g2.strokeStyle = '#ffb000'; for (const i of t.res.todo) g2.strokeRect((i % w) * k + 0.5, ((i / w) | 0) * k + 0.5, k - 1, k - 1);
         box.appendChild(card);
       }
       if (!$('.pf-dlg-port').open) $('.pf-dlg-port').showModal();
@@ -3413,13 +3467,13 @@
         const x = t.doc, cells = t.rect ? t.res.todo.map((i) => (t.rect.y + ((i / p.w) | 0)) * x.w + t.rect.x + (i % p.w)) : t.res.todo;
         if (!todo.has(x)) { // one undo step per image, however many of its frames change
           const was = x.ported || x.base; x.snapshot(); todo.set(x, []);
-          if (x !== p.d && was.w === x.w && was.h === x.h && !countDiff(was.px, x.flat())) synced.add(x); // a frame with no edits of its own starts its next edit from here
+          if (x !== p.d && x.same(was)) synced.add(x); // a frame with no edits of its own starts its next edit from here
         }
-        if (t.rect) pasteRect(x.px, x.w, x.h, t.res.px, p.w, p.h, t.rect.x, t.rect.y, true); else x.px = t.res.px;
+        t.res.layers.forEach((out, i) => { if (out === t.dst[i].px) return; if (t.rect) pasteRect(x.layers[i].px, x.w, x.h, out, p.w, p.h, t.rect.x, t.rect.y, true); else x.layers[i].px = out; });
         todo.get(x).push(...cells); px += t.n; left += cells.length;
       }
-      for (const [x, cells] of todo) { x.todo = cells.length ? { px: x.px, cells: new Map(cells.map((i) => [i, x.px[i]])) } : null; if (synced.has(x)) x.ported = { w: x.w, h: x.h, px: x.flat().slice() }; }
-      p.d.ported = { w: p.d.w, h: p.d.h, px: p.d.flat().slice() };
+      for (const [x, cells] of todo) { const flat = x.flat(); x.todo = cells.length ? { layers: x.layers, cells: new Map(cells.map((i) => [i, flat[i]])) } : null; if (synced.has(x)) x.ported = x.mark(); }
+      p.d.ported = p.d.mark();
       changedUi(); renderList();
       note(picked.length ? `applied to ${picked.length} frame${picked.length > 1 ? 's' : ''}: ${px} pixel${px === 1 ? '' : 's'}${left ? ` · ${left} left to redraw, outlined in orange (Onion skin, N, shows the frame before)` : ''} · Ctrl+Z undoes it frame by frame` : 'no frame picked: nothing changed');
     };
@@ -3964,5 +4018,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { portEdit, ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { portEdit, portLayers, layerMap, ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
 });
