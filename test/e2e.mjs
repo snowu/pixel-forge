@@ -1575,6 +1575,13 @@ section('apply edit: an edit carried over to the other frames, what moved left t
   await api((pf) => pf.open('chars/knight_0.png')); await kp.waitForTimeout(200);
   await kp.locator('.pf-fam-port').click(); await kp.waitForTimeout(250);
   ok(/Nothing has changed in knight_0.png since the last apply/.test(await kp.locator('.pf-s-note').innerText()) && !(await kp.locator('.pf-dlg-port').evaluate((d) => d.open)), 'applying again with no new edit says so instead of opening the dialog');
+  // deleting a frame made with + frame stays in the family instead of jumping to the first sprite of the project
+  kp.on('dialog', (dlg) => dlg.accept());
+  await api((pf) => pf.open('chars/knight_1.png')); await kp.waitForTimeout(150);
+  await kp.locator('.pf-fam-add').click(); await kp.waitForTimeout(300);
+  ok((await api((pf) => pf.current.path)) === 'chars/knight_3.png', '+ frame made knight_3.png');
+  await kp.locator('.pf-delete').click(); await kp.waitForTimeout(300);
+  ok((await api((pf) => pf.current.path)) === 'chars/knight_2.png' && !(await api((pf) => pf.docs.has('chars/knight_3.png'))), 'deleting it opens the frame before it, not the first sprite: ' + await api((pf) => pf.current.path));
   // a sprite sheet: the frame picked in the sheet strip is the one whose edit is carried over
   await api((pf) => pf.open('fx/spark.png')); await kp.waitForTimeout(250);
   ok(await kp.locator('.pf-sh-port').isVisible() && /3 frames/.test(await kp.locator('.pf-sheet-kind').innerText()), 'a sheet offers "apply edit" in its own strip');

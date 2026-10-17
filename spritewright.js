@@ -2203,9 +2203,13 @@
       const d = doc(); if (!deletable(d)) return;
       if (d.flat().some((v) => v >>> 24) && !confirm(`Delete ${fileName(d)}? It only exists in this browser, so this cannot be undone.`)) return;
       commitFloat(); S.sel = null; S.float = null;
+      // carry on next door: the frame before it in its family (the next one for a first frame), else a sprite of the same folder
+      const fam = famOf.get(d.path), m = fam ? fam.members.filter((p) => p !== d.path) : [], at = fam ? fam.members.indexOf(d.path) : -1;
+      const dirOf = (p) => p.slice(0, p.lastIndexOf('/') + 1), i = S.sprites.findIndex((x) => x.path === d.path);
+      const sib = [S.sprites[i - 1], S.sprites[i + 1]].find((x) => x && dirOf(x.path) === dirOf(d.path)), near = m[Math.max(0, at - 1)] || (sib && sib.path);
       S.docs.delete(d.path); S.sprites = S.sprites.filter((x) => x.path !== d.path); thumbs.delete(d.path);
       if (drafts && d.kept) try { await drafts.remove(projectKey(), d.path); } catch { /* gone anyway on the next flush */ }
-      const next = S.sprites.find((x) => S.docs.has(x.path)) || S.sprites[0];
+      const next = S.sprites.find((x) => x.path === near) || S.sprites.find((x) => S.docs.has(x.path)) || S.sprites[0];
       if (next) await openSprite(next.path); else { S.cur = null; renderList(); renderFamily(); drawPreview(); status(); render(); }
       sourceButton(); note('deleted ' + fileName(d));
     }
