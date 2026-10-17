@@ -1534,6 +1534,102 @@ ok(merrors.length === 0, 'no errors on mobile ' + merrors.join('|'));
 await mp.screenshot({ path: path.join(os.tmpdir(), 'pf-mobile.png'), fullPage: true });
 await phone.close();
 
+section('apply edit: an edit carried over to the other frames, what moved left to redraw');
+{
+  const r3 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-port-')); fs.mkdirSync(path.join(r3, 'chars')); fs.mkdirSync(path.join(r3, 'fx'));
+  const KC = { k: [20, 16, 30], s: [240, 200, 160], b: [60, 90, 200], w: [140, 90, 40], g: [60, 180, 80] };
+  // head and body bob up a pixel in knight_1, the weapon (w) stays put, the legs take another pose; knight_2 is knight_0 again
+  const STAND = ['............', '...kkkk.....', '...kssk.....', '...kssk.....', '...kkkk..w..', '..kbbbbk.w..', '..kbbbbk.w..', '..kbbbbk.w..', '...kkkk..w..', '...k..k.....', '...k..k.....', '...kk.kk....'];
+  const STEP = ['...kkkk.....', '...kssk.....', '...kssk.....', '...kkkk..w..', '..kbbbbk.w..', '..kbbbbk.w..', '..kbbbbk.w..', '...kkkk..w..', '....kk...w..', '....k.k.....', '...k...k....', '..kk...kk...'];
+  fs.writeFileSync(path.join(r3, 'chars/knight_0.png'), fromRows(STAND, KC).png); fs.writeFileSync(path.join(r3, 'chars/knight_1.png'), fromRows(STEP, KC).png); fs.writeFileSync(path.join(r3, 'chars/knight_2.png'), fromRows(STAND, KC).png);
+  fs.writeFileSync(path.join(r3, 'fx/spark.png'), fromRows(['....' + '....' + '....', '.g..' + '..g.' + '....', '....' + '....' + '....', '.kk.' + '.kk.' + '....'], KC).png); // a sheet: three 4x4 frames, the last one empty
+  fs.writeFileSync(path.join(r3, 'spritewright.config.json'), JSON.stringify({ frames: { 'fx/spark.png': { w: 4, h: 4 } } }));
+  const s3 = createServer({ root: r3, port: 0 }), b3 = await s3.listen(), kp = await ctx.newPage(), kerr = []; kp.on('pageerror', (e) => kerr.push(e.message));
+  await kp.goto(b3 + '?auth=off'); await kp.waitForSelector('.pf-item');
+  const api = (fn, arg) => kp.evaluate(([f, a]) => new Function('pf', 'a', 'return (' + f + ')(pf, a)')(document.getElementById('app').__pf, a), [fn.toString(), arg]);
+  const at = async (x, y, button = 'left') => { const b = await kp.locator('.pf-view').boundingBox(), v = await kp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; }); await kp.mouse.click(b.x + (v.ox + (x + 0.5) * v.z) / v.k, b.y + (v.oy + (y + 0.5) * v.z) / v.k, { button }); };
+  const hex = (h) => hexIn(kp, h);
+  const u32 = (rows) => [...new Uint32Array(new Uint8Array(fromRows(rows, KC).rgba).buffer)];
+  const pxOf = (p) => api((pf, p) => [...pf.docs.get(p).px], p);
+  const RED = (0xff000000 | (40 << 16) | (30 << 8) | 230) >>> 0, K = (0xff000000 | (30 << 16) | (16 << 8) | 20) >>> 0;
+  await api((pf) => pf.open('chars/knight_0.png')); await kp.waitForTimeout(200);
+  ok(await kp.locator('.pf-fam-port').isVisible(), 'a family of frames offers "apply edit"');
+  await hex('#e61e28'); await at(4, 2); // a red eye
+  await hex('#14101e'); for (const [x, y] of [[2, 9], [7, 9], [1, 10], [8, 10], [0, 11], [1, 11], [8, 11], [9, 11]]) await at(x, y); // the legs in a wider stance
+  for (const [x, y] of [[3, 9], [6, 9], [3, 10], [6, 10], [3, 11], [4, 11], [6, 11], [7, 11]]) await at(x, y, 'right'); // right click paints clear
+  await kp.locator('.pf-fam-port').click(); await kp.waitForSelector('.pf-dlg-port[open]');
+  const cards = await kp.locator('.pf-port-f').allInnerTexts();
+  ok(cards.length === 2 && /^1\b/.test(cards[0].trim()) && /to redraw/.test(cards[0]) && /^2\b/.test(cards[1].trim()) && !/to redraw/.test(cards[1]), 'the dialog previews each other frame; the one in another pose has pixels to redraw: ' + cards.map((c) => c.replace(/\s+/g, ' ')).join(' | '));
+  await kp.locator('.pf-port-go').click(); await kp.waitForTimeout(200);
+  const k1 = await pxOf('chars/knight_1.png'), k2 = await pxOf('chars/knight_2.png'), k0 = await pxOf('chars/knight_0.png');
+  ok(k1[1 * 12 + 4] === RED, 'the eye lands a row higher in the frame where the head bobs up');
+  ok(JSON.stringify(k1.slice(8 * 12)) === JSON.stringify(u32(STEP).slice(8 * 12)), 'the legs of that frame keep their own pose');
+  ok(JSON.stringify(k2) === JSON.stringify(k0), 'the frame in the same pose gets the whole edit');
+  ok(/applied to 2 frames/.test(await kp.locator('.pf-s-note').innerText()) && /left to redraw/.test(await kp.locator('.pf-s-note').innerText()), 'the status line says what happened: ' + (await kp.locator('.pf-s-note').innerText()).replace(/\s+/g, ' '));
+  await kp.locator('.pf-fam-m[data-path="chars/knight_1.png"]').click(); await kp.waitForTimeout(250);
+  const todo = await api((pf) => pf.current.todo && pf.current.todo.cells.size);
+  const orange = await kp.evaluate(() => { const pf = document.getElementById('app').__pf, S = pf.state, [i] = pf.current.todo.cells.keys(), w = pf.current.w, c = document.querySelector('.pf-view'), d = c.getContext('2d').getImageData(Math.round(S.ox + (i % w) * S.zoom + 1), Math.round(S.oy + ((i / w) | 0) * S.zoom + 1), 1, 1).data; return [...d]; });
+  ok(todo > 0 && orange[0] > 200 && orange[1] > 120 && orange[2] < 90, `the pixels left to redraw are outlined in orange on that frame (${todo}, ${orange.slice(0, 3)})`);
+  await kp.keyboard.press('Control+z'); await kp.waitForTimeout(150);
+  ok(JSON.stringify(await pxOf('chars/knight_1.png')) === JSON.stringify(u32(STEP)), 'Ctrl+Z on that frame takes the applied edit back');
+  await api((pf) => pf.open('chars/knight_0.png')); await kp.waitForTimeout(200);
+  await kp.locator('.pf-fam-port').click(); await kp.waitForTimeout(250);
+  ok(/Nothing has changed in knight_0.png since the last apply/.test(await kp.locator('.pf-s-note').innerText()) && !(await kp.locator('.pf-dlg-port').evaluate((d) => d.open)), 'applying again with no new edit says so instead of opening the dialog');
+  // deleting a frame made with + frame stays in the family instead of jumping to the first sprite of the project
+  kp.on('dialog', (dlg) => dlg.accept());
+  await api((pf) => pf.open('chars/knight_1.png')); await kp.waitForTimeout(150);
+  await kp.locator('.pf-fam-add').click(); await kp.waitForTimeout(300);
+  ok((await api((pf) => pf.current.path)) === 'chars/knight_3.png', '+ frame made knight_3.png');
+  await kp.locator('.pf-delete').click(); await kp.waitForTimeout(300);
+  ok((await api((pf) => pf.current.path)) === 'chars/knight_2.png' && !(await api((pf) => pf.docs.has('chars/knight_3.png'))), 'deleting it opens the frame before it, not the first sprite: ' + await api((pf) => pf.current.path));
+  // a sprite sheet: the frame picked in the sheet strip is the one whose edit is carried over
+  await api((pf) => pf.open('fx/spark.png')); await kp.waitForTimeout(250);
+  ok(await kp.locator('.pf-sh-port').isVisible() && /3 frames/.test(await kp.locator('.pf-sheet-kind').innerText()), 'a sheet offers "apply edit" in its own strip');
+  await hex('#e61e28'); await at(1, 3); await at(2, 3); // frame 1's bar turns red: a recolour
+  await kp.locator('.pf-sh-port').click(); await kp.waitForSelector('.pf-dlg-port[open]');
+  const sc = await kp.locator('.pf-port-f').allInnerTexts();
+  ok(sc.length === 2 && /nothing to change/.test(sc[1]), 'the other two frames are offered; the empty one has nothing to change: ' + sc.map((c) => c.replace(/\s+/g, ' ')).join(' | '));
+  await kp.locator('.pf-port-go').click(); await kp.waitForTimeout(200);
+  let sp = await pxOf('fx/spark.png');
+  ok(sp[3 * 12 + 5] === RED && sp[3 * 12 + 6] === RED && sp[1 * 12 + 6] !== RED && sp.slice(0).every((v, i) => i % 12 < 8 || v === 0), 'the recolour reaches the other frame of the sheet, only that colour, and the empty frame stays empty');
+  await kp.keyboard.press('Control+z'); await kp.waitForTimeout(150);
+  ok((await pxOf('fx/spark.png'))[3 * 12 + 5] === K, 'one Ctrl+Z takes it back');
+  ok(kerr.length === 0, 'no page errors ' + kerr.join('|'));
+  await kp.close(); await s3.close();
+}
+
+section('apply edit with layers: each layer goes into the layer of the same name');
+{
+  await import('../spritewright.js'); const SW = globalThis.Spritewright;
+  const r5 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-port-ly-')); fs.mkdirSync(path.join(r5, 'chars'));
+  const KC = { k: [20, 16, 30], s: [240, 200, 160], b: [60, 90, 200], w: [140, 90, 40] }, cOf = (ch) => (ch === '.' ? 0 : SW.core.pack(...KC[ch]));
+  const STAND = ['............', '...kkkk.....', '...kssk.....', '...kssk.....', '...kkkk..w..', '..kbbbbk.w..', '..kbbbbk.w..', '..kbbbbk.w..', '...kkkk..w..', '...k..k.....', '...k..k.....', '...kk.kk....'];
+  const STEP = ['...kkkk.....', '...kssk.....', '...kssk.....', '...kkkk..w..', '..kbbbbk.w..', '..kbbbbk.w..', '..kbbbbk.w..', '...kkkk..w..', '....kk...w..', '....k.k.....', '...k...k....', '..kk...kk...'];
+  const layer = (rs, cs) => Uint32Array.from(rs.join(''), (ch) => (cs.includes(ch) ? cOf(ch) : 0)), LAY = [['line', 'k'], ['fill', 'sb'], ['weapon', 'w']];
+  const write = async (name, rs, layered) => {
+    fs.writeFileSync(path.join(r5, `chars/${name}.png`), fromRows(rs, KC).png);
+    if (layered) { const pk = SW.core.packLayers(LAY.map(([n, cs]) => ({ name: n, px: layer(rs, cs) })), 12, 12); fs.writeFileSync(path.join(r5, `chars/${name}.layers.png`), await SW.png.encode(pk.w, pk.h, pk.px, 1, pk.text)); }
+  };
+  await write('orc_0', STAND, true); await write('orc_1', STEP, true); await write('orc_2', STAND, false);
+  const s5 = createServer({ root: r5, port: 0 }), b5 = await s5.listen(), lp = await ctx.newPage(), lerr = []; lp.on('pageerror', (e) => lerr.push(e.message));
+  const A = (fn, arg) => lp.evaluate(fn, arg);
+  await lp.goto(b5 + '?auth=off'); await lp.waitForSelector('.pf-item'); await A(() => document.getElementById('app').__pf.open('chars/orc_0.png')); await lp.waitForTimeout(300);
+  ok((await A(() => document.getElementById('app').__pf.current.layers.map((l) => l.name).join())) === 'line,fill,weapon', 'orc_0 opens with its three layers');
+  const row = await lp.evaluate(() => [...document.querySelectorAll('.pf-ly')].findIndex((r) => r.querySelector('input').value === 'fill'));
+  await lp.locator('.pf-ly').nth(row).click(); await lp.waitForTimeout(100);
+  ok((await A(() => document.getElementById('app').__pf.current.layer.name)) === 'fill', 'the fill layer is current');
+  await hexIn(lp, '#e61e28'); await lp.keyboard.press('b');
+  { const b = await lp.locator('.pf-view').boundingBox(), v = await lp.evaluate(() => { const S = document.getElementById('app').__pf.state, c = document.querySelector('.pf-view'); return { z: S.zoom, ox: S.ox, oy: S.oy, k: c.width / c.getBoundingClientRect().width }; }); await lp.mouse.click(b.x + (v.ox + 4.5 * v.z) / v.k, b.y + (v.oy + 2.5 * v.z) / v.k); }
+  await lp.locator('.pf-fam-port').click(); await lp.waitForSelector('.pf-dlg-port[open]');
+  ok(/Layer by layer: line, fill, weapon/.test(await lp.locator('.pf-port-what').innerText()), 'the dialog says the edit goes layer by layer');
+  await lp.locator('.pf-port-go').click(); await lp.waitForTimeout(200);
+  const RED = SW.core.pack(230, 30, 40), got = await A(() => { const a = document.getElementById('app').__pf, o1 = a.docs.get('chars/orc_1.png'), o2 = a.docs.get('chars/orc_2.png'); return { names: o1.layers.map((l) => l.name), fill: o1.layers[1].px[1 * 12 + 4], line: o1.layers[0].px[1 * 12 + 4], flat2: o2.flat()[2 * 12 + 4], n2: o2.layers.length }; });
+  ok(got.names.join() === 'line,fill,weapon' && got.fill === RED && got.line === 0, 'the eye lands on orc_1’s fill layer, a row up, and its line art layer is untouched: ' + JSON.stringify(got));
+  ok(got.flat2 === RED && got.n2 === 1, 'a frame without layers gets the flattened edit');
+  ok(lerr.length === 0, 'no page errors ' + lerr.join('|'));
+  await lp.close(); await s5.close();
+}
+
 section('lossless saves (semi-transparent pixels must survive exactly)');
 {
   const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-e2e-alpha-')); const w = 16, h = 16, rgba = Buffer.alloc(w * h * 4);

@@ -400,6 +400,95 @@
   }
   /** Which frame plays at tick t when frame i lasts holds[i] ticks. */
   const holdFrame = (t, holds, n) => { const hs = Array.from({ length: n }, (_, i) => Math.max(1, (holds && holds[i]) | 0 || 1)), total = hs.reduce((a, b) => a + b, 0); let r = t % total; for (let i = 0; i < n; i++) { if (r < hs[i]) return i; r -= hs[i]; } return 0; };
+  /** Carry an edit (before → after) over to another frame of the same size, keeping what the edit did not touch.
+      1. Recolours: an old colour every pixel of which became one new colour is swapped everywhere in the target, exactly.
+      2. The rest, pixel by pixel: where does the window of `before` around it sit in the target, within ±reach? Each pixel
+         takes the shift its changed neighbours agree on (ties go to the shift of the whole frame), so a helm that bobs a pixel
+         follows the bob and a weapon that stays put stays put.
+      3. Neighbouring pixels on the same shift form a region, applied all or nothing: a region whose surroundings do not match
+         well enough (a leg in another pose) is skipped whole, never half-applied, and comes back in `todo` to redraw by hand.
+      4. A region whose surroundings match `after` at least as well as `before` is already there (an earlier apply, or drawn by
+         hand): it is left alone, so applying the same edit twice changes nothing.
+      Clear pixels agreeing with clear pixels are no evidence (empty space matches anywhere). */
+  function portEdit(before, after, target, w, h, opts) {
+    const r = portLayers({ w, h, before, after, target, src: [{ before, after }], dst: [{ px: target }], map: [0] }, opts);
+    return { px: r.layers[0], recolours: r.recolours[0], regions: r.regions, todo: r.todo, shift: r.shift };
+  }
+  /** The same, layer by layer. Where things go is worked out on the flattened images (before, after, target: the most to match
+      against); what is written comes from each source layer that changed there, into the target layer `map` gives it:
+        src  [{ before, after }]  the source's layers, each as it was and as it is
+        dst  [{ px, visible }]     the target's layers (left untouched: the result is in `layers`)
+        map  src index → dst index (-1: no such layer, its pixels are left out and reported in `lost`), or 'shown' for a one-layer
+             source: each pixel goes into the target layer that shows it there (the top visible one), else into dst[active].
+      Recolours are found per layer, so one colour recoloured in the cape layer leaves the same colour in another layer alone. */
+  function portLayers({ w, h, before, after, target, src, dst, map, active = 0 }, { reach = 4, radius = 3, pool = 3, min = 0.8 } = {}) {
+    const n = w * h, out = dst.map((l) => l.px), own = new Set(), write = (t) => { if (!own.has(t)) { own.add(t); out[t] = out[t].slice(); } return out[t]; };
+    const shown = map === 'shown', into = (k) => (shown ? -2 : map[k] == null ? -1 : map[k]), todo = [], lost = new Set(), regions = [];
+    // 1. per source layer: what changed, and which of it is a recolour
+    const recolours = [], rest = src.map((l, k) => {
+      const changed = []; for (let i = 0; i < n; i++) if (!samePx(l.before[i], l.after[i])) changed.push(i);
+      const count = new Map(), to = new Map();
+      for (const c of l.before) if (!isClear(c)) count.set(c, (count.get(c) || 0) + 1);
+      for (const i of changed) { const c = l.before[i]; if (isClear(c)) continue; const m = to.get(c); if (!m) to.set(c, { c: l.after[i], n: 1 }); else if (m.c !== l.after[i]) m.c = null; else m.n++; }
+      const rc = new Map([...to].filter(([c, m]) => m.c !== null && !isClear(m.c) && m.n === count.get(c) && m.n >= 2).map(([c, m]) => [c, m.c])); recolours.push(rc);
+      if (rc.size) { const ts = shown ? dst.map((_, t) => t).filter((t) => dst[t].visible !== false) : into(k) >= 0 ? [into(k)] : [];
+        if (!ts.length) lost.add(k); for (const t of ts) { const px = out[t]; let hit = false; for (let i = 0; i < n; i++) if (rc.has(px[i])) { hit = true; break; } if (hit) { const o = write(t); for (let i = 0; i < n; i++) if (rc.has(o[i])) o[i] = rc.get(o[i]); } } }
+      return new Set(changed.filter((i) => !rc.has(l.before[i])));
+    });
+    const all = [...new Set(rest.flatMap((x) => [...x]))].sort((a, b) => a - b);
+    if (!all.length) return { layers: out, recolours, regions, todo, lost, shift: { x: 0, y: 0 } };
+    // 2-4. where each changed pixel goes, on the flattened images
+    const at = (px, x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : px[y * w + x]), offs = [];
+    for (let y = -reach; y <= reach; y++) for (let x = -reach; x <= reach; x++) offs.push([x, y]);
+    let shift = null; // the whole frame's best shift
+    for (const [ox, oy] of offs) { let a = 0, c = 0; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = before[y * w + x], q = at(target, x + ox, y + oy); if (isClear(p) && isClear(q)) continue; c++; if (samePx(p, q)) a++; } const s = c ? a / c : 0; if (!shift || s > shift.s) shift = { x: ox, y: oy, s }; }
+    const near = (k) => Math.abs(offs[k][0] - shift.x) + Math.abs(offs[k][1] - shift.y), K = offs.length;
+    const windows = (img) => { const a = new Float32Array(all.length * K), c = new Float32Array(all.length * K);
+      all.forEach((i, r) => { const x = i % w, y = (i / w) | 0;
+        offs.forEach(([ox, oy], k) => { let m = 0, v = 0;
+          for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) { const p = at(img, x + dx, y + dy), q = at(target, x + dx + ox, y + dy + oy); if (isClear(p) && isClear(q)) continue; v++; if (samePx(p, q)) m++; }
+          a[r * K + k] = m; c[r * K + k] = v; }); });
+      return [a, c]; };
+    const [agree, seen] = windows(before), [agreeAfter, seenAfter] = windows(after), idx = new Map(all.map((i, r) => [i, r]));
+    const pick = new Int32Array(all.length), score = new Float32Array(all.length), A = new Float32Array(K), N = new Float32Array(K);
+    all.forEach((i, r) => { const x = i % w, y = (i / w) | 0; A.fill(0); N.fill(0);
+      for (let dy = -pool; dy <= pool; dy++) for (let dx = -pool; dx <= pool; dx++) { const j = x + dx < 0 || x + dx >= w ? undefined : idx.get((y + dy) * w + x + dx); if (j !== undefined) for (let k = 0; k < K; k++) { A[k] += agree[j * K + k]; N[k] += seen[j * K + k]; } }
+      let b = 0, bs = -1; for (let k = 0; k < K; k++) { const s = N[k] ? A[k] / N[k] : 0; if (s > bs + 1e-6 || (s > bs - 1e-6 && near(k) < near(b))) { b = k; bs = s; } }
+      pick[r] = b; score[r] = seen[r * K + b] ? agree[r * K + b] / seen[r * K + b] : 0; });
+    // the layer a pixel goes into: its source layer's match, or (one-layer source) the target layer that shows it there
+    const shownAt = (d) => { for (let t = dst.length - 1; t >= 0; t--) if (dst[t].visible !== false && !isClear(dst[t].px[d])) return t; return Math.max(0, Math.min(dst.length - 1, active)); };
+    const already = (pixels, dest) => pixels.every((p, q) => dest[q] < 0 || src.every((l, k) => !rest[k].has(p) || (() => { const t = shown ? shownAt(dest[q]) : into(k); return t >= 0 && samePx(out[t][dest[q]], l.after[p]); })()));
+    const visible = (pixels) => pixels.some((p) => !samePx(before[p], after[p]));
+    const taken = new Uint8Array(all.length);
+    for (let r0 = 0; r0 < all.length; r0++) {
+      if (taken[r0]) continue; const reg = [r0]; taken[r0] = 1;
+      for (let t = 0; t < reg.length; t++) { const i = all[reg[t]], x = i % w, y = (i / w) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const j = x + dx < 0 || x + dx >= w ? undefined : idx.get((y + dy) * w + x + dx); if (j !== undefined && !taken[j] && pick[j] === pick[r0]) { taken[j] = 1; reg.push(j); } } }
+      const [ox, oy] = offs[pick[r0]], pixels = reg.map((j) => all[j]), dest = pixels.map((i) => { const x = i % w + ox, y = ((i / w) | 0) + oy; return x < 0 || y < 0 || x >= w || y >= h ? -1 : y * w + x; });
+      const R = { pixels, x: ox, y: oy, score: reg.reduce((t, j) => t + score[j], 0) / reg.length }; R.applied = R.score >= min; regions.push(R);
+      let done = 0; for (let k = 0; k < K; k++) { let a = 0, c = 0; for (const j of reg) { a += agreeAfter[j * K + k]; c += seenAfter[j * K + k]; } if (c) done = Math.max(done, a / c); }
+      const matched = reg.reduce((t, j) => t + agree[j * K + pick[j]], 0) / Math.max(1, reg.reduce((t, j) => t + seen[j * K + pick[j]], 0));
+      // already there: its surroundings look edited (a change that shows), or every layer already holds the edited pixels
+      if ((visible(pixels) && done >= min && done >= matched) || (R.applied && already(pixels, dest))) { R.applied = false; R.done = true; continue; }
+      pixels.forEach((p, q) => {
+        const d = dest[q]; if (d < 0) return; if (!R.applied) { todo.push(d); return; }
+        let missing = false;
+        src.forEach((l, k) => {
+          if (!rest[k].has(p)) return;
+          if (shown && isClear(l.after[p])) { dst.forEach((L, t) => { if (L.visible !== false && !isClear(out[t][d])) write(t)[d] = 0; }); return; } // an erased pixel: gone from every layer showing it
+          const t = shown ? shownAt(d) : into(k); if (t < 0) { lost.add(k); missing = true; return; }
+          write(t)[d] = l.after[p];
+        });
+        if (missing) todo.push(d);
+      });
+    }
+    return { layers: out, recolours, regions, todo, lost, shift: { x: shift.x, y: shift.y } };
+  }
+  /** Which target layer each source layer goes into: the one with its name, else (same number of layers) the one in its place. */
+  function layerMap(from, to) {
+    const used = new Set(), m = from.map((name) => { const t = to.indexOf(name); if (t >= 0 && !used.has(t)) { used.add(t); return t; } return -1; });
+    return from.length === to.length ? m.map((t, k) => (t >= 0 ? t : used.has(k) ? -1 : (used.add(k), k))) : m;
+  }
   /** Normalise a drag between two cells into a rectangle clipped to the image (null when it misses the image). */
   function rectBetween(a, b, w, h) {
     const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y)), x1 = Math.min(w - 1, Math.max(a.x, b.x)), y1 = Math.min(h - 1, Math.max(a.y, b.y));
@@ -463,6 +552,7 @@
      A document is one image being edited, with undo history.
      base    = the pixels when this session loaded it (what a pull request is measured against)
      saved   = the pixels at the last save (what "unsaved changes" is measured against)
+     ported  = the state at the last "apply edit" to other frames, layers included (what the next one is measured against); undo and redo forget it
      ===================================================================================================== */
   /* layers  = bottom first; px is the current layer's pixels (what every tool draws on), flat() what the file holds.
      A sprite with one plain layer is exactly its PNG: flat() is px itself. */
@@ -491,7 +581,7 @@
     state() { const layers = copyLayers(this.layers); return { w: this.w, h: this.h, active: this.active, layers, px: layers[this.active].px }; }
     restore(s) { this.w = s.w; this.h = s.h; this.layers = s.layers; this.active = s.active; }
     snapshot() { this.undo.push(this.state()); if (this.undo.length > 100) this.undo.shift(); this.redo.length = 0; }
-    swap(from, to) { to.push(this.state()); this.restore(from.pop()); }
+    swap(from, to) { this.ported = null; to.push(this.state()); this.restore(from.pop()); }
     undoOnce() { if (!this.undo.length) return false; this.swap(this.undo, this.redo); return true; }
     redoOnce() { if (!this.redo.length) return false; this.swap(this.redo, this.undo); return true; }
     same(ref) { return ref.w === this.w && ref.h === this.h && countDiff(ref.px, this.flat()) === 0 && (ref.sig || '') === this.sig(); }
@@ -1168,7 +1258,7 @@
 .pf-ctx-bar{display:flex;gap:10px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--pf-line)}.pf .pf-ctx-bar .pf-seg button{min-height:24px;padding:1px 8px}.pf .pf-ctx-bar .pf-ctx-group{width:auto;max-width:260px;min-height:24px;padding:1px 6px;flex:0 1 auto;min-width:0;text-overflow:ellipsis}.pf-ctx-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .pf-ctx-cv{display:block;width:100%;height:150px;image-rendering:pixelated}
 .pf-fam-m .pf-hold{position:absolute;right:1px;top:1px;font-size:10px;line-height:1;padding:1px 3px;background:var(--pf-panel2);border:1px solid var(--pf-line2);color:var(--pf-muted);cursor:pointer}.pf-fam-m .pf-hold.x{color:var(--pf-on);background:var(--pf-accent);border-color:var(--pf-accent)}.pf .pf-fam-m{position:relative}
-.pf-fam-tools{margin-left:auto;display:inline-flex;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11.5px}
+.pf-fam-tools{margin-left:auto;display:inline-flex;flex-wrap:wrap;justify-content:flex-end;gap:3px}.pf .pf-fam-tools button{min-height:24px;padding:1px 7px;font-size:11.5px;white-space:nowrap}
 .pf-lint-tag{position:absolute;right:14px;top:12px;display:flex;gap:10px;font-size:11px;padding:3px 8px;background:rgba(14,9,24,.88);border:1px solid var(--pf-line2);color:var(--pf-ink);pointer-events:none}.pf-lint-tag i{display:inline-block;width:9px;height:9px;margin-right:5px;border:2px solid currentColor;vertical-align:-1px}.pf-lint-tag .ok{color:var(--pf-good)}
 .pf-vision-tag{position:absolute;left:14px;top:12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;background:var(--pf-accent2);color:var(--pf-on);font-weight:700;pointer-events:none}
 .pf[data-vision="grey"] :is(.pf-view,.pf-ctx-cv,.pf-prev canvas,.pf-fam-m canvas){filter:grayscale(1)}
@@ -1178,6 +1268,7 @@
 .pf .pf-ref-sprite{width:auto;flex:1;min-width:0}.pf-ref-on{display:flex;flex-direction:column;gap:6px}.pf .pf-refpanel .pf-seg button{min-height:26px;padding:2px 8px}
 .pf-v-shift{display:flex;flex-direction:column;gap:4px}.pf-v-shift input[type=range]{flex:1;width:auto}.pf-v-shift b{min-width:3.2em;text-align:right;color:var(--pf-accent)}
 .pf-v-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.pf-v-col{display:flex;align-items:center;gap:4px;font-size:11.5px}.pf-v-col i{width:20px;height:20px;border:1px solid var(--pf-line2);flex:none}.pf-v-col input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--pf-line2);background:none}
+.pf-port-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}.pf-port-f{display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid var(--pf-line);font-size:11.5px}.pf-port-f canvas{image-rendering:pixelated;width:100%;height:auto;background:var(--pf-ckbg)}.pf-port-key{color:var(--pf-warn)}
 .pf-v-preview{display:flex;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--pf-line);background:var(--pf-ckbg)}.pf-v-preview canvas{image-rendering:pixelated;height:72px}
 .pf-hist summary{list-style:none;cursor:pointer}.pf-hist summary::-webkit-details-marker{display:none}
 /* Right column: every section folds away by its title (remembered), with a chevron at the right. */
@@ -1668,8 +1759,8 @@
           <div class="pf-row pf-quiet"><button class="pf-palload" title="Load a palette file (.hex, one colour per line)">Load…</button><button class="pf-lospec-btn" title="Load a palette from lospec.com by its name, e.g. endesga-32">Lospec…</button><button class="pf-palsave" title="Download this palette as a .hex file">Save .hex</button><input type="file" class="pf-palfile" accept=".hex,.txt,text/plain" hidden></div>
           <form class="pf-row pf-lospec" hidden><input type="text" class="pf-lospec-name" placeholder="endesga-32, or a lospec.com link" aria-label="Lospec palette name" autocomplete="off" style="flex:1;min-width:0"><button type="submit" class="primary">Load</button></form></div>
         <div class="pf-panel pf-prev"><h4>Animation</h4>
-          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note pf-fam-hint"><kbd>,</kbd> <kbd>.</kbd> previous / next</div></div>
-          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">the ×n badge: how long a frame holds</div></div>
+          <div class="pf-fam" hidden><div class="pf-fam-h"><b class="pf-fam-name"></b><span class="pf-note pf-fam-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-fam-left" title="Move this frame earlier (swaps it with the one before)">◀</button><button type="button" class="pf-fam-right" title="Move this frame later">▶</button><button type="button" class="pf-fam-add" title="New frame: a copy of this one, numbered after the last">+ frame</button><button type="button" class="pf-fam-port" title="Apply this edit to the other frames: what stays still in them gets it, parts that moved are left for you to redraw">apply edit…</button></span></div><div class="pf-fam-strip" role="listbox" aria-label="Frames and poses"></div><div class="pf-note pf-fam-hint"><kbd>,</kbd> <kbd>.</kbd> previous / next</div></div>
+          <div class="pf-fam pf-sheet" hidden><div class="pf-fam-h"><b>sheet</b><span class="pf-note pf-sheet-kind"></span><span class="pf-fam-tools"><button type="button" class="pf-sh-left" title="Move this frame earlier">◀</button><button type="button" class="pf-sh-right" title="Move this frame later">▶</button><button type="button" class="pf-sh-add" title="New frame: a copy of this one, right after it">+ frame</button><button type="button" class="pf-sh-del" title="Delete this frame">✕</button><button type="button" class="pf-sh-port" title="Apply this edit to the other frames: what stays still in them gets it, parts that moved are left for you to redraw">apply edit…</button></span></div><div class="pf-fam-strip pf-sheet-strip" role="listbox" aria-label="Frames of the sheet"></div><div class="pf-note">the ×n badge: how long a frame holds</div></div>
           <canvas class="pf-p2"></canvas>
           <canvas class="pf-p1" title="The whole sheet"></canvas>
           <div class="pf-row pf-anim-row"><label class="pf-sheet-row" title="Frame size: smaller than the image makes it a sprite sheet">frame <input type="number" class="pf-fw" min="1" value="16">×<input type="number" class="pf-fh" min="1" value="16"></label><label class="pf-fps-l">fps <input type="number" class="pf-fps" min="1" max="60" value="8"></label><button class="pf-play">Play</button></div>
@@ -1765,6 +1856,13 @@
         <div class="pf-af-list"></div>
         <div class="pf-note pf-af-save"></div>
         <div class="pf-row"><button type="button" class="primary pf-af-go">Use these folders</button><button type="button" class="pf-af-all">Show everything</button></div></form></dialog>
+      <dialog class="pf-dlg-port"><form method="dialog" class="pf-form">
+        <div class="pf-dlg-head"><h4>Apply this edit to the other frames</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
+        <div class="pf-note pf-port-what"></div>
+        <label class="pf-note pf-port-allrow" hidden><input type="checkbox" class="pf-port-all"> every change since the original, not only those since the last apply</label>
+        <div class="pf-port-list"></div>
+        <div class="pf-note">Recolours reach every frame. Other changes go where the frame still looks like it did before the edit, following it if it bobs a few pixels; parts in another pose (legs in a walk) are left as they are and outlined in <b class="pf-port-key">orange</b>, to redraw with Onion skin (N).</div>
+        <div class="pf-row"><button type="button" class="primary pf-port-go">Apply</button><button value="cancel">Cancel</button></div></form></dialog>
       <dialog class="pf-dlg-keys"><form method="dialog" class="pf-form"><h4>Keyboard shortcuts</h4><div class="pf-keys"></div><div class="pf-row"><button value="cancel" class="primary">Close</button></div></form></dialog>
       <dialog class="pf-dlg-new"><form method="dialog" class="pf-form"><div class="pf-dlg-head"><h4>New sprite</h4><button value="cancel" class="pf-x" aria-label="Close" title="Close (Esc)">✕</button></div>
         <div class="pf-n-line"><span class="pf-seg pf-n-quick" role="group" aria-label="Common sizes"></span><span class="pf-n-or">or</span><input type="number" class="pf-nw" min="1" max="1024" value="16" aria-label="Width" title="Width"><span class="pf-n-or">×</span><input type="number" class="pf-nh" min="1" max="1024" value="16" aria-label="Height" title="Height"></div>
@@ -2143,9 +2241,13 @@
       const d = doc(); if (!deletable(d)) return;
       if (d.flat().some((v) => v >>> 24) && !confirm(`Delete ${fileName(d)}? It only exists in this browser, so this cannot be undone.`)) return;
       commitFloat(); S.sel = null; S.float = null;
+      // carry on next door: the frame before it in its family (the next one for a first frame), else a sprite of the same folder
+      const fam = famOf.get(d.path), m = fam ? fam.members.filter((p) => p !== d.path) : [], at = fam ? fam.members.indexOf(d.path) : -1;
+      const dirOf = (p) => p.slice(0, p.lastIndexOf('/') + 1), i = S.sprites.findIndex((x) => x.path === d.path);
+      const sib = [S.sprites[i - 1], S.sprites[i + 1]].find((x) => x && dirOf(x.path) === dirOf(d.path)), near = m[Math.max(0, at - 1)] || (sib && sib.path);
       S.docs.delete(d.path); S.sprites = S.sprites.filter((x) => x.path !== d.path); thumbs.delete(d.path);
       if (drafts && d.kept) try { await drafts.remove(projectKey(), d.path); } catch { /* gone anyway on the next flush */ }
-      const next = S.sprites.find((x) => S.docs.has(x.path)) || S.sprites[0];
+      const next = S.sprites.find((x) => x.path === near) || S.sprites.find((x) => S.docs.has(x.path)) || S.sprites[0];
       if (next) await openSprite(next.path); else { S.cur = null; renderList(); renderFamily(); drawPreview(); status(); render(); }
       sourceButton(); note('deleted ' + fileName(d));
     }
@@ -2424,6 +2526,11 @@
         diffCanvas.width = d.w; diffCanvas.height = d.h; diffCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(mask.buffer), d.w, d.h), 0, 0);
         g.drawImage(diffCanvas, S.ox, S.oy, W, H);
         if (z >= 3 && cells.length < 20000) { g.strokeStyle = '#e08cff'; g.lineWidth = Math.max(1, Math.floor(z / 8)); for (const i of cells) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1); g.lineWidth = 1; }
+      }
+      if (d.todo && d.todo.layers === d.layers && !S.peek && z >= 3) { /* left to redraw after Apply edit, until drawn over */
+        g.strokeStyle = '#ffb000'; g.lineWidth = Math.max(1, Math.floor(z / 8)); g.setLineDash([Math.max(2, z / 4), Math.max(2, z / 4)]); const flat = d.flat();
+        for (const [i, v] of d.todo.cells) if (flat[i] === v) g.strokeRect(S.ox + (i % d.w) * z + 0.5, S.oy + ((i / d.w) | 0) * z + 0.5, z - 1, z - 1);
+        g.setLineDash([]); g.lineWidth = 1;
       }
       if (S.ctx) drawContext(d);
       if (S.peek) { g.fillStyle = 'rgba(224,140,255,.9)'; g.font = `${Math.round(12 * (window.devicePixelRatio || 1))}px ${getComputedStyle(root).getPropertyValue('--pf-mono') || 'monospace'}`; g.fillText(peekLabel(d), S.ox, S.oy - 8); }
@@ -2842,7 +2949,7 @@
       renderSheet();
       const d = doc(), fam = famOrSingle(d), box = $('.pf-fam:not(.pf-sheet)'); box.hidden = !fam || (fam.members.length < 2 && isSheet(d)); if (box.hidden) return;
       const at = fam.members.indexOf(d.path), one = fam.members.length < 2; $('.pf-fam-left').disabled = at <= 0; $('.pf-fam-right').disabled = at >= fam.members.length - 1;
-      $('.pf-fam-left').hidden = $('.pf-fam-right').hidden = $('.pf-fam-hint').hidden = one; $('.pf-fam-strip:not(.pf-sheet-strip)').hidden = one;
+      $('.pf-fam-left').hidden = $('.pf-fam-right').hidden = $('.pf-fam-hint').hidden = $('.pf-fam-port').hidden = one; $('.pf-fam-strip:not(.pf-sheet-strip)').hidden = one;
       $('.pf-fam-name').textContent = fam.key; $('.pf-fam-kind').textContent = fam.members.length > 1 ? (fam.animated ? `animation · ${fam.members.length} frames` : `${fam.members.length} poses / variants`) : 'single sprite';
       const strip = $('.pf-fam-strip:not(.pf-sheet-strip)'); strip.innerHTML = '';
       for (const p of fam.members) {
@@ -3288,6 +3395,88 @@
     }
     $('.pf-sh-left').onclick = () => sheetOp('swap', -1); $('.pf-sh-right').onclick = () => sheetOp('swap', 1);
     $('.pf-sh-add').onclick = () => sheetOp('dup'); $('.pf-sh-del').onclick = () => sheetOp('del');
+    /* Apply edit: what changed in this frame, carried over to the other frames (files of a family, or frames of a sheet) by
+       portLayers: where things go is found on the flattened images, what is written goes layer by layer (matched by name), so a
+       pixel drawn on the shading layer lands on the target's shading layer. A frame remembers itself as of the last apply
+       (`ported`, layers included), so applying again carries only what changed since; a target keeps `todo`, the pixels left to
+       redraw by hand, outlined on the canvas until drawn over. */
+    let port = null;
+    /** The source as it was (ref) and is, cut by `cut`: per layer when ref kept the layers, else one flat layer (names: null,
+        layers made or merged since then). A one-layer sprite is one layer either way. */
+    function portSource(d, ref, cut) {
+      const now = cut(d.flat()), before = cut(ref.px), flat = [{ before, after: now }];
+      if (!d.layered) return { names: [d.layers[0].name], layers: flat, before, after: now };
+      if (!ref.layers) return { names: null, layers: flat, before, after: now };
+      const names = d.layers.map((l) => l.name), m = layerMap(names, ref.layers.map((l) => l.name));
+      return { names, layers: d.layers.map((l, k) => ({ before: m[k] >= 0 ? cut(ref.layers[m[k]].px) : new Uint32Array(now.length), after: cut(l.px) })), before, after: now };
+    }
+    /** How the source goes into a target's layers: layer to layer by name, the flat picture into a one-layer target, or (no layer
+        names to go by) each pixel into the layer that shows it. */
+    const portInto = (src, dst) => (dst.length === 1 ? { src: [{ before: src.before, after: src.after }], map: [0] } : src.names && src.names.length > 1 ? { src: src.layers, map: layerMap(src.names, dst.map((l) => l.name)) } : { src: [{ before: src.before, after: src.after }], map: 'shown' });
+    async function portPlan(d, all) {
+      const orig = d.isNew || d.baseFrom === 'new' ? d.saved : d.base, from = !all && d.ported ? d.ported : orig; // not committed yet: the last save stands in for the original
+      const since = from === d.ported ? 'since the last apply' : from === d.saved ? 'since the last save' : 'since the original (hold \\ to see it)';
+      if (from.w !== d.w || from.h !== d.h) return { why: 'The canvas size changed since then, so the edit cannot be lined up with the other frames.' };
+      const fam = famFor(d), whole = (px) => px;
+      if (isSheet(d)) {
+        const { f, cols, n: count } = sheetInfo(d), cells = [...Array(count).keys()].map((k) => ({ x: (k % cols) * f.w, y: Math.floor(k / cols) * f.h, w: f.w, h: f.h })), cutAt = (r) => (px) => copyRect(px, d.w, d.h, r);
+        const n = cells.map((r) => { const s = portSource(d, from, cutAt(r)); return s.layers.reduce((t, l) => t + countDiff(l.before, l.after), 0); }), k = n[S.sheetK || 0] ? S.sheetK || 0 : n.indexOf(Math.max(...n));
+        if (!n[k]) return { why: `Nothing has changed in this sheet ${since}.` };
+        const r = cells[k], src = portSource(d, from, cutAt(r));
+        return { w: r.w, h: r.h, label: `frame ${k + 1}`, since, src, targets: cells.flatMap((c, j) => (j === k ? [] : [{ label: `frame ${j + 1}`, doc: d, rect: c, dst: d.layers.map((l) => ({ ...l, px: cutAt(c)(l.px) })) }])) };
+      }
+      if (!fam) return { why: 'This sprite has no other frames: numbered files (walk_0, walk_1…) or a sprite sheet (set the frame size under Animation).' };
+      const src = portSource(d, from, whole);
+      if (!src.layers.some((l) => countDiff(l.before, l.after))) return { why: `Nothing has changed in ${fileName(d)} ${since}.` };
+      const targets = [], odd = [];
+      for (const p of fam.members) { if (p === d.path) continue; const x = await loadDoc(p); if (!x) continue; if (x.w !== d.w || x.h !== d.h) odd.push(memberLabel(fam, p)); else targets.push({ label: memberLabel(fam, p), doc: x, dst: x.layers }); }
+      if (!targets.length) return { why: `The other frames are a different size from ${fileName(d)}.` };
+      return { w: d.w, h: d.h, label: fileName(d), since, src, odd, targets };
+    }
+    async function openPort(all) {
+      const d = doc(); if (!d) return; commitFloat();
+      const plan = await portPlan(d, all); if (plan.why) { if ($('.pf-dlg-port').open) $('.pf-dlg-port').close(); return note(plan.why); }
+      port = { d, ...plan }; const { w, h, src } = plan;
+      for (const t of port.targets) {
+        const how = portInto(src, t.dst), tgt = flattenLayers(t.dst, w * h);
+        t.res = portLayers({ w, h, before: src.before, after: src.after, target: tgt, src: how.src, dst: t.dst, map: how.map, active: t.doc.active }); t.map = how.map;
+        t.n = t.res.layers.reduce((a, px, i) => a + countDiff(px, t.dst[i].px), 0); t.on = t.n > 0;
+        t.lost = [...t.res.lost].map((k) => (how.src === src.layers ? src.names[k] : 'this layer'));
+      }
+      const n = countDiff(src.before, src.after) || src.layers.reduce((a, l) => a + countDiff(l.before, l.after), 0), rc = port.targets[0].res.recolours.reduce((a, m) => a + m.size, 0);
+      const byLayer = src.names && src.names.length > 1 ? ` Layer by layer: ${src.names.join(', ')}.` : d.layered ? ' The layers were made or merged since then, so each pixel goes into the layer that shows it.' : '';
+      $('.pf-port-what').textContent = `${n} pixel${n > 1 ? 's' : ''} changed in ${plan.label} ${plan.since}${rc ? ` (${rc} colour${rc > 1 ? 's' : ''} swapped outright)` : ''}.${byLayer} Each frame below shows the result; untick one to leave it alone.${plan.odd && plan.odd.length ? ` Left out, another size: ${plan.odd.join(', ')}.` : ''}`;
+      $('.pf-port-allrow').hidden = !d.ported; $('.pf-port-all').checked = !!all;
+      const box = $('.pf-port-list'); box.innerHTML = '';
+      for (const t of port.targets) {
+        const left = t.res.todo.length, card = el(`<label class="pf-port-f"><canvas></canvas><span><input type="checkbox"${t.on ? ' checked' : ' disabled'}> <b>${esc(t.label)}</b></span><span class="pf-note">${t.n ? `${t.n} px` : 'nothing to change'}${left ? ` · <span class="pf-port-key">${left} to redraw</span>` : ''}${t.lost.length ? ` · no ${t.lost.map((x) => `“${esc(x)}”`).join(', ')} layer` : ''}</span></label>`);
+        card.querySelector('input').onchange = (e) => { t.on = e.target.checked; };
+        const c = card.querySelector('canvas'), k = Math.max(4, Math.ceil(128 / Math.max(w, h))), img = flattenLayers(t.dst.map((l, i) => ({ ...l, px: t.res.layers[i] })), w * h);
+        drawPx(c, { w, h, imageData: () => new ImageData(new Uint8ClampedArray(img.buffer), w, h) }, k);
+        const g2 = c.getContext('2d'); g2.strokeStyle = '#ffb000'; for (const i of t.res.todo) g2.strokeRect((i % w) * k + 0.5, ((i / w) | 0) * k + 0.5, k - 1, k - 1);
+        box.appendChild(card);
+      }
+      if (!$('.pf-dlg-port').open) $('.pf-dlg-port').showModal();
+    }
+    $('.pf-fam-port').onclick = $('.pf-sh-port').onclick = () => openPort(false);
+    $('.pf-port-all').onchange = (e) => openPort(e.target.checked);
+    $('.pf-port-go').onclick = () => {
+      const p = port; if (!p) return; $('.pf-dlg-port').close(); port = null;
+      const picked = p.targets.filter((t) => t.on), todo = new Map(), synced = new Set(); let px = 0, left = 0;
+      for (const t of picked) {
+        const x = t.doc, cells = t.rect ? t.res.todo.map((i) => (t.rect.y + ((i / p.w) | 0)) * x.w + t.rect.x + (i % p.w)) : t.res.todo;
+        if (!todo.has(x)) { // one undo step per image, however many of its frames change
+          const was = x.ported || x.base; x.snapshot(); todo.set(x, []);
+          if (x !== p.d && x.same(was)) synced.add(x); // a frame with no edits of its own starts its next edit from here
+        }
+        t.res.layers.forEach((out, i) => { if (out === t.dst[i].px) return; if (t.rect) pasteRect(x.layers[i].px, x.w, x.h, out, p.w, p.h, t.rect.x, t.rect.y, true); else x.layers[i].px = out; });
+        todo.get(x).push(...cells); px += t.n; left += cells.length;
+      }
+      for (const [x, cells] of todo) { const flat = x.flat(); x.todo = cells.length ? { layers: x.layers, cells: new Map(cells.map((i) => [i, flat[i]])) } : null; if (synced.has(x)) x.ported = x.mark(); }
+      p.d.ported = p.d.mark();
+      changedUi(); renderList();
+      note(picked.length ? `applied to ${picked.length} frame${picked.length > 1 ? 's' : ''}: ${px} pixel${px === 1 ? '' : 's'}${left ? ` · ${left} left to redraw, outlined in orange (Onion skin, N, shows the frame before)` : ''} · Ctrl+Z undoes it frame by frame` : 'no frame picked: nothing changed');
+    };
     /** The animation as one sheet PNG plus a JSON of its frames (Aseprite json-array), zipped. A family is packed into a row. */
     $('.pf-sheet-out').onclick = async () => {
       const d = doc(); if (!d) return; commitFloat(); const fam = famFor(d), ms = Math.round(1000 / Math.max(1, +$('.pf-fps').value || 8)), hs = holdsOf(d);
@@ -3829,5 +4018,5 @@
     return ctrl;
   }
 
-  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
+  return { mount, createPullRequest, prBody, feedback: { url: feedbackUrl, title: feedbackTitle, details: feedbackDetails, repo: FEEDBACK_REPO }, pushSprites, openPull, openPulls, listBranches, png: { decode: decodePngBytes, encode: encodePngBytes }, auth: { signIn: githubSignIn, refresh: githubRefresh, user: githubUser, listRepos, explainError: explainGithubError, tokenUrl: PAT_URL }, sources: { githubSource, folderSource, staticSource, serverSource, applyConfig }, core: { portEdit, portLayers, layerMap, ditherGradient, selMask, maskSel, lassoMask, combineMasks, lintPixels, scale2x, rotSprite, sheetCut, sheetJoin, sheetEdit, packSheet, sheetJson, holdFrame, artFolders, folderConfig, pack, unpack, toHex, fromHex, parsePalette, nearestColor, linePoints, rectPoints, ellipsePoints, brushOffsets, thicken, ditherOn, floodFill, fillSame, outlinePx, toHsv, fromHsv, shadeColor, hueRamp, copyRect, pasteRect, rectBetween, constrain, colorsOf, groupSprites, encodeGif, shiftColor, variantPath, flipH, flipV, rotateCW, shiftWrap, resizePx, scalePx, anchorOffset, opaqueBounds, zipFiles, browserDrafts, countDiff, snapAlpha, normAlpha, normGroups, flattenLayers, packLayers, unpackLayers, layersPath, isLayersFile, layersSig, Doc } };
 });
