@@ -111,6 +111,8 @@ The **Layers** panel (top of the right column) splits a sprite into layers: line
 
 The game only ever sees one image: Save writes the sprite's PNG flattened, as before. The layers go next to it in `name.layers.png`: the layers stacked top to bottom (bottom layer first), with their names, visibility and opacity in the PNG's text. It is a plain PNG, so it travels through git, pull requests and the zip download with its sprite, and it is left out of the sprite list. Merge back to one layer and the next save (or pull request) removes it. If the sprite's PNG is changed somewhere else and no longer matches its layers, the PNG wins: the sprite opens without layers and the older layers file is left alone.
 
+**Linked layers.** In an animation (numbered frames like `walk_0`, `walk_1`), the chain button on a layer links it across the frames: one drawing (a helm, a weapon) shared by all of them. Each frame keeps its own copy at its own offset, found when you link by where that layer (or, in a frame without it, the picture) matches best; a frame without that layer gets one, with the drawing lifted out of the layers that showed it. Draw on the linked layer in any frame and the others follow, moved by their offsets; undo travels the same way. The arrows under the layer list move this frame's copy alone (the helm sits a pixel lower in this frame). **Save** writes the frames a link changed along with the open one, and the link is kept in each frame's `name.layers.png`. Click the chain again to unlink: every frame keeps its copy.
+
 ## Families and animations
 
 The sprite list is grouped by folder (click a folder to fold it; that is remembered per project) and folds related images into one tile, worked out from the file names alone:
